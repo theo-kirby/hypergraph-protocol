@@ -1,0 +1,18 @@
+# .hypergraph/config.yml — written by hypergraph-init, read by all skills + tools.
+project: my-project
+
+record_root:
+  node_id: 00000000-0000-0000-0000-000000000000
+  slug: adjective-noun-0000
+
+state_root:
+  node_id: 00000000-0000-0000-0000-000000000000
+  slug: adjective-noun-0000
+
+# Where reconcile saves graph exports for the checker/renderer (gitignored).
+cache_dir: .hypergraph/cache
+
+# Generated state snapshot (committed; never hand-edited).
+state_md: STATE.md
+
+backend: flywheel

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "node_id": "10000000-0000-0000-0000-000000000001",
+      "slug_name": "royal-anchor-0001",
+      "title": "demo \u2014 record",
+      "content": "Record root for the demo project. Append-only historical log.",
+      "parent_ids": [],
+      "created_at": "2026-08-01T00:00:00+00:00"
+    },
+    {
+      "node_id": "10000000-0000-0000-0000-000000000002",
+      "slug_name": "brisk-otter-0002",
+      "title": "Built CSV ingest pipeline v1",
+      "content": "## What\n\nImplemented the first ingest pipeline for CSV sources.\n\n## Why\n\nFirst workstream after project setup; branched from the record root.\n\n## Method\n\npandas read_csv with chunked reader; see attached run log.\n\n## Result\n\nBasic ingest works on small files; OOMs on a 2.3GB file.\n\n## Repo\n\n- repo: none\n- branch: main\n- commit: 0000000\n\n## State Impact\n\n- target: NEW ingest-pipeline \u2014 created; initial status open, OOM on large files unresolved\n",
+      "parent_ids": [
+        "10000000-0000-0000-0000-000000000001"
+      ],
+      "created_at": "2026-08-01T01:00:00+00:00"
+    },
+    {
+      "node_id": "10000000-0000-0000-0000-000000000003",
+      "slug_name": "calm-heron-0003",
+      "title": "Fixed large-file OOM with streaming parser",
+      "content": "## What\n\nReplaced the chunked pandas reader with a streaming csv parser.\n\n## Why\n\nFollows from the OOM result in brisk-otter-0002.\n\n## Method\n\nstdlib csv over a buffered reader; peak RSS measured with /usr/bin/time.\n\n## Result\n\n2.3GB file ingests in 84s at 210MB peak RSS. Fix verified.\n\n## Repo\n\n- repo: none\n- branch: main\n- commit: 0000000\n\n## State Impact\n\n- target: mellow-quartz-0102 \u2014 status open \u2192 working; claim: streaming parser handles multi-GB CSVs\n",
+      "parent_ids": [
+        "10000000-0000-0000-0000-000000000002"
+      ],
+      "created_at": "2026-08-01T02:00:00+00:00"
+    },
+    {
+      "node_id": "10000000-0000-0000-0000-000000000004",
+      "slug_name": "dim-walrus-0004",
+      "title": "Refactored ingest module layout",
+      "content": "## What\n\nSplit ingest.py into reader/validator modules.\n\n## Why\n\nCleanup after the streaming fix; no behavior change.\n\n## Method\n\nPure move refactor; test suite unchanged and green.\n\n## Result\n\nNo behavioral change; all 42 tests pass.\n\n## Repo\n\n- repo: none\n- branch: main\n- commit: 0000000\n\n## State Impact\n\nnone: pure refactor, no change to what works or is open\n",
+      "parent_ids": [
+        "10000000-0000-0000-0000-000000000003"
+      ],
+      "created_at": "2026-08-01T03:00:00+00:00"
+    }
+  ]
+}
