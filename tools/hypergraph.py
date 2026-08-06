@@ -139,7 +139,10 @@ def load_graph(path: Path) -> Graph:
             slug=str(raw.get("slug_name") or raw.get("slug") or ""),
             title=str(raw.get("title") or ""),
             content=str(raw.get("content") or ""),
-            parent_ids=_norm_parents(raw.get("parent_ids") or raw.get("parents")),
+            # flywheel_export_subgraph encodes parent edges as incoming_ids
+            parent_ids=_norm_parents(
+                raw.get("parent_ids") or raw.get("parents") or raw.get("incoming_ids")
+            ),
             created_at=str(raw.get("created_at") or raw.get("committed_at") or ""),
         )
         if node.node_id:

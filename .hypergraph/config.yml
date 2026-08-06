@@ -1,0 +1,16 @@
+# Hypergraph per-project config — written by hypergraph-init (2026-08-06).
+project: hypergraph
+
+record_root:
+  node_id: cdbea53e-8865-5138-b033-948b4690daf3
+  slug: autumn-tooth-6046
+
+state_root:
+  node_id: 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
+  slug: cool-king-8586
+
+cache_dir: .hypergraph/cache
+
+state_md: STATE.md
+
+backend: flywheel

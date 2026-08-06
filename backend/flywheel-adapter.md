@@ -104,9 +104,9 @@ retry; heartbeat (`flywheel_heartbeat_stage_lease`) during long compositions.
 
 Run once per graph (record root, state root) and save to
 `.hypergraph/cache/record.json` / `.hypergraph/cache/state.json` for
-`tools/hypergraph.py`. The checker accepts the export as-is (it normalizes
-`nodes[]` entries on `node_id` / `slug_name` / `title` / `content` / `parent_ids` /
-`created_at`). If the graph is larger than `max_nodes`, raise the bound — a truncated
+`tools/hypergraph.py`. The checker accepts the export as-is; note the export encodes
+edges as `incoming_ids` (parents) / `outgoing_ids` (children), which the checker
+normalizes along with `node_id` / `slug_name` / `title` / `content` / `created_at`. If the graph is larger than `max_nodes`, raise the bound — a truncated
 export silently weakens every cross-graph check.
 
 ### 9. `attach_artifact` → prepare / upload / finalize

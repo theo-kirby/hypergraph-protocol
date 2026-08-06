@@ -22,10 +22,13 @@ Not for writing anything — this skill mutates nothing.
    don't count against the budget.)
 2. `flywheel_get_node_tree` on the state root — one call usually yields the whole
    state-graph topology (it is small by design).
-3. `flywheel_get_node` on the state root (HWM + overview) and on each **frontier**
-   node — status `open`, `broken`, or `blocked` (SPEC I6). Prefer frontier nodes over
-   `working` ones; read `working` bodies only if budget remains and they're relevant
-   to the user's question.
+3. `flywheel_get_node` on the state root (HWM + overview), then one
+   `flywheel_get_node_children` on it (`projection: "core"`) — a single page usually
+   returns every component node's full body, statuses and provenance included, which
+   beats per-node `get_node` calls. (Don't retry `get_node_tree` with
+   `projection: "full"` for bodies — it returns topology-only payloads.) Prefer
+   frontier nodes — status `open`, `broken`, or `blocked` (SPEC I6) — over `working`
+   ones; dig into `working` bodies only as budget and relevance allow.
 4. **Orientation brief** (the deliverable):
    - One line: project, reconciled-through HWM + timestamp, frontier size.
    - Frontier items ranked `broken` → `blocked` → `open`, each with status, claim
