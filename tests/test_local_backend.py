@@ -458,6 +458,22 @@ def test_import_skips_the_mirror_legend_node(tmp_path, capsys):
     assert not (graph_dir / "record" / "shiny-map-0009.md").exists()
 
 
+# -------------------------------------------------------------- skills install
+
+def test_skills_install_copies_self_contained_skills(tmp_path, capsys):
+    code, out = run_out(capsys, "skills", "install", "--target", tmp_path / "sk")
+    assert code == 0
+    names = {p.name for p in (tmp_path / "sk").iterdir()}
+    assert {"hypergraph-init", "hypergraph-adopt", "hypergraph-record",
+            "hypergraph-reconcile", "hypergraph-orient"} <= names
+    spec = tmp_path / "sk" / "hypergraph-adopt" / "references" / "spec.md"
+    assert spec.is_file() and not spec.is_symlink()  # materialized, self-contained
+    assert "Invariants" in spec.read_text()
+    # idempotent: second run overwrites in place
+    assert run("skills", "install", "--target", tmp_path / "sk") == 0
+    capsys.readouterr()
+
+
 # ------------------------------------------------------------------ diagnostics
 
 @pytest.mark.parametrize("mutate,expected", [

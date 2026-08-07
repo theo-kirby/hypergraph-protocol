@@ -27,6 +27,7 @@ The local (git-native) backend keeps both graphs as committed markdown files und
     hypergraph.py update SLUG --body new.md --expect <sha256> --reconcile
     hypergraph.py push --plan [-o plan.json] | --record-result results.json
     hypergraph.py push --verify --against export.json | --legend [-o legend.md]
+    hypergraph.py skills install [--user | --target DIR]
 
 Mirroring to Flywheel stays out of this file: `push --plan` emits an ordered plan of
 MCP calls for the skill layer to execute, and `push --record-result` folds the
@@ -39,6 +40,7 @@ import hashlib
 import json
 import random
 import re
+import shutil
 import subprocess
 import sys
 import uuid
@@ -1534,6 +1536,45 @@ def apply_push_results(graph_dir: Path, results: object) -> int:
     return applied
 
 
+def skills_data_root() -> Path:
+    """Where the shipped skills live: `hypergraph_protocol_data/` next to the module
+    (installed wheel) or the repo root (running tools/hypergraph.py directly)."""
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "hypergraph_protocol_data", here.parent):
+        if (candidate / "skills").is_dir():
+            return candidate
+    raise LocalGraphError(
+        "cannot locate the packaged skills (no hypergraph_protocol_data/ beside the "
+        "module and no skills/ in the parent directory)")
+
+
+def cmd_skills(args: argparse.Namespace) -> int:
+    root = skills_data_root()
+    if args.target:
+        target = Path(args.target)
+    elif args.user:
+        target = Path.home() / ".claude" / "skills"
+    else:
+        target = Path.cwd() / ".claude" / "skills"
+    target.mkdir(parents=True, exist_ok=True)
+    installed = []
+    for src in sorted((root / "skills").glob("hypergraph-*")):
+        if not src.is_dir():
+            continue
+        dst = target / src.name
+        if dst.is_symlink():  # e.g. a dev install.sh link — don't write through it
+            dst.unlink()
+        # symlinked references/ entries are materialized as real files on copy,
+        # so the installed skill is self-contained
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+        installed.append(src.name)
+    if not installed:
+        raise LocalGraphError(f"no hypergraph-* skills found under {root / 'skills'}")
+    for name in installed:
+        print(f"installed {target / name}")
+    return 0
+
+
 def cmd_push(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
@@ -2931,6 +2972,15 @@ def main(argv: list[str] | None = None) -> int:
     p_update.add_argument("--reconcile", action="store_true",
                           help="required: assert this is a reconcile pass (SPEC I3)")
     p_update.set_defaults(func=cmd_update)
+
+    p_skills = sub.add_parser("skills", help="manage the shipped Claude skills")
+    p_skills.add_argument("action", choices=["install"],
+                          help="install: copy the five hypergraph-* skills")
+    p_skills.add_argument("--user", action="store_true",
+                          help="install into ~/.claude/skills (default: ./.claude/skills)")
+    p_skills.add_argument("--target", type=Path, metavar="DIR",
+                          help="explicit destination directory")
+    p_skills.set_defaults(func=cmd_skills)
 
     p_push = sub.add_parser("push", help="plan/record a Flywheel mirror push (no network)")
     graph_args(p_push)

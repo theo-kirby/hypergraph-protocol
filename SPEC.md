@@ -1,4 +1,4 @@
-# Hypergraph Protocol — v0.0.1
+# Hypergraph Protocol — v0.0.2
 
 Hypergraph is a protocol for maintaining **two graphs per research project** on top of a
 graph store — either [markdown files in the repo](backend/local-adapter.md) or a hosted
@@ -289,7 +289,7 @@ Both satisfy op 7's "refuse a stale write": Flywheel by revision, local by a bod
 compare-and-swap. Under `local`, `--reconcile` is the mechanical I3 gate — the only
 commands that write state nodes refuse to run without it.
 
-## Future work (out of scope for v0.0.1)
+## Future work (out of scope for v0.0.2)
 
 Committed forward work lives in the state graph as open frontier nodes (see Forward
 work above) — for this repo, that is where field dogfooding is tracked. The list below
