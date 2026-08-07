@@ -10,13 +10,9 @@ flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
   revision: 0
-  pushed_at: '2026-08-07T20:03:23+00:00'
-  content_sha256: a6d92e2ad789fc69de2b2741b708bb314cdf339dbeed7e07868ce52078deea25
+  pushed_at: '2026-08-07T20:15:27+00:00'
+  content_sha256: b20462f57783dcc6ebab4d87bb9487b7e5dfe631295101b65502c11c25127809
 ---
-Status: open
-
-## Current
-
 Status: open
 
 ## Current
@@ -33,11 +29,3 @@ Status: open
 ## Provenance
 
 - vast-sky-3964 — Operator directive opening the adoption thrust; settled epoch design, fork-by-import, storage default, mirror policy, AGENTS.md approach, and both dogfooding targets
-
-## Negative knowledge
-
-None yet.
-
-## Provenance
-
-- vast-sky-3964 — Operator directive opening the adoption thrust

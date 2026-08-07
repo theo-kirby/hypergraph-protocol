@@ -1285,6 +1285,18 @@ def cmd_new(args: argparse.Namespace) -> int:
         if not args.root and args.status not in STATUSES:
             raise LocalGraphError(
                 f"--status must be one of {', '.join(sorted(STATUSES))} (SPEC I6)")
+        if not args.root:
+            # the CLI wraps --body in the full template; a pre-scaffolded body would
+            # nest a second Status/## Current inside the first, invisibly to `check`
+            if STATUS_RE.match(next((ln for ln in body.splitlines() if ln.strip()), "")):
+                raise LocalGraphError(
+                    "--body already starts with a `Status:` line — pass only the "
+                    "`## Current` content; the CLI generates the template around it")
+            for heading in ("## Current", "## Negative knowledge", "## Provenance"):
+                if re.search(rf"^{re.escape(heading)}\s*$", body, re.M | re.I):
+                    raise LocalGraphError(
+                        f"--body already contains a `{heading}` heading — the CLI "
+                        "generates that section")
         content = compose_state_content(body, args.status or "", list(args.prov or []),
                                         list(args.neg or []), args.hwm, created_at, args.root)
 

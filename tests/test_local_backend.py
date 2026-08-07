@@ -196,6 +196,21 @@ def test_new_state_without_reconcile_is_refused(tmp_path, capsys):
     capsys.readouterr()
 
 
+def test_new_state_rejects_a_prescaffolded_body(tmp_path, capsys):
+    """A --body carrying the template would be double-wrapped (found live by
+    push --verify: the first M0 reconcile nested Status/## Current twice)."""
+    graph_dir = imported(tmp_path)
+    for bad in ("Status: open\n\n- A claim [rec: dim-walrus-0004].\n",
+                "## Current\n\n- A claim [rec: dim-walrus-0004].\n",
+                "- A claim [rec: dim-walrus-0004].\n\n## Provenance\n\n- x\n"):
+        body = body_file(tmp_path, "s.md", bad)
+        assert run("new", "state", "--graph-dir", graph_dir, "--title", "New thing",
+                   "--status", "open", "--body", body, "--parent", "amber-harbor-0101",
+                   "--prov", "dim-walrus-0004 — why", "--reconcile") == 2
+        assert "the CLI generates" in capsys.readouterr().err
+    assert len(list((graph_dir / "state").glob("*.md"))) == 3
+
+
 def test_new_state_rejects_provenance_that_does_not_resolve(tmp_path, capsys):
     graph_dir = imported(tmp_path)
     body = body_file(tmp_path, "s.md", "- A claim [rec: dim-walrus-0004].\n")

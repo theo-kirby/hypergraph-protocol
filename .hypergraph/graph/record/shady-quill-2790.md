@@ -6,6 +6,12 @@ created_at: '2026-08-07T20:06:24+00:00'
 parents:
 - vast-sky-3964
 summary: 'epoch.marker config key: record nodes strictly older than the marker are I2-exempt (info count); unresolvable marker = violation; authoring never exempted. 4 new tests, 54 green; SPEC + config + adapter docs landed.'
+flywheel:
+  node_id: cdd22708-0270-5297-b798-21455be475de
+  slug: wild-brook-9763
+  revision: 0
+  pushed_at: '2026-08-07T20:15:27+00:00'
+  content_sha256: 5840e21ce489b50a149f495fe86352f744ef594be17c3bbe927aa571ca4b08e7
 ---
 ## What
 

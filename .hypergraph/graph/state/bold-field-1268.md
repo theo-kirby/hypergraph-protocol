@@ -9,8 +9,8 @@ summary: 'Self-host deepened: graphs live in-repo; blind-test pair passed; remot
 flywheel:
   node_id: a4fad33e-262f-5f4a-8d83-298e76523a0e
   slug: bold-field-1268
-  revision: 6
-  pushed_at: '2026-08-07T18:57:11+00:00'
+  revision: 7
+  pushed_at: '2026-08-07T20:15:27+00:00'
   content_sha256: 4398bd19b80de42e8212a2707328f558d8b435105e410134a93f6f0863913862
 ---
 Status: working
