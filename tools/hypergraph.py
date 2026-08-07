@@ -211,11 +211,22 @@ def find_root(graph: Graph, configured: dict | None, report: Report, label: str)
 
 # ---------------------------------------------------------------- invariant checks
 
-def check_impacts(record: Graph, state: Graph, record_root: Node | None, report: Report) -> None:
-    """I2: every non-root record node declares parseable state impact."""
+def check_impacts(record: Graph, state: Graph, record_root: Node | None, report: Report,
+                  epoch_cutoff: datetime | None = None) -> None:
+    """I2: every non-root record node declares parseable state impact.
+
+    Record nodes created strictly before `epoch_cutoff` (the adoption-epoch marker's
+    created_at) are legacy history and exempt from I2 (SPEC: Adoption epochs).
+    """
+    exempted = 0
     for node in record.nodes.values():
         if record_root and node.node_id == record_root.node_id:
             continue
+        if epoch_cutoff is not None:
+            created = node.created
+            if created is not None and created < epoch_cutoff:
+                exempted += 1
+                continue
         _, sections = split_sections(node.content)
         body = sections.get("state impact")
         if body is None:
@@ -234,6 +245,9 @@ def check_impacts(record: Graph, state: Graph, record_root: Node | None, report:
             if not is_new and target not in state.by_slug:
                 report.add("violation", "I2", node.ref,
                            f"impact targets unknown state node `{target}`")
+    if exempted:
+        report.add("info", "I2", "-",
+                   f"{exempted} pre-epoch record node(s) exempt from I2 (legacy history)")
 
 
 def parse_impacts(body: str) -> tuple[list[tuple[str, str, bool]], str | None, list[str]]:
@@ -445,6 +459,28 @@ def load_config(path: Path | None) -> dict:
     return yaml.safe_load(Path(path).read_text()) or {}
 
 
+def resolve_epoch_cutoff(config: dict, record: Graph, report: Report) -> datetime | None:
+    """`epoch.marker` (config) → the marker record node's created_at, or None.
+
+    Record nodes created strictly before the cutoff are legacy history (SPEC:
+    Adoption epochs). An unresolvable marker is a violation — a silently ignored
+    epoch would re-flag every legacy node.
+    """
+    marker = (config.get("epoch") or {}).get("marker")
+    if not marker:
+        return None
+    node = record.by_slug.get(str(marker))
+    if node is None:
+        report.add("violation", "I2", str(marker),
+                   "epoch.marker does not resolve to a record node")
+        return None
+    if node.created is None:
+        report.add("violation", "I2", node.ref,
+                   f"epoch marker has no parseable created_at (got {node.created_at!r})")
+        return None
+    return node.created
+
+
 def run_check(record_path: Path, state_path: Path, config: dict | None = None) -> Report:
     config = config or {}
     report = Report()
@@ -452,7 +488,8 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None) -
     state = load_graph(state_path)
     record_root = find_root(record, config.get("record_root"), report, "record")
     state_root = find_root(state, config.get("state_root"), report, "state")
-    check_impacts(record, state, record_root, report)
+    epoch_cutoff = resolve_epoch_cutoff(config, record, report)
+    check_impacts(record, state, record_root, report, epoch_cutoff)
     check_state_nodes(record, state, state_root, report)
     check_hwm(record, state, record_root, state_root, report)
     return report

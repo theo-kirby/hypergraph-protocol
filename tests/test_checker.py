@@ -71,6 +71,50 @@ def test_render_frontier_and_tree(tmp_path):
     assert "Ingest pipeline" not in frontier_section
 
 
+EPOCH = FIXTURES / "epoch"
+EPOCH_CONFIG = {"epoch": {"marker": "bright-gate-0003"}}
+
+
+def test_epoch_legacy_node_exempt_from_i2():
+    report = hg.run_check(EPOCH / "record.json", EPOCH / "state.json", EPOCH_CONFIG)
+    assert report.violations() == []
+    exempt = [f for f in report.infos() if "pre-epoch" in f.message]
+    assert len(exempt) == 1 and exempt[0].message.startswith("1 pre-epoch")
+
+
+def test_epoch_only_shields_legacy_nodes():
+    """Without the epoch config, the same legacy node is an I2 violation."""
+    report = hg.run_check(EPOCH / "record.json", EPOCH / "state.json")
+    assert [f.node for f in report.violations()] == ["faded-scroll-0002"]
+    assert all(f.invariant == "I2" for f in report.violations())
+
+
+def test_epoch_post_epoch_node_still_fails_i2(tmp_path):
+    """A node created after the marker gets no exemption."""
+    import json
+    graph = json.loads((EPOCH / "record.json").read_text())
+    graph["nodes"].append({
+        "node_id": "20000000-0000-0000-0000-000000000004",
+        "slug_name": "loud-comet-0004",
+        "title": "Post-epoch work without an impact",
+        "content": "## What\n\nWork done after adoption, missing its impact declaration.\n",
+        "parent_ids": ["20000000-0000-0000-0000-000000000003"],
+        "created_at": "2026-08-03T00:00:00+00:00",
+    })
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps(graph))
+    report = hg.run_check(path, EPOCH / "state.json", EPOCH_CONFIG)
+    assert [f.node for f in report.violations()] == ["loud-comet-0004"]
+    assert all(f.invariant == "I2" for f in report.violations())
+
+
+def test_epoch_unresolvable_marker_is_violation():
+    report = hg.run_check(EPOCH / "record.json", EPOCH / "state.json",
+                          {"epoch": {"marker": "no-such-slug-0000"}})
+    assert any(f.invariant == "I2" and "epoch.marker" in f.message
+               for f in report.violations())
+
+
 def test_staleness_reported_for_unreconciled_impacts():
     """Roll the HWM back one node; the impact of calm-heron-0003 becomes pending."""
     import json

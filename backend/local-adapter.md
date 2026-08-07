@@ -159,6 +159,16 @@ git add .hypergraph/graph && git commit -m "Import the graph into the repo"
 file without `--force`. It stamps each node's `flywheel:` block so the mirror knows what
 has already been pushed.
 
+**Adopting a project with a pre-protocol past** (the hypergraph-adopt skill): the same
+`import` is the fork — node_ids/slugs are preserved verbatim, the source graph stays
+untouched as the frozen archive (`archive:` in config), and an `epoch.marker` config
+key exempts the strictly-older legacy nodes from I2 (SPEC: Adoption epochs). Artifacts
+do **not** survive import — the local backend has no artifact op (§9) — so the archive
+reference is the only pointer to them. In epoch-split mode (huge graphs, history left
+on the archive) the marker is authored with `--root`: node files can only parent on
+slugs that resolve locally, so the archive lineage is recorded in the marker's content
+instead of as a parent edge.
+
 ## Mirroring to Flywheel
 
 Local files stay canonical; Flywheel becomes a regenerable, continuously-updated

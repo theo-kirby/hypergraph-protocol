@@ -1,0 +1,33 @@
+{
+ "version": 1,
+ "nodes": [
+  {
+   "node_id": "20000000-0000-0000-0000-000000000001",
+   "slug_name": "quiet-root-0001",
+   "title": "epoch-demo — record",
+   "content": "Record root for the epoch-demo project. Append-only historical log.",
+   "parent_ids": [],
+   "created_at": "2026-08-01T00:00:00+00:00"
+  },
+  {
+   "node_id": "20000000-0000-0000-0000-000000000002",
+   "slug_name": "faded-scroll-0002",
+   "title": "Legacy: exploratory ingest run",
+   "content": "Free-form legacy note imported from the pre-hypergraph graph. No template sections, no state impact — written before the project adopted the protocol.",
+   "parent_ids": [
+    "20000000-0000-0000-0000-000000000001"
+   ],
+   "created_at": "2026-08-01T01:00:00+00:00"
+  },
+  {
+   "node_id": "20000000-0000-0000-0000-000000000003",
+   "slug_name": "bright-gate-0003",
+   "title": "Adopted Hypergraph",
+   "content": "## What\n\nAdopted the Hypergraph protocol; this node is the epoch boundary.\n\n## Why\n\nThe project predates the protocol; strictly older record nodes are legacy history.\n\n## Method\n\nhypergraph-adopt: imported the legacy graph verbatim, seeded the state graph.\n\n## Result\n\nEpoch marker written to config; legacy nodes exempt from I2 behind it.\n\n## Repo\n\n- repo: none\n- branch: main\n- commit: 0000000\n\n## State Impact\n\nnone: adoption boundary — the state graph was seeded by the adopt pass itself\n",
+   "parent_ids": [
+    "20000000-0000-0000-0000-000000000002"
+   ],
+   "created_at": "2026-08-02T00:00:00+00:00"
+  }
+ ]
+}

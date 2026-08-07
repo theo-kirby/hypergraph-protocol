@@ -67,6 +67,12 @@ human-readable description of what changes (status flip, new claim, new negative
 knowledge, supersession). Writing the impact is the *recording* agent's job — it is a
 declaration, not a state write (see I3).
 
+**Adoption-epoch exemption**: when the project config declares an epoch marker
+(see Conventions: Adoption epochs), record nodes created *strictly before* the
+marker node are legacy history and exempt from this invariant — the checker
+reports their count as info instead of flagging them. The exemption is
+check-time only: authoring a new record node is never epoch-exempt.
+
 ### I3 — Single-writer state
 
 Only the reconcile pass writes state nodes. Recording agents — including many running
@@ -163,6 +169,32 @@ I1) or reconcile hallucinated (fix: rewrite the state node from its citations).
 - **State stays small.** The whole state graph should be readable in one sitting.
   Reconcile compacts: merge redundant claims, drop superseded detail (the record graph
   keeps the history), keep negative knowledge tight.
+
+## Adoption epochs
+
+Projects that adopt Hypergraph mid-life have history the protocol cannot retrofit:
+imported legacy graph nodes (or none at all) that predate the templates. The
+adoption boundary is an **epoch marker** — the "Adopted Hypergraph" decision record
+node written by the hypergraph-adopt skill — declared in config:
+
+```yaml
+epoch:
+  marker: <record-slug>   # nodes created strictly before the marker's created_at are legacy
+```
+
+- Record nodes created strictly before the marker are exempt from I2/template
+  compliance; `check` reports the exempted count as info. Everything at or after
+  the marker is held to the full protocol. Authoring is never epoch-exempt.
+- An unresolvable `epoch.marker` is a violation — a silently ignored epoch would
+  re-flag every legacy node.
+- **Parentage**: with a fully imported legacy graph, the marker's causal parent is
+  the newest legacy node. In epoch-split mode (huge graphs; older history left on
+  the archive backend) and in ground-up adoptions, the marker is a parentless local
+  root whose content records the archive lineage — the local backend rejects parent
+  slugs that don't resolve locally, so a cross-backend parent edge is not
+  representable.
+- Legacy history is never truncated: it is either imported verbatim or referenced
+  via the config's `archive:` block (see hypergraph-adopt).
 
 ## Forward work and Operator directives
 

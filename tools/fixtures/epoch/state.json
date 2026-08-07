@@ -1,0 +1,13 @@
+{
+ "version": 1,
+ "nodes": [
+  {
+   "node_id": "30000000-0000-0000-0000-000000000001",
+   "slug_name": "calm-state-0001",
+   "title": "epoch-demo — state",
+   "content": "Distilled state graph for the epoch-demo project.\n\n## Reconciliation\n\n- high_water_mark: bright-gate-0003\n- reconciled_at: 2026-08-02T00:30:00+00:00\n",
+   "parent_ids": [],
+   "created_at": "2026-08-02T00:10:00+00:00"
+  }
+ ]
+}

@@ -32,3 +32,19 @@ graph_dir: .hypergraph/graph
 # `mirror: flywheel`, local stays canonical and Flywheel is a regenerable projection
 # refreshed via `hypergraph push --plan` → skill executes → `push --record-result`.
 # mirror: flywheel
+
+# Optional: adoption epoch (SPEC: Adoption epochs). Record nodes created strictly
+# before the marker node are legacy history, exempt from I2/template compliance in
+# `check`. Written by hypergraph-adopt.
+# epoch:
+#   marker: adjective-noun-0000
+
+# Optional (mandatory for mode-A adoptions): where the pre-adoption graph lives.
+# Purely documentary — the checker doesn't read it — but it is the only pointer to
+# legacy artifacts, which do not survive import to the local backend.
+# archive:
+#   backend: flywheel
+#   roots:
+#     - node_id: 00000000-0000-0000-0000-000000000000
+#       slug: adjective-noun-0000
+#   note: frozen pre-adoption graph; artifacts live here
