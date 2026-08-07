@@ -188,11 +188,12 @@ epoch:
 - An unresolvable `epoch.marker` is a violation — a silently ignored epoch would
   re-flag every legacy node.
 - **Parentage**: with a fully imported legacy graph, the marker's causal parent is
-  the newest legacy node. In epoch-split mode (huge graphs; older history left on
-  the archive backend) and in ground-up adoptions, the marker is a parentless local
-  root whose content records the archive lineage — the local backend rejects parent
-  slugs that don't resolve locally, so a cross-backend parent edge is not
-  representable.
+  the newest legacy node; in a ground-up (mode-B) adoption it is the newest
+  authored prehistory node — both resolve locally, and a graph has exactly one
+  parentless root. Only in epoch-split mode (huge graphs; older history left on
+  the archive backend) is the marker itself the local record root, recording the
+  archive lineage in its content — the local backend rejects parent slugs that
+  don't resolve locally, so a cross-backend parent edge is not representable.
 - Legacy history is never truncated: it is either imported verbatim or referenced
   via the config's `archive:` block (see hypergraph-adopt).
 

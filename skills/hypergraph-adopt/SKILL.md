@@ -45,11 +45,13 @@ available and the user wants hosting) — same decision framework as init.
 3. **Epoch marker.** One decision record node titled "Adopted Hypergraph"
    documenting the conversion (what was imported/authored, from where, what stayed
    on the archive). Parentage (SPEC: Adoption epochs): full-import mode A → parent =
-   the **newest legacy node**; epoch-split and mode B → `--root` (a second parentless
-   node is fine in mode B where the marker often *is* near the front) — record the
-   archive lineage in its content, since local files cannot parent on slugs that
-   don't resolve locally. Write `epoch: {marker: <slug>}` to the config so `check`
-   exempts strictly-older nodes from I2.
+   the **newest legacy node**; mode B → parent = the **newest prehistory node**
+   (they resolve locally, and the CLI refuses a second parentless root per graph);
+   epoch-split only → the marker becomes the record **root** of the local graph
+   (`--root`, no other root exists locally) and records the archive lineage in its
+   content, since local files cannot parent on slugs that don't resolve locally.
+   Write `epoch: {marker: <slug>}` to the config so `check` exempts strictly-older
+   nodes from I2.
 4. **Distillation → state graph.** The state skeleton must reflect what is *actually
    known*, not an empty template:
    - Architecture components from the repo + graph (3–8 nodes, init granularity).
