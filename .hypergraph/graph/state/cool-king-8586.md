@@ -8,9 +8,9 @@ summary: Single-writer distilled state graph root for the hypergraph-protocol pr
 flywheel:
   node_id: 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
   slug: cool-king-8586
-  revision: 8
-  pushed_at: '2026-08-07T18:21:35+00:00'
-  content_sha256: fa665559a947976a87b55c4d004686ed862c715ed64dee6521c65554b2c3ec7e
+  revision: 9
+  pushed_at: '2026-08-07T18:23:46+00:00'
+  content_sha256: 4c6a26e5614d8c7a0822891dac1172cf7179dfe5d9bb31038b38f11bfde0fd62
 ---
 Distilled state graph for the hypergraph-protocol project (https://github.com/theo-kirby/hypergraph-protocol; PyPI: hypergraph-protocol; renamed from "hypergraph" [rec: damp-mountain-8757]): a protocol + skills + checker for keeping research projects legible to fresh agents via a two-graph discipline (append-only record graph + this single-writer state projection).
 

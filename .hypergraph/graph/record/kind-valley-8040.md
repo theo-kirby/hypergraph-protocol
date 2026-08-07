@@ -6,6 +6,12 @@ created_at: '2026-08-07T18:22:49+00:00'
 parents:
 - sleepy-branch-3744
 summary: '7-op push applied cleanly, but Flywheel-minted slugs make the projection internally inconsistent: 25 dangling-pointer violations against a Flywheel export of a graph that checks 0/0 locally.'
+flywheel:
+  node_id: a35a0131-7578-586d-81e2-93e5025ecb30
+  slug: blue-cell-4752
+  revision: 0
+  pushed_at: '2026-08-07T18:23:46+00:00'
+  content_sha256: 8121491289b55a369870437d4ce3556a28f6ad0f30907ca1a5d828bceca64196
 ---
 ## What
 

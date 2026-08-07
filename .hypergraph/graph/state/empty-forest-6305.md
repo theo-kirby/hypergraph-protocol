@@ -9,9 +9,9 @@ summary: 'Open gap: git-native second adapter behind INTERFACE.md; sequenced aft
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 1
-  pushed_at: '2026-08-07T18:21:35+00:00'
-  content_sha256: 5bf1322bf65fc47109aff77b48dd0d1dae4d9a30ff1db48849defb56fe594486
+  revision: 2
+  pushed_at: '2026-08-07T18:23:46+00:00'
+  content_sha256: 1102fd66e59b47ba5a5517f5e1287e9c33e76bfa8cfe1c5b01f4c9770e1ab6fc
 ---
 Status: working
 

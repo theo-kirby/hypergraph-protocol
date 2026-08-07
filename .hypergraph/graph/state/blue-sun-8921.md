@@ -9,9 +9,9 @@ summary: 10 abstract ops + Flywheel MCP recipes; working.
 flywheel:
   node_id: d82f019d-c029-5999-ad8c-332abcfaa3ee
   slug: blue-sun-8921
-  revision: 2
-  pushed_at: '2026-08-07T18:21:35+00:00'
-  content_sha256: 96d3866910bed5d24cff4876e27110d3c7e19cad20046b55b27123994442ff3e
+  revision: 3
+  pushed_at: '2026-08-07T18:23:46+00:00'
+  content_sha256: f36167f0ebecb990e1d386f555e9280ad4d35cc9b55f9602de45781f81e3be49
 ---
 Status: working
 
