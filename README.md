@@ -63,13 +63,18 @@ open .hypergraph/viz.html          # interactive: pan/zoom, click nodes, search;
 uv run pytest tests/               # checker + viz test suite over committed fixtures
 ```
 
-The viz page has four tabs: **Record** (causal DAG), **State** (architecture tree,
-status-colored, frontier highlighted), **Combination** (record log and state
-projection side by side, with provenance citations and declared State Impacts drawn
-as cross-graph links), and **Hypergraph** (force-directed view where each state
-node's contributing record set is drawn as a convex-hull hyperedge blob;
-deterministic layout, no randomness). Deep links work: `viz.html#record`, `#state`,
-or `#<any-slug>` to jump straight to a node.
+The viz page is one unified view driven by a **Display** section in the sidebar:
+graph visibility (record / state / both), node style (cards / circles), layout
+(layered / force — independent of node style), and per-species edge toggles
+(parent edges, impact links, provenance links, hyperedge blobs — each state
+node's contributing record set drawn as a convex-hull blob; deterministic layout,
+no randomness). Preset chips — **Record**, **State**, **Columns** (record log and
+state projection side by side with cross-graph links), **Force** (force-directed
+circles with blobs) — reproduce the classic arrangements, and any custom mix in
+between is fair game. The sidebar is resizable (drag the divider) and collapsible
+(click it); exports live in the header's download menu. Deep links still work:
+`viz.html#record`, `#state`, `#combo`, `#hyper`, or `#<any-slug>` to jump straight
+to a node.
 
 ## Repo map
 

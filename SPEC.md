@@ -226,10 +226,11 @@ uv run tools/hypergraph.py viz    --record .hypergraph/cache/record.json --state
 ```
 
 `check` exits nonzero on any I2/I4/I5/I6/I7 violation. `viz` emits a self-contained
-interactive HTML visualization (no network, no JS dependencies): record view, state
-view, and a combined hypergraph view where `## Provenance` citations and `## State
-Impact` declarations are drawn as cross-graph links — the markdown pointers made
-visible, still never graph edges.
+interactive HTML visualization (no network, no JS dependencies): a single
+toggleable view over both graphs — with presets reproducing the classic record,
+state, columns, and force arrangements — where `## Provenance` citations and
+`## State Impact` declarations are drawn as cross-graph links — the markdown
+pointers made visible, still never graph edges.
 
 ## Backend
 

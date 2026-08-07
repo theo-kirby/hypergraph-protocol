@@ -788,31 +788,71 @@ VIZ_TEMPLATE = r"""<!doctype html>
   body[data-theme=dark] { color-scheme: dark;
     --page:#0d0d0d; --surface:#1a1a19; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
     --grid:#2c2c2a; --border:rgba(255,255,255,.10); --accent:#3987e5; --code:#262624; }
-  header { display:flex; align-items:center; gap:10px; padding:8px 14px; flex:none;
-           background:var(--surface); border-bottom:1px solid var(--grid); }
-  header h1 { font-size:14px; font-weight:650; white-space:nowrap; }
+  header { display:flex; align-items:center; gap:6px; padding:8px 14px; flex:none;
+           background:var(--surface); }
+  header h1 { font-size:14px; font-weight:650; white-space:nowrap; margin-right:auto; }
   header h1 span { color:var(--muted); font-weight:500; }
-  .tabs { display:flex; background:var(--page); border:1px solid var(--grid);
-          border-radius:8px; padding:2px; }
-  .tabs button { border:0; background:transparent; color:var(--ink2); font:inherit;
-                 font-size:12.5px; padding:4px 12px; border-radius:6px; cursor:pointer; }
-  .tabs button.active { background:var(--surface); color:var(--ink); font-weight:600;
-                        box-shadow:0 0 0 1px var(--border); }
-  #search { flex:0 1 230px; margin-left:auto; font:inherit; font-size:12.5px;
-            padding:5px 10px; border-radius:8px; border:1px solid var(--grid);
-            background:var(--page); color:var(--ink); outline:none; min-width:80px; }
-  #search:focus { border-color:var(--accent); }
-  .btn { border:1px solid var(--grid); background:var(--surface); color:var(--ink2);
-         font:inherit; font-size:12.5px; padding:4px 10px; border-radius:8px;
-         cursor:pointer; white-space:nowrap; }
-  .btn:hover { color:var(--ink); border-color:var(--muted); }
-  main { flex:1; display:flex; min-height:0; }
-  #canvas { flex:1; position:relative; min-width:0; }
+  .iconbtn { display:flex; align-items:center; justify-content:center; width:30px;
+             height:30px; border:0; border-radius:8px; background:transparent;
+             color:var(--ink2); cursor:pointer; padding:0; }
+  .iconbtn:hover { background:var(--page); color:var(--ink); }
+  .iconbtn svg { width:16px; height:16px; fill:none; stroke:currentColor;
+                 stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  body[data-theme=light] #themeBtn .moon { display:none; }
+  body[data-theme=dark] #themeBtn .sun { display:none; }
+  #exportWrap { position:relative; }
+  #exportMenu { position:absolute; right:0; top:34px; z-index:10; min-width:150px;
+                background:var(--surface); border:1px solid var(--grid);
+                border-radius:8px; padding:4px; box-shadow:0 4px 14px var(--border); }
+  #exportMenu[hidden] { display:none; }
+  #exportMenu button { display:block; width:100%; text-align:left; border:0;
+                       background:transparent; color:var(--ink2); font:inherit;
+                       font-size:12.5px; padding:6px 10px; border-radius:6px;
+                       cursor:pointer; white-space:nowrap; }
+  #exportMenu button:hover { background:var(--page); color:var(--ink); }
+  main { flex:1; display:flex; min-height:0; background:var(--surface); }
+  #canvas { flex:1; position:relative; min-width:0; background:var(--page);
+            border-top-right-radius:10px; overflow:hidden; }
   #svg { position:absolute; inset:0; width:100%; height:100%; display:block;
-         cursor:grab; background:var(--page); }
+         cursor:grab; }
   #svg.dragging { cursor:grabbing; }
-  #panel { width:400px; flex:none; background:var(--surface);
-           border-left:1px solid var(--grid); overflow-y:auto; padding:16px 18px;
+  #divider { width:7px; flex:none; cursor:col-resize; background:var(--surface);
+             display:flex; align-items:center; justify-content:center; }
+  #divider svg { width:14px; height:14px; flex:none; color:var(--muted);
+                 fill:none; stroke:currentColor; stroke-width:2;
+                 stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
+  #divider.collapsed svg { transform:scaleX(-1); }
+  #side { width:400px; flex:none; display:flex; flex-direction:column; min-width:0;
+          background:var(--surface); overflow:hidden; }
+  #controls { flex:none; padding:12px 18px; border-bottom:1px solid var(--grid); }
+  #search { width:100%; font:inherit; font-size:12.5px; padding:5px 10px;
+            border-radius:8px; border:1px solid var(--grid); background:var(--page);
+            color:var(--ink); outline:none; }
+  #search:focus { border-color:var(--accent); }
+  #presets { display:flex; gap:6px; margin-top:10px; }
+  #presets button { flex:1; border:1px solid var(--grid); background:transparent;
+                    color:var(--ink2); font:inherit; font-size:12px; padding:4px 0;
+                    border-radius:999px; cursor:pointer; white-space:nowrap; }
+  #presets button:hover { color:var(--ink); border-color:var(--muted); }
+  #presets button.active { background:var(--page); color:var(--ink);
+                           font-weight:600; border-color:var(--muted); }
+  #toggles { margin-top:12px; display:flex; flex-direction:column; gap:8px; }
+  .seg { display:flex; align-items:center; gap:8px; }
+  .seg .lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+              color:var(--muted); width:48px; flex:none; }
+  .seg .opts { display:flex; flex:1; background:var(--page);
+               border:1px solid var(--grid); border-radius:8px; padding:2px; }
+  .seg .opts button { flex:1; border:0; background:transparent; color:var(--ink2);
+                      font:inherit; font-size:12px; padding:3px 0; border-radius:6px;
+                      cursor:pointer; }
+  .seg .opts button.active { background:var(--surface); color:var(--ink);
+                             font-weight:600; box-shadow:0 0 0 1px var(--border); }
+  .checks { display:flex; flex-wrap:wrap; gap:4px 14px; margin-top:2px; }
+  .checks label { display:inline-flex; align-items:center; gap:6px; font-size:12px;
+                  color:var(--ink2); cursor:pointer; white-space:nowrap; }
+  .checks label.off { opacity:.45; }
+  .checks input { accent-color:var(--accent); margin:0; }
+  #panel { flex:1; overflow-y:auto; padding:16px 18px;
            font-size:13px; line-height:1.55; }
   #panel h2 { font-size:14.5px; line-height:1.35; margin-bottom:6px; }
   #panel h3 { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
@@ -845,32 +885,80 @@ VIZ_TEMPLATE = r"""<!doctype html>
   .hint { color:var(--muted); font-size:11.5px; margin-top:16px; }
   .stats td { padding:1px 10px 1px 0; color:var(--ink2); font-size:12px; }
   .stats td:first-child { color:var(--muted); }
-  @media (max-width: 900px) { #panel { width: 300px; } }
   @media print {
-    header, #panel { display:none !important; }
+    header, #side, #divider { display:none !important; }
     body { background:#fff; }
-    #canvas { position:fixed; inset:0; }
+    #canvas { position:fixed; inset:0; border-radius:0; }
   }
 </style>
 </head>
 <body>
 <header>
   <h1>__TITLE__ <span>· hypergraph</span></h1>
-  <div class="tabs" id="tabs">
-    <button data-view="record">Record</button>
-    <button data-view="state">State</button>
-    <button data-view="combo">Combination</button>
-    <button data-view="hyper" class="active">Hypergraph</button>
+  <button class="iconbtn" id="fitBtn" title="Fit graph to window">
+    <svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4"/></svg>
+  </button>
+  <button class="iconbtn" id="themeBtn" title="Toggle light/dark">
+    <svg class="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <svg class="moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+  </button>
+  <div id="exportWrap">
+    <button class="iconbtn" id="exportBtn" title="Export">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+    </button>
+    <div id="exportMenu" hidden>
+      <button id="svgBtn">Download SVG</button>
+      <button id="printBtn">Print / PDF</button>
+    </div>
   </div>
-  <input id="search" type="search" placeholder="Filter: slug, title, content…">
-  <button class="btn" id="fitBtn" title="Fit graph to window">Fit</button>
-  <button class="btn" id="themeBtn" title="Toggle light/dark">Theme</button>
-  <button class="btn" id="svgBtn" title="Download current view as SVG">SVG</button>
-  <button class="btn" id="printBtn" title="Print / save as PDF">PDF</button>
 </header>
 <main>
   <div id="canvas"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
-  <aside id="panel"></aside>
+  <div id="divider" title="Drag to resize · click to collapse">
+    <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+  </div>
+  <aside id="side">
+    <div id="controls">
+      <input id="search" type="search" placeholder="Filter: slug, title, content…">
+      <div id="presets">
+        <button data-preset="record">Record</button>
+        <button data-preset="state">State</button>
+        <button data-preset="combo">Columns</button>
+        <button data-preset="hyper">Force</button>
+      </div>
+      <div id="toggles">
+        <div class="seg" data-key="graphs">
+          <span class="lbl">Graphs</span>
+          <div class="opts">
+            <button data-val="record">Record</button>
+            <button data-val="state">State</button>
+            <button data-val="both">Both</button>
+          </div>
+        </div>
+        <div class="seg" data-key="style">
+          <span class="lbl">Nodes</span>
+          <div class="opts">
+            <button data-val="cards">Cards</button>
+            <button data-val="circles">Circles</button>
+          </div>
+        </div>
+        <div class="seg" data-key="layout">
+          <span class="lbl">Layout</span>
+          <div class="opts">
+            <button data-val="layered">Layered</button>
+            <button data-val="force">Force</button>
+          </div>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" data-key="tree">Parent edges</label>
+          <label><input type="checkbox" data-key="impact">Impact links</label>
+          <label><input type="checkbox" data-key="prov">Provenance links</label>
+          <label><input type="checkbox" data-key="blobs">Hyperedge blobs</label>
+        </div>
+      </div>
+    </div>
+    <div id="panel"></div>
+  </aside>
 </main>
 <script>
 "use strict";
@@ -894,7 +982,7 @@ const THEMES = {
 };
 const SVGNS = "http://www.w3.org/2000/svg";
 const NW = 236, NH = 62;
-const R = 16, BPAD = 18;  // hypergraph view: circle radius, blob hull padding
+const R = 16, BPAD = 18;  // circle style: circle radius, blob hull padding
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 const SLUG_JS = /\b[a-z][a-z0-9]*-[a-z][a-z0-9]*-[0-9]{4}\b/g;
@@ -903,13 +991,53 @@ const bySlug = {};
 DATA.record.nodes.forEach(n => bySlug[n.slug] = { graph: "record", node: n });
 DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
 
-let view = "hyper";
+// Display state: one unified view driven by toggles. Presets below reproduce
+// the classic arrangements; any custom mix is equally valid.
+const show = {
+  graphs: "record",   // "record" | "state" | "both"
+  style:  "circles",  // "cards" | "circles"
+  layout: "force",    // "layered" | "force"
+  tree:   true,       // intra-graph parent edges
+  impact: false,      // cross-graph impact links (needs graphs === "both")
+  prov:   false,      // cross-graph provenance links (ditto)
+  blobs:  true,       // hyperedge blobs (needs the record graph visible)
+};
+const recVis = () => show.graphs !== "state";
+const stVis  = () => show.graphs !== "record";
+// Pan/zoom + node positions are cached per layout signature; edge/blob toggles
+// deliberately excluded so flipping a checkbox never resets pan or drag state.
+const layoutKey = () => show.layout + ":" + show.graphs + ":" + show.style;
+
+const PRESETS = {
+  record: { graphs:"record", style:"cards",   layout:"layered",
+            tree:true, impact:false, prov:false, blobs:false },
+  state:  { graphs:"state",  style:"cards",   layout:"layered",
+            tree:true, impact:false, prov:false, blobs:false },
+  combo:  { graphs:"both",   style:"cards",   layout:"layered",
+            tree:true, impact:true,  prov:true,  blobs:false },
+  hyper:  { graphs:"record", style:"circles", layout:"force",
+            tree:true, impact:false, prov:false, blobs:true },
+};
+function activePreset() {
+  for (const name in PRESETS) {
+    const p = PRESETS[name];
+    if (Object.keys(show).every(k => show[k] === p[k])) return name;
+  }
+  return null;
+}
+
 let theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 let selected = null, query = "";
-const tf = { record:{x:0,y:0,k:1}, state:{x:0,y:0,k:1},
-             combo:{x:0,y:0,k:1}, hyper:{x:0,y:0,k:1} };
-const positions = { record:null, state:null, combo:null, hyper:null };
-const fitDone = { record:false, state:false, combo:false, hyper:false };
+const tf = {}, positions = {}, fitDone = {};
+function posFor() {
+  const k = layoutKey();
+  if (!positions[k]) positions[k] = computeLayout();
+  return positions[k];
+}
+function tfFor() {
+  const k = layoutKey();
+  return tf[k] || (tf[k] = { x: 0, y: 0, k: 1 });
+}
 let nodeEls = {}, edgeEls = [], edges = [];
 
 const svg = document.getElementById("svg");
@@ -981,11 +1109,11 @@ function simTick(pos, nodes, springs, clusters, alpha) {
       f[nodes[j]].x -= ux * rep; f[nodes[j]].y -= uy * rep;
     }
   }
-  springs.forEach(sp => {                           // record DAG springs
+  springs.forEach(sp => {                           // [from, to, k, rest]
     const a = pos[sp[0]], b = pos[sp[1]];
     const dx = b.x - a.x, dy = b.y - a.y;
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
-    const k = 0.03 * (d - 110) / d;
+    const k = sp[2] * (d - sp[3]) / d;
     f[sp[0]].x += dx * k; f[sp[0]].y += dy * k;
     f[sp[1]].x -= dx * k; f[sp[1]].y -= dy * k;
   });
@@ -1007,13 +1135,27 @@ function simTick(pos, nodes, springs, clusters, alpha) {
   });
 }
 
+// Springs come from graph *structure* (parent edges + cross-links), never from
+// the edge display toggles, so the layout is stable under checkbox flips.
+// Node iteration order is DATA array order (record then state): deterministic.
 function runSim(pos) {
-  const nodes = DATA.record.nodes.map(n => n.slug);
+  const nodes = [];
   const springs = [];
-  DATA.record.nodes.forEach(n => n.parents.forEach(p => {
-    if (pos[p]) springs.push([p, n.slug]);
-  }));
-  const clusters = hyperedges().list.map(h => h.members.filter(s => pos[s]));
+  const tree = g => DATA[g].nodes.forEach(n => {
+    nodes.push(n.slug);
+    n.parents.forEach(p => { if (pos[p]) springs.push([p, n.slug, 0.03, 110]); });
+  });
+  if (recVis()) tree("record");
+  if (stVis()) tree("state");
+  if (recVis() && stVis()) DATA.links.forEach(l => {
+    if (pos[l.record] && pos[l.state])
+      springs.push([l.record, l.state, 0.012, 170]);
+  });
+  const clusters = hyperedges().list.map(h => {
+    const ms = h.members.filter(s => pos[s]);
+    if (pos[h.state]) ms.push(h.state);  // blobs settle near their state node
+    return ms;
+  });
   let alpha = 1.0;
   for (let t = 0; t < 300; t++) {
     simTick(pos, nodes, springs, clusters, alpha);
@@ -1021,26 +1163,67 @@ function runSim(pos) {
   }
 }
 
-function computeLayout(v) {
+// x offset of the state column in the layered two-column arrangement; also
+// anchors the column header texts.
+function comboStateX() { return show.style === "cards" ? NW + 430 : 300; }
+
+function computeLayout() {
   const pos = {};
-  if (v === "record" || v === "state") {
-    const perLayer = {};
-    DATA[v].nodes.forEach(n => (perLayer[n.layer] = perLayer[n.layer] || []).push(n));
-    DATA[v].nodes.forEach(n => {
-      const width = perLayer[n.layer].length;
-      pos[n.slug] = { x: (n.order - (width - 1) / 2) * (NW + 70),
-                      y: n.layer * (NH + 78) };
+  const cards = show.style === "cards";
+  if (show.layout === "layered") {
+    if (show.graphs === "both") {  // two chronological columns
+      const sx = comboStateX();
+      const rStep = cards ? NH + 30 : 44, sStep = cards ? NH + 46 : 44;
+      DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.seq * rStep });
+      DATA.state.nodes.forEach(n => pos[n.slug] = { x: sx, y: n.seq * sStep });
+    } else {                       // single graph: centered layer grid
+      const g = show.graphs;
+      const dx = cards ? NW + 70 : 76, dy = cards ? NH + 78 : 84;
+      const perLayer = {};
+      DATA[g].nodes.forEach(n => (perLayer[n.layer] = perLayer[n.layer] || []).push(n));
+      DATA[g].nodes.forEach(n => {
+        const width = perLayer[n.layer].length;
+        pos[n.slug] = { x: (n.order - (width - 1) / 2) * dx, y: n.layer * dy };
+      });
+    }
+  } else {                         // force: deterministic seed + sim
+    let maxOrder = 0;
+    if (recVis()) DATA.record.nodes.forEach(n => {
+      maxOrder = Math.max(maxOrder, n.order);
+      pos[n.slug] = {
+        x: n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
+        y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
+      };
     });
-  } else if (v === "combo") {
-    const gap = 430;
-    DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.seq * (NH + 30) });
-    DATA.state.nodes.forEach(n => pos[n.slug] = { x: NW + gap, y: n.seq * (NH + 46) });
-  } else {
-    DATA.record.nodes.forEach(n => pos[n.slug] = {
-      x: n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
+    if (stVis()) DATA.state.nodes.forEach(n => pos[n.slug] = {
+      x: (maxOrder + 3) * 80 + n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
       y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
     });
     runSim(pos);
+    if (cards) {  // sim runs in circle metric; stretch, then separate any
+      for (const s in pos) { pos[s].x *= 3.2; pos[s].y *= 1.8; }
+      const slugs = Object.keys(pos);  // insertion order: deterministic
+      const mw = NW + 24, mh = NH + 24;
+      for (let pass = 0; pass < 40; pass++) {
+        let any = false;
+        for (let i = 0; i < slugs.length; i++) {
+          for (let j = i + 1; j < slugs.length; j++) {
+            const a = pos[slugs[i]], b = pos[slugs[j]];
+            const ox = mw - Math.abs(a.x - b.x), oy = mh - Math.abs(a.y - b.y);
+            if (ox <= 0 || oy <= 0) continue;  // cards clear of each other
+            any = true;
+            if (ox * mh < oy * mw) {  // push apart along the cheaper axis
+              const s = (a.x <= b.x ? -1 : 1) * ox / 2;
+              a.x += s; b.x -= s;
+            } else {
+              const s = (a.y <= b.y ? -1 : 1) * oy / 2;
+              a.y += s; b.y -= s;
+            }
+          }
+        }
+        if (!any) break;
+      }
+    }
   }
   return pos;
 }
@@ -1066,9 +1249,13 @@ function convexHull(pts) {
 }
 
 function blobPath(members, pos) {
-  const pts = members.map(s => pos[s]).filter(Boolean);
-  const RB = R + BPAD;
+  const cards = show.style === "cards";
+  const RB = cards ? BPAD : R + BPAD;
+  let pts = members.map(s => pos[s]).filter(Boolean);
   if (!pts.length) return null;
+  if (cards) pts = pts.flatMap(p => [  // hull must wrap the full card rects
+    { x: p.x - NW / 2, y: p.y - NH / 2 }, { x: p.x + NW / 2, y: p.y - NH / 2 },
+    { x: p.x - NW / 2, y: p.y + NH / 2 }, { x: p.x + NW / 2, y: p.y + NH / 2 }]);
   if (pts.length === 1) {
     const p = pts[0];
     return `M ${p.x - RB} ${p.y} a ${RB} ${RB} 0 1 0 ${2 * RB} 0` +
@@ -1105,9 +1292,10 @@ function blobPath(members, pos) {
 
 function blobLabelPos(members, pos) {
   const pts = members.map(s => pos[s]).filter(Boolean);
+  const off = (show.style === "cards" ? NH / 2 + BPAD : R + BPAD) + 8;
   let cx = 0, top = 1e9;
   pts.forEach(p => { cx += p.x; top = Math.min(top, p.y); });
-  return { x: cx / pts.length, y: top - (R + BPAD) - 8 };
+  return { x: cx / pts.length, y: top - off };
 }
 
 // All blob label positions at once, with a deterministic de-overlap pass:
@@ -1133,35 +1321,51 @@ function blobLabelPositions(pos) {
   return out;
 }
 
-function edgesFor(v) {
+// Which edges exist is decided by the display toggles; how they are drawn is
+// decided separately by node style + layout in edgePath.
+function edgesFor() {
   const out = [];
+  const both = show.graphs === "both";
+  const sided = both && show.layout === "layered";  // two-column arrangement
   const tree = (g, side) => DATA[g].nodes.forEach(n =>
     n.parents.forEach(p => out.push({ kind:"tree", from:p, to:n.slug, side })));
-  if (v === "record") tree("record", null);
-  else if (v === "state") tree("state", null);
-  else if (v === "combo") {
-    tree("record", "left");
-    tree("state", "right");
-    DATA.links.forEach(l => out.push({
+  if (show.tree) {
+    if (recVis()) tree("record", sided ? "left" : null);
+    if (stVis()) tree("state", sided ? "right" : null);
+  }
+  if (both) DATA.links.forEach(l => {
+    if (l.kind === "impact" ? !show.impact : !show.prov) return;
+    out.push({
       kind: l.kind, label: l.label,
       from: l.kind === "impact" ? l.record : l.state,
       to:   l.kind === "impact" ? l.state : l.record,
-    }));
-  } else {
-    DATA.record.nodes.forEach(n =>
-      n.parents.forEach(p => out.push({ kind: "plain", from: p, to: n.slug })));
-  }
+    });
+  });
   return out;
+}
+
+// Point on the border of the NW x NH card centered at a, along a -> b.
+function trimToRect(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  if (!dx && !dy) return { x: a.x, y: a.y };
+  const tx = dx ? (NW / 2) / Math.abs(dx) : Infinity;
+  const ty = dy ? (NH / 2) / Math.abs(dy) : Infinity;
+  const t = Math.min(tx, ty);
+  return { x: a.x + dx * t, y: a.y + dy * t };
 }
 
 function edgePath(e, pos) {
   const a = pos[e.from], b = pos[e.to];
   if (!a || !b) return null;
-  if (e.kind === "plain") {  // straight line trimmed to circle perimeters
+  if (show.style === "circles") {  // straight line trimmed to circle perimeters
     const dx = b.x - a.x, dy = b.y - a.y;
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
     const ux = dx / d, uy = dy / d;
     return `M ${a.x + ux * R} ${a.y + uy * R} L ${b.x - ux * R} ${b.y - uy * R}`;
+  }
+  if (show.layout === "force") {  // cards under force: straight, rect-clipped
+    const p1 = trimToRect(a, b), p2 = trimToRect(b, a);
+    return `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
   }
   if (e.kind === "tree" && !e.side) {
     const y1 = a.y + NH / 2, y2 = b.y - NH / 2, ym = (y1 + y2) / 2;
@@ -1203,8 +1407,8 @@ function accentFor(entry) {
 }
 
 function nodeXf(p) {
-  return view === "hyper" ? `translate(${p.x},${p.y})`
-                          : `translate(${p.x - NW / 2},${p.y - NH / 2})`;
+  return show.style === "circles" ? `translate(${p.x},${p.y})`
+                                  : `translate(${p.x - NW / 2},${p.y - NH / 2})`;
 }
 
 function drawNode(entry, pos) {
@@ -1213,6 +1417,7 @@ function drawNode(entry, pos) {
   const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
                       transform: nodeXf(p) });
   const frontier = graph === "state" && node.frontier;
+  // card rect must stay firstChild (updateDim restyles it)
   g.appendChild(el("rect", { x: .5, y: .5, width: NW - 1, height: NH - 1, rx: 9,
     fill: T().surface, stroke: frontier ? accentFor(entry) : T().border,
     "stroke-width": frontier ? 1.4 : 1 }));
@@ -1253,14 +1458,14 @@ function drawNode(entry, pos) {
   return g;
 }
 
-// Hypergraph view: record nodes as plain circles. The circle must stay
+// Circle style: nodes as plain circles (record or state). The circle must stay
 // firstChild (updateDim restyles it); <title> hover tooltip appended last.
 function drawCircleNode(entry, pos) {
   const { node } = entry;
   const p = pos[node.slug];
   const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
                       transform: nodeXf(p) });
-  const heavy = node.is_root || node.is_hwm || node.unreconciled;
+  const heavy = node.is_root || node.is_hwm || node.unreconciled || node.frontier;
   g.appendChild(el("circle", { r: R, fill: T().surface, stroke: accentFor(entry),
     "stroke-width": heavy ? 2.2 : 1.4 }));
   const tip = el("title");
@@ -1299,7 +1504,7 @@ function drawBlobs(pos) {
 }
 
 function updateBlobs(slug) {
-  const pos = positions[view], H = hyperedges();
+  const pos = posFor(), H = hyperedges();
   (H.memberOf[slug] || []).forEach(st => {
     const be = blobEls[st];
     if (be) be.path.setAttribute("d", blobPath(H.index[st].members, pos));
@@ -1312,40 +1517,39 @@ function updateBlobs(slug) {
 }
 
 function renderAll() {
-  if (!positions[view]) positions[view] = computeLayout(view);
-  const pos = positions[view];
+  const pos = posFor();
   svg.textContent = "";
   svg.appendChild(markerDefs());
   const world = el("g", { id: "world" });
   svg.appendChild(world);
   blobEls = {};
-  if (view === "hyper") world.appendChild(drawBlobs(pos));  // behind everything
+  if (show.blobs && recVis()) world.appendChild(drawBlobs(pos));  // behind everything
   const edgeLayer = el("g", { id: "edges" });
   const nodeLayer = el("g", { id: "nodes" });
   world.appendChild(edgeLayer);
   world.appendChild(nodeLayer);
 
-  if (view === "combo") {
+  if (show.layout === "layered" && show.graphs === "both") {
     const head = (text, x, anchor) => nodeLayer.appendChild(el("text", { x, y: -64,
       "font-family": FONT, "font-size": 12, "font-weight": 700, fill: T().muted,
       "letter-spacing": "0.08em", "text-anchor": anchor }, text));
     head("RECORD — " + DATA.record.nodes.length + " nodes (append-only log)", 0, "middle");
     head("STATE — " + DATA.state.nodes.length + " nodes (distilled now)",
-         NW + 430, "middle");
+         comboStateX(), "middle");
   }
 
-  edges = edgesFor(view);
+  edges = edgesFor();
   edgeEls = [];
+  const quiet = show.style === "circles";  // tree edges stay understated there
   edges.forEach(e => {
     const d = edgePath(e, pos);
     if (!d) { edgeEls.push(null); return; }
     const style = e.kind === "tree"
-      ? { stroke: T().axis, marker: "arrow-tree", dash: null, op: 0.9, w: 1.4 }
-      : e.kind === "plain"
-        ? { stroke: T().axis, marker: null, dash: null, op: 0.55, w: 1 }
-        : e.kind === "impact"
-          ? { stroke: T().impact, marker: "arrow-imp", dash: "6 4", op: 0.8, w: 1.6 }
-          : { stroke: T().prov, marker: "arrow-prov", dash: null, op: 0.65, w: 1.6 };
+      ? (quiet ? { stroke: T().axis, marker: null, dash: null, op: 0.55, w: 1 }
+               : { stroke: T().axis, marker: "arrow-tree", dash: null, op: 0.9, w: 1.4 })
+      : e.kind === "impact"
+        ? { stroke: T().impact, marker: "arrow-imp", dash: "6 4", op: 0.8, w: 1.6 }
+        : { stroke: T().prov, marker: "arrow-prov", dash: null, op: 0.65, w: 1.6 };
     const path = el("path", { d, fill: "none", stroke: style.stroke,
       "stroke-width": style.w, opacity: style.op });
     if (style.marker) path.setAttribute("marker-end", `url(#${style.marker})`);
@@ -1362,21 +1566,20 @@ function renderAll() {
 
   nodeEls = {};
   const draw = g => DATA[g].nodes.forEach(n => {
-    const gEl = view === "hyper" ? drawCircleNode(bySlug[n.slug], pos)
-                                 : drawNode(bySlug[n.slug], pos);
+    const gEl = show.style === "circles" ? drawCircleNode(bySlug[n.slug], pos)
+                                         : drawNode(bySlug[n.slug], pos);
     nodeLayer.appendChild(gEl);
     nodeEls[n.slug] = gEl;
   });
-  if (view === "record" || view === "hyper") draw("record");
-  else if (view === "state") draw("state");
-  else { draw("record"); draw("state"); }
+  if (recVis()) draw("record");
+  if (stVis()) draw("state");
 
   applyTf();
   updateDim();
 }
 
 function applyTf() {
-  const t = tf[view];
+  const t = tfFor();
   const world = document.getElementById("world");
   if (world) world.setAttribute("transform", `translate(${t.x},${t.y}) scale(${t.k})`);
 }
@@ -1388,7 +1591,7 @@ function neighborhood(slug) {
     if (e.from === slug) rel.add(e.to);
     if (e.to === slug) rel.add(e.from);
   });
-  if (view === "hyper") {  // union in hyperedge co-members / members
+  if (show.blobs && recVis()) {  // union in hyperedge co-members / members
     const H = hyperedges();
     (H.memberOf[slug] || []).forEach(st =>
       H.index[st].members.forEach(m => rel.add(m)));
@@ -1412,8 +1615,9 @@ function updateDim() {
     vis[slug] = op === 1;
     nodeEls[slug].setAttribute("opacity", op);
     const box = nodeEls[slug].firstChild;
-    if (view === "hyper") {
-      const heavy = entry.node.is_root || entry.node.is_hwm || entry.node.unreconciled;
+    if (show.style === "circles") {
+      const heavy = entry.node.is_root || entry.node.is_hwm ||
+        entry.node.unreconciled || entry.node.frontier;
       box.setAttribute("stroke", slug === selected ? T().ink : accentFor(entry));
       box.setAttribute("stroke-width", slug === selected ? 2.4 : heavy ? 2.2 : 1.4);
     } else {
@@ -1447,13 +1651,17 @@ function deselect() { selected = null; updateDim(); renderPanel(); }
 function jumpTo(slug) {
   const entry = bySlug[slug];
   if (!entry) return;
-  const shows = v => v === "combo" || v === entry.graph ||
-    (v === "hyper" && entry.graph === "record");
-  if (!shows(view)) setView("combo");
+  const visible = entry.graph === "record" ? recVis() : stVis();
+  if (!visible) {
+    show.graphs = "both";
+    syncControls();
+    renderAll();
+    fitDone[layoutKey()] = true;  // jumpTo centers on the target itself
+  }
   select(slug);
-  const p = positions[view][slug];
+  const p = posFor()[slug];
   if (!p) return;
-  const t = tf[view], r = svg.getBoundingClientRect();
+  const t = tfFor(), r = svg.getBoundingClientRect();
   t.x = r.width / 2 - p.x * t.k;
   t.y = r.height / 2 - p.y * t.k;
   applyTf();
@@ -1579,12 +1787,15 @@ function legendHTML() {
       <tr><td>${swatch(T().prov)}</td><td>provenance: state node derives from record node</td></tr>
       <tr><td>${swatch(T().impact, true)}</td><td>declared State Impact: record → state target</td></tr>
     </table>
-    <h3>Hypergraph view</h3>
+    ${show.blobs && recVis() ? `<h3>Hyperedge blobs</h3>
     <div class="meta">Each translucent blob is a hyperedge: one state node wrapping
     all the record work that declares impact on it; overlapping blobs share record
-    nodes. Click a blob's label to open that state node.</div>
-    <p class="hint">Scroll to zoom · drag background to pan · drag nodes to rearrange ·
-    click a node for full content · Esc to deselect. Use SVG/PDF for static exports.</p>`;
+    nodes. Click a blob's label to open that state node.</div>` : ""}
+    <p class="hint">Preset chips reproduce the classic arrangements; the Display
+    toggles mix graphs, node style, layout, and edge types freely.
+    Scroll to zoom · drag background to pan · drag nodes to rearrange ·
+    click a node for full content · Esc to deselect · drag the divider to resize
+    this panel. Use the export menu for SVG/PDF.</p>`;
 }
 
 function bindPanel() {
@@ -1599,11 +1810,11 @@ svg.addEventListener("pointerdown", e => {
   const nodeG = e.target.closest ? e.target.closest(".node") : null;
   if (nodeG) {
     const slug = nodeG.dataset.slug;
-    const p = positions[view][slug];
+    const p = posFor()[slug];
     drag = { type: "node", slug, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y, moved: false };
   } else {
     drag = { type: "pan", sx: e.clientX, sy: e.clientY,
-             ox: tf[view].x, oy: tf[view].y, moved: false,
+             ox: tfFor().x, oy: tfFor().y, moved: false,
              blob: lbl ? lbl.dataset.slug : null };
   }
   svg.setPointerCapture(e.pointerId);
@@ -1615,20 +1826,21 @@ svg.addEventListener("pointermove", e => {
   if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
   if (!drag.moved) return;
   if (drag.type === "pan") {
-    tf[view].x = drag.ox + dx;
-    tf[view].y = drag.oy + dy;
+    const t = tfFor();
+    t.x = drag.ox + dx;
+    t.y = drag.oy + dy;
     applyTf();
   } else {
-    const p = positions[view][drag.slug];
-    p.x = drag.ox + dx / tf[view].k;
-    p.y = drag.oy + dy / tf[view].k;
+    const pos = posFor(), p = pos[drag.slug];
+    p.x = drag.ox + dx / tfFor().k;
+    p.y = drag.oy + dy / tfFor().k;
     nodeEls[drag.slug].setAttribute("transform", nodeXf(p));
     edges.forEach((eg, i) => {
       if (!edgeEls[i]) return;
       if (eg.from === drag.slug || eg.to === drag.slug)
-        edgeEls[i].setAttribute("d", edgePath(eg, positions[view]));
+        edgeEls[i].setAttribute("d", edgePath(eg, pos));
     });
-    if (view === "hyper") updateBlobs(drag.slug);
+    if (show.blobs && recVis()) updateBlobs(drag.slug);
   }
 });
 svg.addEventListener("pointerup", e => {
@@ -1643,7 +1855,7 @@ svg.addEventListener("pointerup", e => {
 });
 svg.addEventListener("wheel", e => {
   e.preventDefault();
-  const t = tf[view], r = svg.getBoundingClientRect();
+  const t = tfFor(), r = svg.getBoundingClientRect();
   const mx = e.clientX - r.left, my = e.clientY - r.top;
   const k2 = Math.min(2.5, Math.max(0.1, t.k * Math.exp(-e.deltaY * 0.0016)));
   t.x = mx - (mx - t.x) * (k2 / t.k);
@@ -1659,9 +1871,10 @@ document.getElementById("search").addEventListener("input", e => {
 });
 
 function worldBounds() {
-  const pos = positions[view];
-  const hx = view === "hyper" ? R + BPAD + 20 : NW / 2;
-  const hy = view === "hyper" ? R + BPAD + 20 : NH / 2;
+  const pos = posFor();
+  const circles = show.style === "circles";
+  const hx = circles ? R + BPAD + 20 : NW / 2;
+  const hy = circles ? R + BPAD + 20 : NH / 2;
   let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
   for (const slug in pos) {
     if (!nodeEls[slug]) continue;
@@ -1676,9 +1889,9 @@ function worldBounds() {
 function fit() {
   let { minX, minY, maxX, maxY } = worldBounds();
   if (minX > maxX) return;
-  if (view === "combo") minY -= 60;  // column headers
+  if (show.layout === "layered" && show.graphs === "both") minY -= 60;  // column headers
   const r = svg.getBoundingClientRect(), pad = 50;
-  const t = tf[view];
+  const t = tfFor();
   t.k = Math.min(1.25, (r.width - pad * 2) / (maxX - minX),
                  (r.height - pad * 2) / (maxY - minY));
   t.x = (r.width - (maxX + minX) * t.k) / 2;
@@ -1686,31 +1899,115 @@ function fit() {
   applyTf();
 }
 
-function setView(v) {
-  view = v;
-  document.querySelectorAll("#tabs button").forEach(b =>
-    b.classList.toggle("active", b.dataset.view === v));
-  renderAll();
-  if (!fitDone[v]) { fit(); fitDone[v] = true; }
+// ---------------------------------------------------------------- controls
+function syncControls() {
+  const active = activePreset();
+  document.querySelectorAll("#presets button").forEach(b =>
+    b.classList.toggle("active", b.dataset.preset === active));
+  document.querySelectorAll("#toggles .seg").forEach(seg => {
+    seg.querySelectorAll("button").forEach(b =>
+      b.classList.toggle("active", b.dataset.val === show[seg.dataset.key]));
+  });
+  const both = show.graphs === "both";
+  document.querySelectorAll("#toggles .checks input").forEach(cb => {
+    const key = cb.dataset.key;
+    cb.checked = show[key];
+    const off = (key === "impact" || key === "prov") ? !both
+      : key === "blobs" ? !recVis() : false;
+    cb.disabled = off;
+    cb.closest("label").classList.toggle("off", off);
+  });
 }
-document.querySelectorAll("#tabs button").forEach(b =>
-  b.addEventListener("click", () => setView(b.dataset.view)));
+
+// Fit once per arrangement, manual afterward.
+function rerender() {
+  renderAll();
+  const k = layoutKey();
+  if (!fitDone[k]) { fit(); fitDone[k] = true; }
+}
+
+function applyPreset(name) {
+  Object.assign(show, PRESETS[name]);
+  syncControls();
+  rerender();
+}
+
+document.getElementById("controls").addEventListener("click", e => {
+  const chip = e.target.closest("#presets button");
+  if (chip) { applyPreset(chip.dataset.preset); return; }
+  const segBtn = e.target.closest(".seg button");
+  if (segBtn) {
+    const key = segBtn.closest(".seg").dataset.key;
+    if (show[key] !== segBtn.dataset.val) {
+      show[key] = segBtn.dataset.val;
+      syncControls();
+      rerender();
+    }
+  }
+});
+document.querySelectorAll("#toggles .checks input").forEach(cb =>
+  cb.addEventListener("change", () => {
+    show[cb.dataset.key] = cb.checked;
+    syncControls();
+    rerender();
+  }));
+
+// ----------------------------------------------------- resizable sidebar
+const side = document.getElementById("side");
+const divider = document.getElementById("divider");
+let sideWidth = 400, sideCollapsed = false;
+function applySide() {
+  side.style.width = sideCollapsed ? "0px" : sideWidth + "px";
+  divider.classList.toggle("collapsed", sideCollapsed);
+}
+let sideDrag = null;
+divider.addEventListener("pointerdown", e => {
+  sideDrag = { sx: e.clientX, moved: false };
+  divider.setPointerCapture(e.pointerId);
+});
+divider.addEventListener("pointermove", e => {
+  if (!sideDrag) return;
+  if (Math.abs(e.clientX - sideDrag.sx) > 3) sideDrag.moved = true;
+  if (!sideDrag.moved) return;
+  const w = window.innerWidth - e.clientX - 3;
+  if (w < 140) sideCollapsed = true;
+  else { sideCollapsed = false; sideWidth = Math.min(640, Math.max(240, w)); }
+  applySide();
+});
+divider.addEventListener("pointerup", () => {
+  if (sideDrag && !sideDrag.moved) {  // click (incl. the chevron): toggle
+    sideCollapsed = !sideCollapsed;
+    applySide();
+  }
+  sideDrag = null;
+});
 
 document.getElementById("fitBtn").addEventListener("click", fit);
 document.getElementById("themeBtn").addEventListener("click", () => {
   theme = theme === "light" ? "dark" : "light";
-  document.body.dataset.theme = theme;
+  document.body.dataset.theme = theme;  // also swaps the sun/moon icon via CSS
   renderAll();
   renderPanel();
 });
+const exportMenu = document.getElementById("exportMenu");
+document.getElementById("exportBtn").addEventListener("click", e => {
+  e.stopPropagation();
+  exportMenu.hidden = !exportMenu.hidden;
+});
+document.addEventListener("click", e => {
+  if (!exportMenu.hidden && !(e.target.closest && e.target.closest("#exportWrap")))
+    exportMenu.hidden = true;
+});
 document.getElementById("printBtn").addEventListener("click", () => {
+  exportMenu.hidden = true;
   fit();
   setTimeout(() => window.print(), 60);
 });
 document.getElementById("svgBtn").addEventListener("click", () => {
+  exportMenu.hidden = true;
   let { minX, minY, maxX, maxY } = worldBounds();
   if (minX > maxX) return;
-  if (view === "combo") minY -= 80;  // column headers
+  if (show.layout === "layered" && show.graphs === "both") minY -= 80;  // headers
   const pad = 40;
   const w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
   const out = el("svg", { xmlns: SVGNS, width: w, height: h,
@@ -1725,18 +2022,20 @@ document.getElementById("svgBtn").addEventListener("click", () => {
     { type: "image/svg+xml" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${DATA.project}-${view}.svg`;
+  a.download = `${DATA.project}-${activePreset() || "custom"}.svg`;
   a.click();
   URL.revokeObjectURL(a.href);
 });
 
 // -------------------------------------------------------------------- boot
-// Deep links: #record | #state | #combo (alias #combination) | #hyper opens
-// that view; #<slug> jumps to a node.
+// Deep links: #record | #state | #combo (alias #combination) | #hyper applies
+// that preset; #<slug> jumps to a node.
 document.body.dataset.theme = theme;
+applySide();
 const boot = decodeURIComponent(location.hash.slice(1));
 const bootView = boot === "combination" ? "combo" : boot;
-setView(["record", "state", "combo", "hyper"].indexOf(bootView) >= 0 ? bootView : "hyper");
+applyPreset(["record", "state", "combo", "hyper"].indexOf(bootView) >= 0
+            ? bootView : "hyper");
 if (bySlug[boot]) jumpTo(boot);
 renderPanel();
 </script>

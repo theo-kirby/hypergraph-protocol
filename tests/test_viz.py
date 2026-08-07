@@ -116,15 +116,18 @@ def test_render_viz_emits_selfcontained_html():
     assert "https://" not in html
 
 
-def test_template_has_four_views():
+def test_template_preset_toggle_machinery():
     tpl = hg.VIZ_TEMPLATE
-    for marker in ('data-view="record"', 'data-view="state"',
-                   'data-view="combo"', 'data-view="hyper"',
-                   ">Combination<", ">Hypergraph<"):
+    # preset chips present, in order Record, State, Columns, Force
+    assert (tpl.index('data-preset="record"') < tpl.index('data-preset="state"')
+            < tpl.index('data-preset="combo"') < tpl.index('data-preset="hyper"'))
+    for marker in ("const PRESETS", "applyPreset", "const show", "layoutKey",
+                   'id="controls"', 'id="divider"', 'id="exportMenu"',
+                   'id="svgBtn"', 'id="printBtn"'):
         assert marker in tpl
-    # tab order: Record, State, Combination, Hypergraph
-    assert (tpl.index('data-view="record"') < tpl.index('data-view="state"')
-            < tpl.index('data-view="combo"') < tpl.index('data-view="hyper"'))
+    # the tab bar is gone; the old #combination deep-link alias must survive
+    assert 'id="tabs"' not in tpl
+    assert '"combination"' in tpl
 
 
 def test_template_force_view_machinery():
