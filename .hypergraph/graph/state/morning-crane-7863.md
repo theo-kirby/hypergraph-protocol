@@ -9,9 +9,9 @@ summary: 'Adoption thrust delivered end-to-end and fully unblocked: epoch mechan
 flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
-  revision: 1
-  pushed_at: '2026-08-07T21:25:27+00:00'
-  content_sha256: 855a020a835d7aaab38e552a3ce4ca738c2a9270959f8984006442c76ffdedc2
+  revision: 2
+  pushed_at: '2026-08-07T22:07:22+00:00'
+  content_sha256: f9cf3577a135bc91fc9e7d5a1ee9126c10e66a1681018bd2f42e4cb16da2601b
 ---
 Status: working
 
