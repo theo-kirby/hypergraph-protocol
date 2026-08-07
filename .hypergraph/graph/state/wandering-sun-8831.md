@@ -9,9 +9,9 @@ summary: 'check/render/viz green over fixtures and real exports; 22 tests; known
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 5
-  pushed_at: '2026-08-07T18:12:06.426139+00:00'
-  content_sha256: 3f0fea20cd65b7ea3721ca6328972a348f015f7901f311fb1b748c1c26913e49
+  revision: 6
+  pushed_at: '2026-08-07T18:21:35+00:00'
+  content_sha256: b16021662e30c772902718082ad1e99f0ab4a82f1d3da7be5e6517ac6ddef0a4
 ---
 Status: working
 

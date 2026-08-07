@@ -9,9 +9,9 @@ summary: Self-host cycle green; cold-start passed; blind-test pair complete — 
 flywheel:
   node_id: a4fad33e-262f-5f4a-8d83-298e76523a0e
   slug: bold-field-1268
-  revision: 4
-  pushed_at: '2026-08-07T18:12:06.426139+00:00'
-  content_sha256: 4da92b8616a93e78858ced336545b9b07b9338bfadc585bbbaf69fd7e95f1605
+  revision: 5
+  pushed_at: '2026-08-07T18:21:35+00:00'
+  content_sha256: e1ee70549522d3a5c581c8f9a0c25e7f64c8c5025e003f6fd08fbd08bc622754
 ---
 Status: working
 

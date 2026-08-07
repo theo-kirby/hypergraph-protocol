@@ -6,6 +6,12 @@ created_at: '2026-08-07T18:15:07+00:00'
 parents:
 - old-dawn-8747
 summary: Suite is 50 tests (22 pre-existing + 28 local-backend), not 49/16/33 as stated in old-dawn-8747. Also fixes new record's substring heading guard to be line-anchored.
+flywheel:
+  node_id: cdc0228f-517a-56db-8805-6a4423910f8b
+  slug: cold-recipe-1148
+  revision: 0
+  pushed_at: '2026-08-07T18:21:35+00:00'
+  content_sha256: 36031f7fb9fe8a86140865d29ccdddb79d0bd6e2a88d735086d63df0b50823dc
 ---
 ## What
 

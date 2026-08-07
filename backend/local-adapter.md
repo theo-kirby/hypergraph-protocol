@@ -172,7 +172,9 @@ hypergraph push --record-result /tmp/results.json   # 3. fold returned ids back 
 ```
 
 The plan is ordered — creates come parents-first (topological, ties broken by
-`created_at`) so `parent_flywheel_ids` are known by the time each child is committed:
+`created_at`). A `create` whose parent is *also* a create in the same plan carries
+`null` in `parent_flywheel_ids`; because the ordering guarantees the parent was already
+committed, the executor substitutes the id it just received:
 
 ```jsonc
 {"op": "create", "graph": "record", "slug": "calm-fern-1003",
@@ -199,11 +201,25 @@ Results feed back as a list of `{slug, flywheel: {node_id, slug_name, revision},
 content_sha256}` (top level or under `"results"`); `push --record-result` writes them
 into each file's `flywheel:` block.
 
-**Documented tradeoff:** content is pushed byte-identical, so the slugs *inside* the
-markdown (`## Provenance`, `[rec: …]`, impact targets, the HWM) remain the local ones.
-A slug read inside Flywheel's UI resolves through the frontmatter mapping, not natively.
-Slug translation on push is deliberately deferred — it would make the mirror
-non-identical to source and complicate every update.
+**The mirror is a readable projection, not an independently valid graph.** Content is
+pushed byte-identical, but Flywheel mints its own `slug_name` on create — so a node
+authored locally as `old-dawn-8747` may live there as `purple-dawn-2034`, while every
+`## Provenance` line, `[rec: …]` citation, impact target and the HWM still say
+`old-dawn-8747`. Consequences, measured on this repo's first mirrored reconcile:
+
+- Running `check` against a **Flywheel export** reports I4/I5/I7 dangling-pointer
+  violations for every locally-minted slug (25 of them here), even though the same graph
+  checks clean from the node files. Check the source, never the projection.
+- Slugs resolve across the boundary only through each file's `flywheel:` block; inside
+  Flywheel's UI they do not resolve natively.
+- Nodes that predate the migration are unaffected — `import` preserved their slugs, so
+  only nodes *created* after the switch to `local` diverge.
+
+Slug translation on push would fix this and is deliberately deferred: it makes the
+mirror non-identical to source, so every update would have to translate in both
+directions and the byte-identical change detector (`content_sha256`) would stop working
+as-is. Use the mirror for reading, sharing and cloud-agent access; treat the repo as the
+graph of record.
 
 ## Failure handling
 

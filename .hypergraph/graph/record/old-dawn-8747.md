@@ -6,6 +6,12 @@ created_at: '2026-08-07T18:14:12+00:00'
 parents:
 - patient-limit-9007
 summary: 'Second adapter behind INTERFACE.md: node files are the source of truth, Flywheel a regenerable mirror. This repo migrated with identity preserved; STATE.md regenerates byte-identical offline.'
+flywheel:
+  node_id: e701dbbc-f23c-5306-9896-0f98835a4d0f
+  slug: purple-dawn-2034
+  revision: 0
+  pushed_at: '2026-08-07T18:21:35+00:00'
+  content_sha256: 17a1724bae20502e923a8cf2975ad81df01607ea0bb9f049f78b9a017a39b756
 ---
 ## What
 
