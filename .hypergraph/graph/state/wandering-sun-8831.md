@@ -5,13 +5,13 @@ title: Checker tooling
 created_at: '2026-08-06T21:41:18.171074+00:00'
 parents:
 - cool-king-8586
-summary: 'check/render/viz green over fixtures and real exports; 22 tests; known blind spots: unrecorded work, stale cache exports.'
+summary: 'check/render/viz plus five local-backend subcommands; 50 tests green; known blind spots: unrecorded work, stale cache exports, frontmatter summary drift.'
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 6
-  pushed_at: '2026-08-07T18:21:35+00:00'
-  content_sha256: b16021662e30c772902718082ad1e99f0ab4a82f1d3da7be5e6517ac6ddef0a4
+  revision: 7
+  pushed_at: '2026-08-07T18:57:11+00:00'
+  content_sha256: 98df6d57d28ef04ad7f5bfb7e8e719b0108c75879444afe5374083f36a54ee24
 ---
 Status: working
 
@@ -30,6 +30,7 @@ Status: working
 - [scope: parsing flywheel_export_subgraph output | confidence: high | evidence: steep-cell-5173] the export encodes edges as incoming_ids/outgoing_ids, not parent_ids — a parser reading only parent_ids sees every node as a root.
 - [scope: detecting protocol omissions with `check` | confidence: high | evidence: tiny-sunset-0847] the checker only sees declared-but-unreconciled impacts; work never recorded to the record graph is invisible to it by construction — repo HEAD sitting ahead of the newest record node's head_commit_sha is the detectable proxy (repo-drift check, SPEC future work).
 - [scope: trusting `check`'s unreconciled count | confidence: high | evidence: little-bar-4131] the count is computed from cache exports, not the live graph — an agent that records after its last export leaves check reporting 0 unreconciled while the live graph is ahead; comparing the export's exported_at against recent activity is the fix (export-freshness check, SPEC future work).
+- [scope: state-node frontmatter summaries under reconcile | confidence: medium | evidence: green-field-8645] `check` parses only node bodies — a reconcile that rewrites a body but not the frontmatter `summary:` leaves drift no invariant can catch; surfaced summaries then contradict the body (worst case observed: an "Open gap" summary on a working node).
 - [scope: guarding CLI-generated markdown sections | confidence: high | evidence: sleepy-branch-3744] a substring test for a heading rejects prose that merely mentions it — anchor heading guards to line starts.
 
 ## Provenance
@@ -44,3 +45,4 @@ Status: working
 - little-bar-4131 — cache-freshness facet: stale exports under-report unreconciled work
 - old-dawn-8747 — five local-backend subcommands; authoring-time validation; round-trip guarantee
 - sleepy-branch-3744 — corrected suite count (50) and the heading-guard fix
+- green-field-8645 — audit found summary drift (22 vs 50 tests) and the frontmatter blind spot

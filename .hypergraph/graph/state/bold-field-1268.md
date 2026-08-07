@@ -5,13 +5,13 @@ title: Dogfooding
 created_at: '2026-08-06T21:41:24.844400+00:00'
 parents:
 - cool-king-8586
-summary: Self-host cycle green; cold-start passed; blind-test pair complete — AGENTS.md countermeasure validated by controlled retest.
+summary: 'Self-host deepened: graphs live in-repo; blind-test pair passed; remote publication + local-backend cycles independently audited.'
 flywheel:
   node_id: a4fad33e-262f-5f4a-8d83-298e76523a0e
   slug: bold-field-1268
-  revision: 5
-  pushed_at: '2026-08-07T18:21:35+00:00'
-  content_sha256: e1ee70549522d3a5c581c8f9a0c25e7f64c8c5025e003f6fd08fbd08bc622754
+  revision: 6
+  pushed_at: '2026-08-07T18:57:11+00:00'
+  content_sha256: 4398bd19b80de42e8212a2707328f558d8b435105e410134a93f6f0863913862
 ---
 Status: working
 
@@ -28,6 +28,8 @@ Status: working
 - Operating pattern observed across cycles: worker sessions (fresh context) do work and append record nodes; a standing librarian session reconciles — the division of labor I3 implies, emerging in practice [rec: little-bar-4131].
 - The immutability convention was exercised for real: a wrong figure in a committed record node was corrected by a child record node rather than an edit, and reconcile folded the corrected value [rec: sleepy-branch-3744].
 
+- Remote-machine cycles (publication decision + git-native backend, including their self-reconciles) independently audited by the librarian session: every claim reproduced — 50/50 tests, check 0/0 from node files, STATE.md byte-identical on regeneration, empty mirror push plan [rec: green-field-8645].
+
 ## Negative knowledge
 
 None yet.
@@ -41,3 +43,4 @@ None yet.
 - little-bar-4131 — blind test #2 result: countermeasure validated; librarian pattern observed
 - old-dawn-8747 — graphs migrated into the repo; first record node authored by the local CLI
 - sleepy-branch-3744 — correction-by-child-node exercised in practice
+- green-field-8645 — independent audit of the remote cycles; summary repairs

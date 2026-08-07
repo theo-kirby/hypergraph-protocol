@@ -5,7 +5,7 @@ title: Git-native backend
 created_at: '2026-08-07T10:57:13.256136+00:00'
 parents:
 - cool-king-8586
-summary: 'Open gap: git-native second adapter behind INTERFACE.md; sequenced after field dogfooding.'
+summary: 'Git-native backend live: node files are the source of truth; Flywheel a regenerable mirror (readable projection, not checkable).'
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
