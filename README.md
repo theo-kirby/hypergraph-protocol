@@ -18,7 +18,10 @@ where the task demands history.
 How it stays coherent with many parallel agents: knowledge lands **record-first** —
 every record node declares its `## State Impact` (or `none: <reason>`), and a separate
 single-writer **reconcile** pass folds declared impacts into the state graph behind an
-append-only high-water mark. Nobody edits state inline.
+append-only high-water mark. Nobody edits state inline. Forward work follows the same
+rule: new directions (including Operator directives) enter as decision record nodes
+whose impacts open `Status: open` state nodes — the frontier carries intent as claims
+about gaps, never as task lists.
 
 ## v0.0.1 = protocol + skills + checker
 

@@ -15,6 +15,12 @@ into the state graph. Protocol: [spec.md](references/spec.md); backend recipes:
 - During/after any unit of work (experiment, decision, fix, dead end) in a project
   that has `.hypergraph/config.yml`.
 - Dead ends and failures especially — they are the raw material for negative knowledge.
+- When the Operator or an agent sets a new direction (feature, research thrust,
+  constraint) **before any work exists**: record a decision node capturing the
+  intent, constraints, and rationale, attributed to its source, with `## State
+  Impact` declaring `NEW <node>` (or deltas) so reconcile opens the gap on the
+  frontier. Intent enters through the record graph like everything else (SPEC:
+  Forward work).
 
 Not for editing state nodes (that is reconcile's job — SPEC I3) or for orientation
 (use hypergraph-orient).

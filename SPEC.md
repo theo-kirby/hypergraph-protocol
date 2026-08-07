@@ -163,6 +163,36 @@ I1) or reconcile hallucinated (fix: rewrite the state node from its citations).
   Reconcile compacts: merge redundant claims, drop superseded detail (the record graph
   keeps the history), keep negative knowledge tight.
 
+## Forward work and Operator directives
+
+The state graph carries intent as well as fact — but never as task lists.
+
+- **Gaps, not tasks.** Future work is represented as `Status: open` state nodes (or
+  open children of a `working` component): claims that a capability does not exist or
+  is incomplete. Claims phrased as state-of-the-world cannot rot the way task lists
+  do — they are falsified by work, and the falsification channel is I2: whoever does
+  the work must declare `target: <node> — status open → working`. An empty frontier
+  on a project with known ambitions is a defect, not an achievement.
+- **Bets are decision records.** "Do X next, before Y, because Z" is a point-in-time
+  decision, not a state fact. It lives in the record graph as an immutable decision
+  node; execution nodes later become its children. Changing the plan never mutates
+  anything — a new decision node supersedes the old bet, and reconcile updates
+  whatever the state graph claims about current priorities.
+- **Operator directives enter through the record graph.** When the Operator (or any
+  agent) introduces a new direction — a feature, a research thrust, a constraint —
+  the flow is: (1) a decision record node capturing the intent, constraints, and
+  rationale, attributed to its source; (2) a `## State Impact` section declaring
+  `NEW <node>` or deltas to existing state nodes; (3) reconcile folds it, so the gap
+  appears on the frontier with provenance. Nothing lands in the state graph without a
+  record pointer — I1 applies to intent exactly as it applies to results.
+- **Granularity.** Architectural capabilities and known gaps earn state nodes.
+  Fine-grained tasks ("fix this function") belong in neither graph. Open nodes are
+  the most expensive kind to carry — each is a standing claim the frontier surfaces
+  to every arriving agent.
+- **The arriving agent decides.** Decision records preserve why the last bet was
+  made; they do not bind the next agent. Overriding a prior bet is done by writing a
+  new decision record — disagreement is recorded, never silent.
+
 ## Node templates
 
 Exact headings are load-bearing — the checker parses them. See
@@ -209,8 +239,12 @@ v0.0.1 ships one adapter: [backend/flywheel-adapter.md](backend/flywheel-adapter
 
 ## Future work (out of scope for v0.0.1)
 
+Committed forward work lives in the state graph as open frontier nodes (see Forward
+work above) — for this repo, that is where the git-native backend and field
+dogfooding are tracked. The list below is speculative protocol machinery only, not
+yet worth a standing state claim:
+
 - Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
 - `provenance.json` machine-readable artifact per state node.
 - One-only `current-best` tags for competing approaches (Flywheel supports natively).
-- Git-native open backend (second adapter; the interface is designed for it).
 - pip-installable package.
