@@ -5,7 +5,7 @@ title: Checker tooling
 created_at: '2026-08-06T21:41:18.171074+00:00'
 parents:
 - cool-king-8586
-summary: 'check/render/viz plus five local-backend subcommands; 50 tests green; known blind spots: unrecorded work, stale cache exports, frontmatter summary drift.'
+summary: 'check/render/viz + local backend + epoch support + push --verify/--legend; 62 tests green; known blind spots: unrecorded work, stale cache exports, frontmatter summary drift.'
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
@@ -20,9 +20,10 @@ Status: working
 - tools/hypergraph.py (single-file uv script, pyyaml only) implements `check` — mechanical validation of I2, I4, I5, I6, I7 over offline JSON exports with nonzero exit on violations, I1 proxied as warnings — and `render` — STATE.md with frontier first (broken → blocked → open) and architecture tree [rec: flat-pine-9555].
 - Third subcommand `viz` added, reusing the checker's section/impact/citation parsers and export normalization to emit the interactive visualization (see the Visualization component) [rec: long-tree-4179].
 - Five more subcommands implement the local backend — `export`, `import`, `new`, `update`, `push` — while the `check`/`render`/`viz` code paths were left untouched; the tool stays network-free, so Flywheel mirroring is emitted as a plan the skill layer executes [rec: old-dawn-8747].
-- The tool now enforces protocol invariants at authoring time, not only at check time: `new` runs the real checker over a candidate node before writing it (a bad impact target exits 2 with nothing written), `--reconcile` gates every state write (I3), and `update` refuses record nodes outright [rec: old-dawn-8747].
-- Test suite green: 50 pytest cases over committed fixtures — 11 checker + 11 viz + 28 local backend [rec: sleepy-branch-3744]. The strongest local-backend guarantee is the round-trip: importing the clean fixture into node files and exporting back yields node-for-node identical graphs that still check clean [rec: old-dawn-8747].
-- Earlier suite state and what it covers: clean fixture passes with zero violations/warnings; each seeded violation fixture fails with exactly its invariant ID; CLI exit codes, staleness reporting, and viz determinism verified [rec: flat-pine-9555] [rec: long-tree-4179] [rec: morning-rain-7488] [rec: still-forest-9161].
+- Adoption-epoch support: `check` resolves `epoch.marker` to a created_at cutoff and exempts strictly-older record nodes from I2 (one info finding with the count); an unresolvable marker is a violation; authoring-time validation is never exempted [rec: shady-quill-2790].
+- Mirror-integrity subcommands: `push --verify --against <export>` reports missing nodes either side, body-hash and summary mismatches, and revision skew as DRIFT findings (exit 1), exempting the legend node and config-declared `mirror_roots` (the latter added after a false flag on a3go's fresh mirror roots); `push --legend` emits the mirror-only slug-legend body; `import` skips legend nodes [rec: careful-harbor-3902] [rec: humble-clover-7048].
+- The tool now enforces protocol invariants at authoring time, not only at check time: `new` runs the real checker over a candidate node before writing it (a bad impact target exits 2 with nothing written), `--reconcile` gates every state write (I3), `update` refuses record nodes outright, and `new state` rejects pre-scaffolded bodies that would duplicate the CLI-generated template sections [rec: old-dawn-8747] [rec: careful-harbor-3902].
+- Test suite green: 62 pytest cases over committed fixtures — checker (incl. 4 epoch cases), viz, and local backend (incl. verify/legend/drift and skills-install cases) [rec: humble-clover-7048]. The strongest local-backend guarantee is the round-trip: importing the clean fixture into node files and exporting back yields node-for-node identical graphs that still check clean [rec: old-dawn-8747].
 - Verified against real Flywheel exports: normalizes the live edge encoding (incoming_ids as parents), alongside parent_ids/parents fixture forms [rec: steep-cell-5173].
 
 ## Negative knowledge
@@ -46,3 +47,6 @@ Status: working
 - old-dawn-8747 — five local-backend subcommands; authoring-time validation; round-trip guarantee
 - sleepy-branch-3744 — corrected suite count (50) and the heading-guard fix
 - green-field-8645 — audit found summary drift (22 vs 50 tests) and the frontmatter blind spot
+- shady-quill-2790 — epoch support; suite to 54
+- careful-harbor-3902 — verify + legend + pre-scaffolded-body guard; suite to 60
+- humble-clover-7048 — mirror_roots verify exemption; suite to 62

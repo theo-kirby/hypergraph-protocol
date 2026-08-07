@@ -5,7 +5,7 @@ title: Publication
 created_at: '2026-08-07T17:25:37.632552+00:00'
 parents:
 - cool-king-8586
-summary: 'Publication thrust: 0.0.1 live on PyPI as hypergraph-protocol; 0.0.2 scoped (skills install + agents-block as package data); LICENSE + public flip remain.'
+summary: 0.0.1 live on PyPI; 0.0.2 built + wheel-verified with skills install but publish blocked on Operator credentials; LICENSE + public flip remain.
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
@@ -21,9 +21,9 @@ Publication shape decided [rec: damp-mountain-8757]: spec-first (SPEC.md is the 
 
 Name claimed [rec: damp-mountain-8757]: `hypergraph-protocol` 0.0.1 live on PyPI, shipping tools/hypergraph.py as module `hypergraph_protocol` with a `hypergraph` console entry point (verified installable via uvx; checker passes on this repo's own exports). GitHub repo renamed to theo-kirby/hypergraph-protocol (old URL redirects). gitleaks scan over full history: clean; repo still private.
 
-Release 0.0.2 scoped [rec: vast-sky-3964]: the `hypergraph skills install` subcommand (skills as package data, project-level `.claude/skills/` default, `--user` for `~/.claude/skills`) plus `templates/agents-block.md` shipping as package data — lands in the adoption thrust's M4.
+Release 0.0.2 built and wheel-verified [rec: crisp-lake-4496]: `hypergraph skills install` subcommand shipped (skills + `templates/agents-block.md` as package data via hatchling force-include; project-level `.claude/skills/` default, `--user` for `~/.claude/skills`; symlinked references materialized at build); `uv build` + twine check clean; install verified from the built wheel.
 
-Remaining (the gap): `hypergraph skills install` CLI subcommand (scoped above, unbuilt); LICENSE choice; public flip + spec-first announcement; npm name unclaimed (no npm credentials). The v0.1 package gate for general adoption is the git-native backend (see empty-forest-6305) [rec: damp-mountain-8757].
+Remaining (the gap): the 0.0.2 PyPI publish itself — `uv publish` fails with no credentials on this machine (0.0.1 was published elsewhere; no ~/.pypirc, keychain, or env token), so the Operator must publish; until then adopter repos pin the dev-checkout CLI, because PyPI 0.0.1 lacks epoch support and would report false I2 violations on adopted graphs [rec: crisp-lake-4496]. Also open: LICENSE choice; public flip + spec-first announcement; npm name unclaimed (no npm credentials). The v0.1 package gate for general adoption is the git-native backend (see empty-forest-6305) [rec: damp-mountain-8757].
 
 ## Negative knowledge
 
@@ -33,3 +33,4 @@ Remaining (the gap): `hypergraph skills install` CLI subcommand (scoped above, u
 
 - damp-mountain-8757 — publication shape + name decision; executed PyPI 0.0.1 publish, GitHub rename, gitleaks-clean history check
 - vast-sky-3964 — 0.0.2 scope: skills install + agents-block template as package data
+- crisp-lake-4496 — 0.0.2 built, twine-clean, wheel-verified; publish blocked on credentials
