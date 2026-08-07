@@ -859,6 +859,7 @@ VIZ_TEMPLATE = r"""<!doctype html>
   <div class="tabs" id="tabs">
     <button data-view="record">Record</button>
     <button data-view="state">State</button>
+    <button data-view="combo">Combination</button>
     <button data-view="hyper" class="active">Hypergraph</button>
   </div>
   <input id="search" type="search" placeholder="Filter: slug, title, content…">
@@ -880,15 +881,20 @@ const THEMES = {
     muted:"#898781", grid:"#e1e0d9", axis:"#c3c2b7", border:"rgba(11,11,11,0.10)",
     status:{ working:"#0ca30c", open:"#2a78d6", broken:"#d03b3b",
              blocked:"#fab219", superseded:"#898781" },
-    prov:"#2a78d6", impact:"#eb6834", hwm:"#4a3aa7", unrec:"#fab219" },
+    prov:"#2a78d6", impact:"#eb6834", hwm:"#4a3aa7", unrec:"#fab219",
+    cat:["#2a78d6","#eb6834","#0ca30c","#4a3aa7","#c22f7a","#0b8f8f",
+         "#a8790a","#5f7a2a"] },
   dark: { surface:"#1a1a19", page:"#0d0d0d", ink:"#ffffff", ink2:"#c3c2b7",
     muted:"#898781", grid:"#2c2c2a", axis:"#383835", border:"rgba(255,255,255,0.10)",
     status:{ working:"#0ca30c", open:"#3987e5", broken:"#d03b3b",
              blocked:"#fab219", superseded:"#898781" },
-    prov:"#3987e5", impact:"#d95926", hwm:"#9085e9", unrec:"#fab219" },
+    prov:"#3987e5", impact:"#d95926", hwm:"#9085e9", unrec:"#fab219",
+    cat:["#3987e5","#f0784a","#33bb33","#9085e9","#e05a9b","#33b8b8",
+         "#d9a521","#8fae4a"] },
 };
 const SVGNS = "http://www.w3.org/2000/svg";
 const NW = 236, NH = 62;
+const R = 16, BPAD = 18;  // hypergraph view: circle radius, blob hull padding
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 const SLUG_JS = /\b[a-z][a-z0-9]*-[a-z][a-z0-9]*-[0-9]{4}\b/g;
@@ -900,9 +906,10 @@ DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
 let view = "hyper";
 let theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 let selected = null, query = "";
-const tf = { record:{x:0,y:0,k:1}, state:{x:0,y:0,k:1}, hyper:{x:0,y:0,k:1} };
-const positions = { record:null, state:null, hyper:null };
-const fitDone = { record:false, state:false, hyper:false };
+const tf = { record:{x:0,y:0,k:1}, state:{x:0,y:0,k:1},
+             combo:{x:0,y:0,k:1}, hyper:{x:0,y:0,k:1} };
+const positions = { record:null, state:null, combo:null, hyper:null };
+const fitDone = { record:false, state:false, combo:false, hyper:false };
 let nodeEls = {}, edgeEls = [], edges = [];
 
 const svg = document.getElementById("svg");
@@ -921,6 +928,99 @@ function trunc(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 function T() { return THEMES[theme]; }
 
 // ------------------------------------------------------------------ layout
+// Hyperedges: one per state node targeted by >=1 impact link, in DATA.state
+// order (stable color assignment). memberOf maps record slug -> [state slug].
+let _hyper = null;
+function hyperedges() {
+  if (_hyper) return _hyper;
+  const byState = {};
+  DATA.links.forEach(l => {
+    if (l.kind === "impact")
+      (byState[l.state] = byState[l.state] || new Set()).add(l.record);
+  });
+  const list = [], memberOf = {}, index = {};
+  DATA.state.nodes.forEach(n => {
+    const set = byState[n.slug];
+    if (!set) return;
+    const members = DATA.record.nodes.filter(r => set.has(r.slug)).map(r => r.slug);
+    if (!members.length) return;
+    members.forEach(m => (memberOf[m] = memberOf[m] || []).push(n.slug));
+    const h = { state: n.slug, members, ci: list.length };
+    list.push(h);
+    index[n.slug] = h;
+  });
+  _hyper = { list, memberOf, index };
+  return _hyper;
+}
+
+// FNV-1a hash of a slug -> [0,1). Deterministic jitter source so the force
+// layout is identical on every load (no randomness anywhere in this page).
+function hashSlug(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h / 4294967296;
+}
+
+function simTick(pos, nodes, springs, clusters, alpha) {
+  const f = {};
+  nodes.forEach(s => f[s] = { x: 0, y: 0 });
+  for (let i = 0; i < nodes.length; i++) {          // pairwise repulsion
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = pos[nodes[i]], b = pos[nodes[j]];
+      let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+      if (d2 < 1e-4) {  // coincident: deterministic symmetry break
+        const ang = hashSlug(nodes[i] + nodes[j]) * 6.283185307;
+        dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1;
+      }
+      const d = Math.sqrt(d2), rep = Math.min(30, 24000 / d2);
+      const ux = dx / d, uy = dy / d;
+      f[nodes[i]].x += ux * rep; f[nodes[i]].y += uy * rep;
+      f[nodes[j]].x -= ux * rep; f[nodes[j]].y -= uy * rep;
+    }
+  }
+  springs.forEach(sp => {                           // record DAG springs
+    const a = pos[sp[0]], b = pos[sp[1]];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const k = 0.03 * (d - 110) / d;
+    f[sp[0]].x += dx * k; f[sp[0]].y += dy * k;
+    f[sp[1]].x -= dx * k; f[sp[1]].y -= dy * k;
+  });
+  clusters.forEach(ms => {                          // hyperedge members cohere
+    if (ms.length < 2) return;
+    let cx = 0, cy = 0;
+    ms.forEach(s => { cx += pos[s].x; cy += pos[s].y; });
+    cx /= ms.length; cy /= ms.length;
+    ms.forEach(s => {
+      f[s].x += (cx - pos[s].x) * 0.08;
+      f[s].y += (cy - pos[s].y) * 0.08;
+    });
+  });
+  nodes.forEach(s => {                              // mild centering + integrate
+    f[s].x -= pos[s].x * 0.005;
+    f[s].y -= pos[s].y * 0.005;
+    pos[s].x += f[s].x * alpha;
+    pos[s].y += f[s].y * alpha;
+  });
+}
+
+function runSim(pos) {
+  const nodes = DATA.record.nodes.map(n => n.slug);
+  const springs = [];
+  DATA.record.nodes.forEach(n => n.parents.forEach(p => {
+    if (pos[p]) springs.push([p, n.slug]);
+  }));
+  const clusters = hyperedges().list.map(h => h.members.filter(s => pos[s]));
+  let alpha = 1.0;
+  for (let t = 0; t < 300; t++) {
+    simTick(pos, nodes, springs, clusters, alpha);
+    alpha *= 0.985;
+  }
+}
+
 function computeLayout(v) {
   const pos = {};
   if (v === "record" || v === "state") {
@@ -931,12 +1031,106 @@ function computeLayout(v) {
       pos[n.slug] = { x: (n.order - (width - 1) / 2) * (NW + 70),
                       y: n.layer * (NH + 78) };
     });
-  } else {
+  } else if (v === "combo") {
     const gap = 430;
     DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.seq * (NH + 30) });
     DATA.state.nodes.forEach(n => pos[n.slug] = { x: NW + gap, y: n.seq * (NH + 46) });
+  } else {
+    DATA.record.nodes.forEach(n => pos[n.slug] = {
+      x: n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
+      y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
+    });
+    runSim(pos);
   }
   return pos;
+}
+
+// ------------------------------------------------------- blob hull geometry
+// Andrew's monotone chain; deterministic sort. Colinear inputs collapse to
+// the two extreme points (capsule fallback in blobPath).
+function convexHull(pts) {
+  const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  if (p.length < 3) return p;
+  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const half = seq => {
+    const out = [];
+    for (const pt of seq) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], pt) <= 0)
+        out.pop();
+      out.push(pt);
+    }
+    out.pop();
+    return out;
+  };
+  return half(p).concat(half(p.slice().reverse()));
+}
+
+function blobPath(members, pos) {
+  const pts = members.map(s => pos[s]).filter(Boolean);
+  const RB = R + BPAD;
+  if (!pts.length) return null;
+  if (pts.length === 1) {
+    const p = pts[0];
+    return `M ${p.x - RB} ${p.y} a ${RB} ${RB} 0 1 0 ${2 * RB} 0` +
+           ` a ${RB} ${RB} 0 1 0 ${-2 * RB} 0 Z`;
+  }
+  const hull = convexHull(pts);
+  if (hull.length < 3) {  // 2 members, or all colinear: capsule
+    const a = hull[0], b = hull[hull.length - 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = -dy / d * RB, ny = dx / d * RB;
+    return `M ${a.x + nx} ${a.y + ny}` +
+           ` A ${RB} ${RB} 0 0 1 ${a.x - nx} ${a.y - ny}` +
+           ` L ${b.x - nx} ${b.y - ny}` +
+           ` A ${RB} ${RB} 0 0 1 ${b.x + nx} ${b.y + ny} Z`;
+  }
+  let cx = 0, cy = 0;
+  hull.forEach(p => { cx += p.x; cy += p.y; });
+  cx /= hull.length; cy /= hull.length;
+  const ex = hull.map(p => {  // pad: push vertices out radially from centroid
+    const dx = p.x - cx, dy = p.y - cy;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    return { x: p.x + dx / d * RB, y: p.y + dy / d * RB };
+  });
+  const n = ex.length;  // closed Catmull-Rom -> cubic Bezier
+  let d = `M ${ex[0].x} ${ex[0].y}`;
+  for (let i = 0; i < n; i++) {
+    const p0 = ex[(i + n - 1) % n], p1 = ex[i], p2 = ex[(i + 1) % n], p3 = ex[(i + 2) % n];
+    d += ` C ${p1.x + (p2.x - p0.x) / 6} ${p1.y + (p2.y - p0.y) / 6},` +
+         ` ${p2.x - (p3.x - p1.x) / 6} ${p2.y - (p3.y - p1.y) / 6}, ${p2.x} ${p2.y}`;
+  }
+  return d + " Z";
+}
+
+function blobLabelPos(members, pos) {
+  const pts = members.map(s => pos[s]).filter(Boolean);
+  let cx = 0, top = 1e9;
+  pts.forEach(p => { cx += p.x; top = Math.min(top, p.y); });
+  return { x: cx / pts.length, y: top - (R + BPAD) - 8 };
+}
+
+// All blob label positions at once, with a deterministic de-overlap pass:
+// a label colliding with an already-placed one is pushed up until clear.
+function blobLabelPositions(pos) {
+  const placed = [], out = {};
+  hyperedges().list.forEach(h => {
+    const lp = blobLabelPos(h.members, pos);
+    const w = h.state.length * 6.3;
+    let y = lp.y, moved = true;
+    while (moved) {
+      moved = false;
+      for (const p of placed) {
+        if (Math.abs(lp.x - p.x) < (w + p.w) / 2 + 8 && Math.abs(y - p.y) < 13) {
+          y = p.y - 14;  // strictly decreases, so this terminates
+          moved = true;
+        }
+      }
+    }
+    placed.push({ x: lp.x, y, w });
+    out[h.state] = { x: lp.x, y };
+  });
+  return out;
 }
 
 function edgesFor(v) {
@@ -945,7 +1139,7 @@ function edgesFor(v) {
     n.parents.forEach(p => out.push({ kind:"tree", from:p, to:n.slug, side })));
   if (v === "record") tree("record", null);
   else if (v === "state") tree("state", null);
-  else {
+  else if (v === "combo") {
     tree("record", "left");
     tree("state", "right");
     DATA.links.forEach(l => out.push({
@@ -953,6 +1147,9 @@ function edgesFor(v) {
       from: l.kind === "impact" ? l.record : l.state,
       to:   l.kind === "impact" ? l.state : l.record,
     }));
+  } else {
+    DATA.record.nodes.forEach(n =>
+      n.parents.forEach(p => out.push({ kind: "plain", from: p, to: n.slug })));
   }
   return out;
 }
@@ -960,6 +1157,12 @@ function edgesFor(v) {
 function edgePath(e, pos) {
   const a = pos[e.from], b = pos[e.to];
   if (!a || !b) return null;
+  if (e.kind === "plain") {  // straight line trimmed to circle perimeters
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const ux = dx / d, uy = dy / d;
+    return `M ${a.x + ux * R} ${a.y + uy * R} L ${b.x - ux * R} ${b.y - uy * R}`;
+  }
   if (e.kind === "tree" && !e.side) {
     const y1 = a.y + NH / 2, y2 = b.y - NH / 2, ym = (y1 + y2) / 2;
     return `M ${a.x} ${y1} C ${a.x} ${ym}, ${b.x} ${ym}, ${b.x} ${y2}`;
@@ -999,11 +1202,16 @@ function accentFor(entry) {
   return node.is_root ? T().ink2 : T().axis;
 }
 
+function nodeXf(p) {
+  return view === "hyper" ? `translate(${p.x},${p.y})`
+                          : `translate(${p.x - NW / 2},${p.y - NH / 2})`;
+}
+
 function drawNode(entry, pos) {
   const { graph, node } = entry;
   const p = pos[node.slug];
   const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
-                      transform: `translate(${p.x - NW / 2},${p.y - NH / 2})` });
+                      transform: nodeXf(p) });
   const frontier = graph === "state" && node.frontier;
   g.appendChild(el("rect", { x: .5, y: .5, width: NW - 1, height: NH - 1, rx: 9,
     fill: T().surface, stroke: frontier ? accentFor(entry) : T().border,
@@ -1045,6 +1253,64 @@ function drawNode(entry, pos) {
   return g;
 }
 
+// Hypergraph view: record nodes as plain circles. The circle must stay
+// firstChild (updateDim restyles it); <title> hover tooltip appended last.
+function drawCircleNode(entry, pos) {
+  const { node } = entry;
+  const p = pos[node.slug];
+  const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
+                      transform: nodeXf(p) });
+  const heavy = node.is_root || node.is_hwm || node.unreconciled;
+  g.appendChild(el("circle", { r: R, fill: T().surface, stroke: accentFor(entry),
+    "stroke-width": heavy ? 2.2 : 1.4 }));
+  const tip = el("title");
+  tip.textContent = node.title + " (" + node.slug + ")";
+  g.appendChild(tip);
+  return g;
+}
+
+let blobEls = {};
+function drawBlobs(pos) {
+  const layer = el("g", { id: "blobs" });
+  blobEls = {};
+  const lps = blobLabelPositions(pos);
+  const hs = hyperedges().list.slice()
+    .sort((a, b) => b.members.length - a.members.length);  // big first, small on top
+  hs.forEach(h => {
+    const d = blobPath(h.members, pos);
+    if (!d) return;
+    const color = T().cat[h.ci % T().cat.length];
+    const path = el("path", { d, fill: color,
+      "fill-opacity": theme === "dark" ? 0.18 : 0.14,
+      stroke: color, "stroke-opacity": 0.45, "stroke-width": 1.2,
+      "data-state": h.state, "pointer-events": "none" });
+    const tip = el("title");
+    tip.textContent = bySlug[h.state].node.title + " (" + h.state + ")";
+    path.appendChild(tip);
+    const lp = lps[h.state];
+    const label = el("text", { x: lp.x, y: lp.y, class: "bloblabel",
+      "data-slug": h.state, cursor: "pointer", "font-family": MONO,
+      "font-size": 10.5, "text-anchor": "middle", fill: color }, h.state);
+    layer.appendChild(path);
+    layer.appendChild(label);
+    blobEls[h.state] = { path, label };
+  });
+  return layer;
+}
+
+function updateBlobs(slug) {
+  const pos = positions[view], H = hyperedges();
+  (H.memberOf[slug] || []).forEach(st => {
+    const be = blobEls[st];
+    if (be) be.path.setAttribute("d", blobPath(H.index[st].members, pos));
+  });
+  const lps = blobLabelPositions(pos);  // de-overlap involves every label
+  for (const st in blobEls) {
+    blobEls[st].label.setAttribute("x", lps[st].x);
+    blobEls[st].label.setAttribute("y", lps[st].y);
+  }
+}
+
 function renderAll() {
   if (!positions[view]) positions[view] = computeLayout(view);
   const pos = positions[view];
@@ -1052,12 +1318,14 @@ function renderAll() {
   svg.appendChild(markerDefs());
   const world = el("g", { id: "world" });
   svg.appendChild(world);
+  blobEls = {};
+  if (view === "hyper") world.appendChild(drawBlobs(pos));  // behind everything
   const edgeLayer = el("g", { id: "edges" });
   const nodeLayer = el("g", { id: "nodes" });
   world.appendChild(edgeLayer);
   world.appendChild(nodeLayer);
 
-  if (view === "hyper") {
+  if (view === "combo") {
     const head = (text, x, anchor) => nodeLayer.appendChild(el("text", { x, y: -64,
       "font-family": FONT, "font-size": 12, "font-weight": 700, fill: T().muted,
       "letter-spacing": "0.08em", "text-anchor": anchor }, text));
@@ -1073,12 +1341,14 @@ function renderAll() {
     if (!d) { edgeEls.push(null); return; }
     const style = e.kind === "tree"
       ? { stroke: T().axis, marker: "arrow-tree", dash: null, op: 0.9, w: 1.4 }
-      : e.kind === "impact"
-        ? { stroke: T().impact, marker: "arrow-imp", dash: "6 4", op: 0.8, w: 1.6 }
-        : { stroke: T().prov, marker: "arrow-prov", dash: null, op: 0.65, w: 1.6 };
+      : e.kind === "plain"
+        ? { stroke: T().axis, marker: null, dash: null, op: 0.55, w: 1 }
+        : e.kind === "impact"
+          ? { stroke: T().impact, marker: "arrow-imp", dash: "6 4", op: 0.8, w: 1.6 }
+          : { stroke: T().prov, marker: "arrow-prov", dash: null, op: 0.65, w: 1.6 };
     const path = el("path", { d, fill: "none", stroke: style.stroke,
-      "stroke-width": style.w, opacity: style.op,
-      "marker-end": `url(#${style.marker})` });
+      "stroke-width": style.w, opacity: style.op });
+    if (style.marker) path.setAttribute("marker-end", `url(#${style.marker})`);
     path.dataset.op = style.op;
     if (style.dash) path.setAttribute("stroke-dasharray", style.dash);
     if (e.label) {
@@ -1092,11 +1362,12 @@ function renderAll() {
 
   nodeEls = {};
   const draw = g => DATA[g].nodes.forEach(n => {
-    const gEl = drawNode(bySlug[n.slug], pos);
+    const gEl = view === "hyper" ? drawCircleNode(bySlug[n.slug], pos)
+                                 : drawNode(bySlug[n.slug], pos);
     nodeLayer.appendChild(gEl);
     nodeEls[n.slug] = gEl;
   });
-  if (view === "record") draw("record");
+  if (view === "record" || view === "hyper") draw("record");
   else if (view === "state") draw("state");
   else { draw("record"); draw("state"); }
 
@@ -1117,6 +1388,12 @@ function neighborhood(slug) {
     if (e.from === slug) rel.add(e.to);
     if (e.to === slug) rel.add(e.from);
   });
+  if (view === "hyper") {  // union in hyperedge co-members / members
+    const H = hyperedges();
+    (H.memberOf[slug] || []).forEach(st =>
+      H.index[st].members.forEach(m => rel.add(m)));
+    if (H.index[slug]) H.index[slug].members.forEach(m => rel.add(m));
+  }
   return rel;
 }
 
@@ -1135,10 +1412,25 @@ function updateDim() {
     vis[slug] = op === 1;
     nodeEls[slug].setAttribute("opacity", op);
     const box = nodeEls[slug].firstChild;
-    const frontier = entry.graph === "state" && entry.node.frontier;
-    box.setAttribute("stroke", slug === selected ? T().ink
-      : frontier ? accentFor(entry) : T().border);
-    box.setAttribute("stroke-width", slug === selected ? 1.8 : frontier ? 1.4 : 1);
+    if (view === "hyper") {
+      const heavy = entry.node.is_root || entry.node.is_hwm || entry.node.unreconciled;
+      box.setAttribute("stroke", slug === selected ? T().ink : accentFor(entry));
+      box.setAttribute("stroke-width", slug === selected ? 2.4 : heavy ? 2.2 : 1.4);
+    } else {
+      const frontier = entry.graph === "state" && entry.node.frontier;
+      box.setAttribute("stroke", slug === selected ? T().ink
+        : frontier ? accentFor(entry) : T().border);
+      box.setAttribute("stroke-width", slug === selected ? 1.8 : frontier ? 1.4 : 1);
+    }
+  }
+  for (const st in blobEls) {  // dim via a separate opacity attr; base attrs
+    const h = hyperedges().index[st];  // stay untouched for the SVG export
+    let on = true;
+    if (selected) on = selected === st || h.members.includes(selected);
+    else if (query) on = matches(bySlug[st].node) ||
+      h.members.some(m => matches(bySlug[m].node));
+    blobEls[st].path.setAttribute("opacity", on ? 1 : 0.12);
+    blobEls[st].label.setAttribute("opacity", on ? 1 : 0.12);
   }
   edges.forEach((e, i) => {
     const pathEl = edgeEls[i];
@@ -1155,9 +1447,12 @@ function deselect() { selected = null; updateDim(); renderPanel(); }
 function jumpTo(slug) {
   const entry = bySlug[slug];
   if (!entry) return;
-  if (view !== "hyper" && view !== entry.graph) setView("hyper");
+  const shows = v => v === "combo" || v === entry.graph ||
+    (v === "hyper" && entry.graph === "record");
+  if (!shows(view)) setView("combo");
   select(slug);
   const p = positions[view][slug];
+  if (!p) return;
   const t = tf[view], r = svg.getBoundingClientRect();
   t.x = r.width / 2 - p.x * t.k;
   t.y = r.height / 2 - p.y * t.k;
@@ -1284,6 +1579,10 @@ function legendHTML() {
       <tr><td>${swatch(T().prov)}</td><td>provenance: state node derives from record node</td></tr>
       <tr><td>${swatch(T().impact, true)}</td><td>declared State Impact: record → state target</td></tr>
     </table>
+    <h3>Hypergraph view</h3>
+    <div class="meta">Each translucent blob is a hyperedge: one state node wrapping
+    all the record work that declares impact on it; overlapping blobs share record
+    nodes. Click a blob's label to open that state node.</div>
     <p class="hint">Scroll to zoom · drag background to pan · drag nodes to rearrange ·
     click a node for full content · Esc to deselect. Use SVG/PDF for static exports.</p>`;
 }
@@ -1296,6 +1595,7 @@ function bindPanel() {
 // -------------------------------------------------------------- interaction
 let drag = null;
 svg.addEventListener("pointerdown", e => {
+  const lbl = e.target.closest ? e.target.closest(".bloblabel") : null;
   const nodeG = e.target.closest ? e.target.closest(".node") : null;
   if (nodeG) {
     const slug = nodeG.dataset.slug;
@@ -1303,7 +1603,8 @@ svg.addEventListener("pointerdown", e => {
     drag = { type: "node", slug, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y, moved: false };
   } else {
     drag = { type: "pan", sx: e.clientX, sy: e.clientY,
-             ox: tf[view].x, oy: tf[view].y, moved: false };
+             ox: tf[view].x, oy: tf[view].y, moved: false,
+             blob: lbl ? lbl.dataset.slug : null };
   }
   svg.setPointerCapture(e.pointerId);
   svg.classList.add("dragging");
@@ -1321,13 +1622,13 @@ svg.addEventListener("pointermove", e => {
     const p = positions[view][drag.slug];
     p.x = drag.ox + dx / tf[view].k;
     p.y = drag.oy + dy / tf[view].k;
-    nodeEls[drag.slug].setAttribute("transform",
-      `translate(${p.x - NW / 2},${p.y - NH / 2})`);
+    nodeEls[drag.slug].setAttribute("transform", nodeXf(p));
     edges.forEach((eg, i) => {
       if (!edgeEls[i]) return;
       if (eg.from === drag.slug || eg.to === drag.slug)
         edgeEls[i].setAttribute("d", edgePath(eg, positions[view]));
     });
+    if (view === "hyper") updateBlobs(drag.slug);
   }
 });
 svg.addEventListener("pointerup", e => {
@@ -1335,6 +1636,7 @@ svg.addEventListener("pointerup", e => {
   if (!drag) return;
   if (!drag.moved) {
     if (drag.type === "node") select(drag.slug);
+    else if (drag.blob) select(drag.blob);
     else deselect();
   }
   drag = null;
@@ -1356,18 +1658,25 @@ document.getElementById("search").addEventListener("input", e => {
   updateDim();
 });
 
-function fit() {
+function worldBounds() {
   const pos = positions[view];
+  const hx = view === "hyper" ? R + BPAD + 20 : NW / 2;
+  const hy = view === "hyper" ? R + BPAD + 20 : NH / 2;
   let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
   for (const slug in pos) {
     if (!nodeEls[slug]) continue;
-    minX = Math.min(minX, pos[slug].x - NW / 2);
-    maxX = Math.max(maxX, pos[slug].x + NW / 2);
-    minY = Math.min(minY, pos[slug].y - NH / 2);
-    maxY = Math.max(maxY, pos[slug].y + NH / 2);
+    minX = Math.min(minX, pos[slug].x - hx);
+    maxX = Math.max(maxX, pos[slug].x + hx);
+    minY = Math.min(minY, pos[slug].y - hy);
+    maxY = Math.max(maxY, pos[slug].y + hy);
   }
+  return { minX, minY, maxX, maxY };
+}
+
+function fit() {
+  let { minX, minY, maxX, maxY } = worldBounds();
   if (minX > maxX) return;
-  if (view === "hyper") minY -= 60;  // column headers
+  if (view === "combo") minY -= 60;  // column headers
   const r = svg.getBoundingClientRect(), pad = 50;
   const t = tf[view];
   t.k = Math.min(1.25, (r.width - pad * 2) / (maxX - minX),
@@ -1399,15 +1708,9 @@ document.getElementById("printBtn").addEventListener("click", () => {
   setTimeout(() => window.print(), 60);
 });
 document.getElementById("svgBtn").addEventListener("click", () => {
-  const pos = positions[view];
-  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
-  for (const slug in pos) {
-    if (!nodeEls[slug]) continue;
-    minX = Math.min(minX, pos[slug].x - NW / 2);
-    maxX = Math.max(maxX, pos[slug].x + NW / 2);
-    minY = Math.min(minY, pos[slug].y - NH / 2 - (view === "hyper" ? 80 : 0));
-    maxY = Math.max(maxY, pos[slug].y + NH / 2);
-  }
+  let { minX, minY, maxX, maxY } = worldBounds();
+  if (minX > maxX) return;
+  if (view === "combo") minY -= 80;  // column headers
   const pad = 40;
   const w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
   const out = el("svg", { xmlns: SVGNS, width: w, height: h,
@@ -1428,10 +1731,12 @@ document.getElementById("svgBtn").addEventListener("click", () => {
 });
 
 // -------------------------------------------------------------------- boot
-// Deep links: #record | #state | #hyper opens that view; #<slug> jumps to a node.
+// Deep links: #record | #state | #combo (alias #combination) | #hyper opens
+// that view; #<slug> jumps to a node.
 document.body.dataset.theme = theme;
 const boot = decodeURIComponent(location.hash.slice(1));
-setView(boot === "record" || boot === "state" ? boot : "hyper");
+const bootView = boot === "combination" ? "combo" : boot;
+setView(["record", "state", "combo", "hyper"].indexOf(bootView) >= 0 ? bootView : "hyper");
 if (bySlug[boot]) jumpTo(boot);
 renderPanel();
 </script>

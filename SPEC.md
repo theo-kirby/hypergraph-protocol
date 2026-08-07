@@ -244,6 +244,9 @@ work above) — for this repo, that is where the git-native backend and field
 dogfooding are tracked. The list below is speculative protocol machinery only, not
 yet worth a standing state claim:
 
+- Repo-drift check: `check` warns when the repo HEAD is ahead of the newest record
+  node's `head_commit_sha` — unrecorded work is otherwise invisible (unreconciled
+  and unrecorded are different failure modes; the checker only sees the former).
 - Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
 - `provenance.json` machine-readable artifact per state node.
 - One-only `current-best` tags for competing approaches (Flywheel supports natively).

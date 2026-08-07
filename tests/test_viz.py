@@ -116,6 +116,25 @@ def test_render_viz_emits_selfcontained_html():
     assert "https://" not in html
 
 
+def test_template_has_four_views():
+    tpl = hg.VIZ_TEMPLATE
+    for marker in ('data-view="record"', 'data-view="state"',
+                   'data-view="combo"', 'data-view="hyper"',
+                   ">Combination<", ">Hypergraph<"):
+        assert marker in tpl
+    # tab order: Record, State, Combination, Hypergraph
+    assert (tpl.index('data-view="record"') < tpl.index('data-view="state"')
+            < tpl.index('data-view="combo"') < tpl.index('data-view="hyper"'))
+
+
+def test_template_force_view_machinery():
+    tpl = hg.VIZ_TEMPLATE
+    for fn in ("convexHull", "blobPath", "runSim", "hyperedges"):
+        assert fn in tpl
+    # determinism guard: layout must be reproducible across loads
+    assert "Math.random" not in tpl
+
+
 def test_viz_cli_writes_file(tmp_path, capsys):
     out = tmp_path / "viz.html"
     rc = hg.main(["viz", "--record", str(CLEAN / "record.json"),
