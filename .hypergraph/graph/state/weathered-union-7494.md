@@ -5,7 +5,7 @@ title: Publication
 created_at: '2026-08-07T17:25:37.632552+00:00'
 parents:
 - cool-king-8586
-summary: 'Publication/packaging thrust: spec-first + PyPI CLI + skills; name claimed as hypergraph-protocol.'
+summary: 'Publication thrust: 0.0.1 live on PyPI as hypergraph-protocol; 0.0.2 scoped (skills install + agents-block as package data); LICENSE + public flip remain.'
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
@@ -21,7 +21,9 @@ Publication shape decided [rec: damp-mountain-8757]: spec-first (SPEC.md is the 
 
 Name claimed [rec: damp-mountain-8757]: `hypergraph-protocol` 0.0.1 live on PyPI, shipping tools/hypergraph.py as module `hypergraph_protocol` with a `hypergraph` console entry point (verified installable via uvx; checker passes on this repo's own exports). GitHub repo renamed to theo-kirby/hypergraph-protocol (old URL redirects). gitleaks scan over full history: clean; repo still private.
 
-Remaining (the gap): `hypergraph skills install` CLI subcommand (skills as package data, project-level `.claude/skills/` default); LICENSE choice; public flip + spec-first announcement; npm name unclaimed (no npm credentials). The v0.1 package gate for general adoption is the git-native backend (see empty-forest-6305) [rec: damp-mountain-8757].
+Release 0.0.2 scoped [rec: vast-sky-3964]: the `hypergraph skills install` subcommand (skills as package data, project-level `.claude/skills/` default, `--user` for `~/.claude/skills`) plus `templates/agents-block.md` shipping as package data — lands in the adoption thrust's M4.
+
+Remaining (the gap): `hypergraph skills install` CLI subcommand (scoped above, unbuilt); LICENSE choice; public flip + spec-first announcement; npm name unclaimed (no npm credentials). The v0.1 package gate for general adoption is the git-native backend (see empty-forest-6305) [rec: damp-mountain-8757].
 
 ## Negative knowledge
 
@@ -30,3 +32,4 @@ Remaining (the gap): `hypergraph skills install` CLI subcommand (skills as packa
 ## Provenance
 
 - damp-mountain-8757 — publication shape + name decision; executed PyPI 0.0.1 publish, GitHub rename, gitleaks-clean history check
+- vast-sky-3964 — 0.0.2 scope: skills install + agents-block template as package data
