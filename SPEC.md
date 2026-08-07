@@ -192,9 +192,14 @@ network, deterministic, CI-ready:
 ```
 uv run tools/hypergraph.py check  --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json
 uv run tools/hypergraph.py render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
+uv run tools/hypergraph.py viz    --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o .hypergraph/viz.html
 ```
 
-`check` exits nonzero on any I2/I4/I5/I6/I7 violation.
+`check` exits nonzero on any I2/I4/I5/I6/I7 violation. `viz` emits a self-contained
+interactive HTML visualization (no network, no JS dependencies): record view, state
+view, and a combined hypergraph view where `## Provenance` citations and `## State
+Impact` declarations are drawn as cross-graph links — the markdown pointers made
+visible, still never graph edges.
 
 ## Backend
 
@@ -207,6 +212,5 @@ v0.0.1 ships one adapter: [backend/flywheel-adapter.md](backend/flywheel-adapter
 - Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
 - `provenance.json` machine-readable artifact per state node.
 - One-only `current-best` tags for competing approaches (Flywheel supports natively).
-- State graph visualizer.
 - Git-native open backend (second adapter; the interface is designed for it).
 - pip-installable package.

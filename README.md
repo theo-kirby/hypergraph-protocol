@@ -32,7 +32,9 @@ so an open, git-native backend can be a drop-in second adapter later.
 - **[tools/hypergraph.py](tools/hypergraph.py)** — single-file uv script: `check`
   validates the mechanical invariants over JSON graph exports (CI-ready, nonzero exit
   on violations); `render` generates `STATE.md` (frontier first, architecture tree
-  below).
+  below); `viz` emits a self-contained interactive HTML visualization — record view,
+  state view, and the combined hypergraph view with cross-graph provenance/impact
+  links (zero JS dependencies, no network; opens straight from `file://`).
 - **[templates/](templates/)** — the exact markdown shapes the checker parses.
 
 ## Quickstart
@@ -47,13 +49,22 @@ so an open, git-native backend can be a drop-in second adapter later.
 #   (fresh session) hypergraph-orient → frontier brief in ≤ ~6 tool calls
 ```
 
-Checker/renderer, standalone:
+Checker/renderer/visualizer, standalone:
 
 ```bash
 uv run tools/hypergraph.py check  --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json
 uv run tools/hypergraph.py render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
-uv run pytest tests/               # checker test suite over committed fixtures
+uv run tools/hypergraph.py viz    --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json \
+                                  --config .hypergraph/config.yml -o .hypergraph/viz.html
+open .hypergraph/viz.html          # interactive: pan/zoom, click nodes, search; SVG/PDF export
+uv run pytest tests/               # checker + viz test suite over committed fixtures
 ```
+
+The viz page has three tabs: **Record** (causal DAG), **State** (architecture tree,
+status-colored, frontier highlighted), and **Hypergraph** (record log and state
+projection side by side, with provenance citations and declared State Impacts drawn
+as cross-graph links). Deep links work: `viz.html#record`, `#state`, or
+`#<any-slug>` to jump straight to a node.
 
 ## Repo map
 
@@ -63,9 +74,9 @@ backend/INTERFACE.md        ~10 abstract backend operations
 backend/flywheel-adapter.md op → Flywheel MCP call recipes
 skills/hypergraph-*/        the four skills (install.sh symlinks these)
 templates/                  record-node / state-node / config shapes
-tools/hypergraph.py         checker + STATE.md renderer (uv script)
+tools/hypergraph.py         checker + STATE.md renderer + interactive visualizer (uv script)
 tools/fixtures/             checker test fixtures (clean + per-invariant violations)
-tests/test_checker.py       pytest suite
+tests/                      pytest suites (checker + viz)
 ```
 
 This repo dogfoods itself: see [.hypergraph/config.yml](.hypergraph/config.yml) and
