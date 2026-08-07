@@ -244,7 +244,10 @@ and both `import` and `push --verify` exclude it by its title.
 **Drift detection.** `hypergraph push --verify --against <export.json>` diffs a
 fresh mirror export (`flywheel_export_subgraph` over both mirror roots,
 `include_descendants: true`) against the local node files — read-only, exit 1 on any
-drift, `check`-style DRIFT report. It flags: local nodes never pushed or missing
+drift, `check`-style DRIFT report. Mirror-only structure is exempt: the legend node
+(by title) and any roots declared under `mirror_roots:` in config — adopted projects
+mirror their post-epoch nodes under fresh roots that have no local counterpart
+(the archive holds the legacy mirror), so those root ids are read from config. It flags: local nodes never pushed or missing
 from the export, body-hash mismatches, summary mismatches, local edits pending push
 (`flywheel.content_sha256` vs current body), and revision skew between the export
 and each file's `flywheel:` block. The reconcile skill runs it after every push

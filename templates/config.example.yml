@@ -39,6 +39,17 @@ graph_dir: .hypergraph/graph
 # epoch:
 #   marker: adjective-noun-0000
 
+# Optional: fresh mirror roots minted for an adopted project's post-epoch nodes
+# (the archive holds the legacy mirror). Exempt from push --verify's
+# no-local-counterpart check; the skill layer parents mirror pushes here.
+# mirror_roots:
+#   record:
+#     node_id: 00000000-0000-0000-0000-000000000000
+#     slug: adjective-noun-0000
+#   state:
+#     node_id: 00000000-0000-0000-0000-000000000000
+#     slug: adjective-noun-0000
+
 # Optional (mandatory for mode-A adoptions): where the pre-adoption graph lives.
 # Purely documentary — the checker doesn't read it — but it is the only pointer to
 # legacy artifacts, which do not survive import to the local backend.

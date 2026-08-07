@@ -434,6 +434,18 @@ def test_verify_exempts_the_slug_legend_and_flags_unpushed(tmp_path):
     assert len(messages) == 10  # the legend node adds nothing
 
 
+def test_verify_exempts_declared_mirror_roots(tmp_path):
+    graph_dir = pushed_graph(tmp_path)
+    export = mirror_export_of(graph_dir)
+    export["nodes"].append({"node_id": "fw-mirror-root", "slug_name": "fresh-root-0001",
+                            "title": "demo — record (hypergraph mirror)",
+                            "content": "mirror-only root", "summary": ""})
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(export))
+    assert [f.node for f in hg.verify_mirror(graph_dir, path).violations()] == ["fresh-root-0001"]
+    assert hg.verify_mirror(graph_dir, path, {"fw-mirror-root"}).violations() == []
+
+
 def test_legend_lists_diverged_slug_pairs(tmp_path, capsys):
     graph_dir = pushed_graph(tmp_path)
     text = hg.legend_content(graph_dir)

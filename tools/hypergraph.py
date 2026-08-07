@@ -1429,13 +1429,17 @@ def _load_export_nodes(path: Path) -> dict[str, dict]:
     return out
 
 
-def verify_mirror(graph_dir: Path, against: Path) -> Report:
+def verify_mirror(graph_dir: Path, against: Path,
+                  exempt_ids: set[str] | None = None) -> Report:
     """Read-only drift check: a fresh mirror export vs the local node files.
 
     Drift = missing nodes on either side, body-hash or summary mismatches, local
-    edits not yet pushed, or revision skew vs `flywheel:` frontmatter. The
-    mirror-only slug-legend node (LEGEND_TITLE) is exempt by design."""
+    edits not yet pushed, or revision skew vs `flywheel:` frontmatter. Mirror-only
+    structure is exempt by design: the slug-legend node (LEGEND_TITLE) and any
+    `exempt_ids` (the config's `mirror_roots`, minted when an adopted project
+    mirrors its post-epoch nodes under fresh roots)."""
     report = Report()
+    exempt_ids = exempt_ids or set()
     remote = _load_export_nodes(against)
     matched: set[str] = set()
     for kind in GRAPH_KINDS:
@@ -1467,7 +1471,8 @@ def verify_mirror(graph_dir: Path, against: Path) -> Report:
                 report.add("violation", "mirror", node.slug,
                            f"revision skew: mirror at {revision}, frontmatter says {fw['revision']}")
     for nid, raw in sorted(remote.items()):
-        if nid in matched or str(raw.get("title") or "") == LEGEND_TITLE:
+        if nid in matched or nid in exempt_ids \
+                or str(raw.get("title") or "") == LEGEND_TITLE:
             continue
         report.add("violation", "mirror", str(raw.get("slug_name") or raw.get("slug") or nid),
                    "mirror node has no local counterpart")
@@ -1585,7 +1590,10 @@ def cmd_push(args: argparse.Namespace) -> int:
     if args.verify:
         if not args.against:
             raise LocalGraphError("push --verify needs --against <flywheel-export.json>")
-        report = verify_mirror(graph_dir, args.against)
+        exempt = {str(v.get("node_id"))
+                  for v in (config.get("mirror_roots") or {}).values()
+                  if isinstance(v, dict) and v.get("node_id")}
+        report = verify_mirror(graph_dir, args.against, exempt)
         for f in report.violations():
             print(f"DRIFT {f}")
         print(f"\npush --verify: {len(report.violations())} drift finding(s)")
