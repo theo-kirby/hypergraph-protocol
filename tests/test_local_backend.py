@@ -168,6 +168,20 @@ def test_new_record_generates_repo_and_impact_sections(tmp_path, capsys):
     capsys.readouterr()
 
 
+def test_new_record_guards_generated_headings_but_allows_prose_mentions(tmp_path, capsys):
+    graph_dir = imported(tmp_path)
+    common = ["new", "record", "--graph-dir", graph_dir, "--title", "T",
+              "--parent", "dim-walrus-0004", "--none", "n/a"]
+    duplicated = body_file(tmp_path, "dup.md", "## What\n\nx\n\n## State Impact\n\nnone: x\n")
+    assert run(*common, "--body", duplicated) == 2
+    assert "generates that section" in capsys.readouterr().err
+    # an inline mention of the heading in prose is not a duplicate section
+    mention = body_file(tmp_path, "ok.md",
+                        "## What\n\nThe CLI generates `## State Impact` from flags.\n")
+    assert run(*common, "--body", mention, "--slug", "swift-comet-4243") == 0
+    capsys.readouterr()
+
+
 def test_new_state_without_reconcile_is_refused(tmp_path, capsys):
     graph_dir = imported(tmp_path)
     body = body_file(tmp_path, "s.md", "- A claim [rec: dim-walrus-0004].\n")

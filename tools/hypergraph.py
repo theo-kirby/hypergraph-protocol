@@ -1217,10 +1217,13 @@ def cmd_new(args: argparse.Namespace) -> int:
     body = read_body(args.body)
 
     if kind == "record":
+        # anchored to line starts: prose may legitimately mention `## State Impact`
         for heading in ("## State Impact", "## Repo"):
-            if heading in body and (heading != "## Repo" or args.repo_auto):
-                raise LocalGraphError(
-                    f"--body already contains `{heading}` — the CLI generates that section")
+            if heading != "## Repo" or args.repo_auto:
+                if re.search(rf"^{re.escape(heading)}\s*$", body, re.M | re.I):
+                    raise LocalGraphError(
+                        f"--body already contains a `{heading}` heading — the CLI "
+                        "generates that section")
         if args.impact and args.none:
             raise LocalGraphError("pass either --impact lines or --none, not both (SPEC I2)")
         if not args.impact and not args.none and not args.root:
