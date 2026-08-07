@@ -78,7 +78,17 @@ record it first (SPEC I1), then reconcile it in.
 8. **Refresh the mirror** (`local` + `mirror: flywheel` only): `hypergraph push --plan`,
    execute the ops per local-adapter §Mirroring, then `hypergraph push --record-result`
    and commit the frontmatter updates. A plan that exits 1 carries a record-graph
-   violation — fix it locally, do not mirror it.
+   violation — fix it locally, do not mirror it. Then close the loop:
+   - **Slug legend**: `hypergraph push --legend` → commit/update the mirror-only
+     legend node (title exactly "Hypergraph mirror slug legend", parented to the
+     mirror's record root; find it among the root's children by title, lease +
+     commit if it exists, create otherwise). It never gets a local node file.
+   - **Verify**: fetch a fresh export of both mirror roots
+     (`flywheel_export_subgraph`, `include_descendants: true`, one call with both
+     node_ids) and run `hypergraph push --verify --against <export.json>`. Exit 1
+     means drift — report each DRIFT line; local files are canonical, so drift is
+     fixed by re-pushing (or investigating who wrote to the mirror), never by
+     editing local nodes to match the mirror.
 9. **Report honestly**: what was folded, what was created, checker output verbatim —
    including violations you could not fix. Impacts that could not be applied cleanly
    (ambiguous target, contradictory deltas) get reported, not guessed at.

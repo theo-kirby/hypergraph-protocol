@@ -299,6 +299,7 @@ is speculative protocol machinery only, not yet worth a standing state claim:
 - Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
 - `provenance.json` machine-readable artifact per state node.
 - One-only `current-best` tags for competing approaches (Flywheel supports natively).
-- Local backend: artifacts (op 9) and tags (op 10); slug translation on push; a
-  bidirectional local↔Flywheel sync (today git is the merge substrate and the mirror is
-  a one-way projection).
+- Local backend: artifacts (op 9) and tags (op 10); a bidirectional local↔Flywheel
+  sync (today git is the merge substrate and the mirror is a one-way projection —
+  with drift detection via `push --verify` and a mirror-only slug legend, but no
+  slug translation inside mirrored bodies).

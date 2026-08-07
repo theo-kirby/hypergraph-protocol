@@ -26,6 +26,7 @@ The local (git-native) backend keeps both graphs as committed markdown files und
     hypergraph.py new record|state --title T --body body.md ...
     hypergraph.py update SLUG --body new.md --expect <sha256> --reconcile
     hypergraph.py push --plan [-o plan.json] | --record-result results.json
+    hypergraph.py push --verify --against export.json | --legend [-o legend.md]
 
 Mirroring to Flywheel stays out of this file: `push --plan` emits an ordered plan of
 MCP calls for the skill layer to execute, and `push --record-result` folds the
@@ -834,6 +835,9 @@ def cmd_viz(args: argparse.Namespace) -> int:
 # are derived from slugs, so they are reproducible and never depend on randomness.
 HYPERGRAPH_NS = uuid.UUID("830284cc-4acf-58ee-a7cc-67d88855cb41")
 GRAPH_KINDS = ("record", "state")
+# Title of the mirror-only slug-legend node (local↔flywheel slug map). It exists only
+# on the mirror — excluded from `import` and `push --verify` by this exact title.
+LEGEND_TITLE = "Hypergraph mirror slug legend"
 DEFAULT_GRAPH_DIR = Path(".hypergraph/graph")
 DEFAULT_CACHE_DIR = Path(".hypergraph/cache")
 EXPORT_VERSION = 1
@@ -1082,6 +1086,11 @@ def cmd_import(args: argparse.Namespace) -> int:
         directory = graph_kind_dir(graph_dir, kind)
         directory.mkdir(parents=True, exist_ok=True)
         for node in sorted(graph.nodes.values(), key=lambda n: (n.created_at, n.node_id)):
+            if node.title == LEGEND_TITLE:
+                # mirror-only bookkeeping, never part of the graph proper
+                print(f"skipping mirror slug-legend node {node.slug} (mirror-only)")
+                skipped += 1
+                continue
             if not SLUG_RE.fullmatch(node.slug):
                 raise LocalGraphError(
                     f"{path}: node {node.node_id} has slug {node.slug!r}, which is not "
@@ -1391,6 +1400,90 @@ def push_plan(graph_dir: Path) -> dict:
             "generated_at": utc_now(), "ops": ops, "violations": violations}
 
 
+def _load_export_nodes(path: Path) -> dict[str, dict]:
+    """Export JSON → {node_id: raw node dict}, tolerant of the same shapes load_graph eats."""
+    data = json.loads(Path(path).read_text())
+    raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
+    if isinstance(raw_nodes, dict):
+        raw_nodes = list(raw_nodes.values())
+    out: dict[str, dict] = {}
+    for raw in raw_nodes:
+        if isinstance(raw, dict):
+            nid = str(raw.get("node_id") or raw.get("id") or "")
+            if nid:
+                out[nid] = raw
+    return out
+
+
+def verify_mirror(graph_dir: Path, against: Path) -> Report:
+    """Read-only drift check: a fresh mirror export vs the local node files.
+
+    Drift = missing nodes on either side, body-hash or summary mismatches, local
+    edits not yet pushed, or revision skew vs `flywheel:` frontmatter. The
+    mirror-only slug-legend node (LEGEND_TITLE) is exempt by design."""
+    report = Report()
+    remote = _load_export_nodes(against)
+    matched: set[str] = set()
+    for kind in GRAPH_KINDS:
+        for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
+            fw = node.meta.get("flywheel") or {}
+            fid = str(fw.get("node_id") or "")
+            if not fid:
+                report.add("violation", "mirror", node.slug,
+                           f"local {kind} node never pushed to the mirror")
+                continue
+            raw = remote.get(fid)
+            if raw is None:
+                report.add("violation", "mirror", node.slug,
+                           f"local {kind} node missing from the mirror export (flywheel id {fid})")
+                continue
+            matched.add(fid)
+            if fw.get("content_sha256") and fw["content_sha256"] != node.sha256:
+                report.add("violation", "mirror", node.slug,
+                           "local body changed since last push (pending update)")
+            if body_sha256(str(raw.get("content") or "")) != node.sha256:
+                report.add("violation", "mirror", node.slug,
+                           "body hash mismatch between local file and mirror")
+            if "summary" in raw and str(raw.get("summary") or "") != str(node.meta.get("summary") or ""):
+                report.add("violation", "mirror", node.slug,
+                           "summary mismatch between local file and mirror")
+            revision = raw.get("committed_revision", raw.get("revision"))
+            if revision is not None and fw.get("revision") is not None \
+                    and int(revision) != int(fw["revision"]):
+                report.add("violation", "mirror", node.slug,
+                           f"revision skew: mirror at {revision}, frontmatter says {fw['revision']}")
+    for nid, raw in sorted(remote.items()):
+        if nid in matched or str(raw.get("title") or "") == LEGEND_TITLE:
+            continue
+        report.add("violation", "mirror", str(raw.get("slug_name") or raw.get("slug") or nid),
+                   "mirror node has no local counterpart")
+    return report
+
+
+def legend_content(graph_dir: Path) -> str:
+    """Body for the mirror-only slug-legend node, regenerated on every push.
+
+    Never written into any mirrored node (byte-identity is preserved); the skill
+    layer commits it as its own node under the mirror's record root."""
+    rows = []
+    for kind in GRAPH_KINDS:
+        for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
+            fw = node.meta.get("flywheel") or {}
+            if fw.get("slug") and str(fw["slug"]) != node.slug:
+                rows.append(f"| {kind} | {node.slug} | {fw['slug']} |")
+    lines = [
+        "Mirror-only legend, regenerated on every push. This mirror is a one-way",
+        "projection of committed node files; Flywheel mints its own slug on create, so",
+        "provenance slugs, [rec: …] citations, impact targets and the high-water mark",
+        "written locally may not resolve natively here. Read them through this table.",
+        "",
+        "| graph | local slug (authoritative) | mirror slug |",
+        "| --- | --- | --- |",
+    ]
+    lines += sorted(rows) or ["| — | (no diverged slugs) | — |"]
+    return "\n".join(lines) + "\n"
+
+
 def apply_push_results(graph_dir: Path, results: object) -> int:
     """Fold Flywheel's returned ids/revisions back into each node's frontmatter."""
     if isinstance(results, dict):
@@ -1435,6 +1528,22 @@ def cmd_push(args: argparse.Namespace) -> int:
     if args.record_result:
         count = apply_push_results(graph_dir, json.loads(Path(args.record_result).read_text()))
         print(f"push: stamped Flywheel identity onto {count} node file(s)")
+        return 0
+    if args.verify:
+        if not args.against:
+            raise LocalGraphError("push --verify needs --against <flywheel-export.json>")
+        report = verify_mirror(graph_dir, args.against)
+        for f in report.violations():
+            print(f"DRIFT {f}")
+        print(f"\npush --verify: {len(report.violations())} drift finding(s)")
+        return 1 if report.violations() else 0
+    if args.legend:
+        text = legend_content(graph_dir)
+        if args.output:
+            Path(args.output).write_text(text)
+            print(f"wrote {args.output}")
+        else:
+            print(text, end="")
         return 0
     plan = push_plan(graph_dir)
     text = json.dumps(plan, indent=2, ensure_ascii=False) + "\n"
@@ -2816,12 +2925,19 @@ def main(argv: list[str] | None = None) -> int:
     p_push.add_argument("--plan", action="store_true", help="emit the ordered push plan")
     p_push.add_argument("--record-result", type=Path, metavar="RESULTS.JSON",
                         help="fold executed-push ids back into the node frontmatter")
+    p_push.add_argument("--verify", action="store_true",
+                        help="read-only drift check against a fresh mirror export (exit 1 on drift)")
+    p_push.add_argument("--against", type=Path, metavar="EXPORT.JSON",
+                        help="the mirror export to verify against")
+    p_push.add_argument("--legend", action="store_true",
+                        help="emit the mirror-only slug-legend node body")
     p_push.add_argument("-o", "--output", type=Path, help="plan output path (default: stdout)")
     p_push.set_defaults(func=cmd_push)
 
     args = parser.parse_args(argv)
-    if getattr(args, "command", None) == "push" and not (args.plan or args.record_result):
-        parser.error("push needs --plan or --record-result")
+    if getattr(args, "command", None) == "push" and not (
+            args.plan or args.record_result or args.verify or args.legend):
+        parser.error("push needs --plan, --record-result, --verify, or --legend")
     if getattr(args, "command", None) == "import" and not (args.record or args.state):
         parser.error("import needs --record and/or --state")
     if getattr(args, "command", None) == "update" and not args.print_sha:

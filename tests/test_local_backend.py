@@ -338,6 +338,111 @@ def test_push_flags_a_record_body_that_changed_after_being_pushed(tmp_path, caps
     assert "append-only" in capsys.readouterr().err
 
 
+# ------------------------------------------------------------ mirror verification
+
+def pushed_graph(tmp_path):
+    """LOCAL graph copied, planned, and stamped as if the mirror push ran."""
+    graph_dir = tmp_path / "graph"
+    graph_dir.mkdir()
+    for kind in ("record", "state"):
+        target = graph_dir / kind
+        target.mkdir()
+        for src in (LOCAL / "graph" / kind).glob("*.md"):
+            (target / src.name).write_text(src.read_text())
+    plan = hg.push_plan(graph_dir)
+    results = {"results": [{"slug": op["slug"],
+                            "flywheel": {"node_id": f"fw-{op['slug']}",
+                                         "slug_name": f"wild-river-{op['slug'][-4:]}",
+                                         "revision": 1},
+                            "content_sha256": op["content_sha256"]} for op in plan["ops"]]}
+    hg.apply_push_results(graph_dir, results)
+    return graph_dir
+
+
+def mirror_export_of(graph_dir):
+    """The export a faithful mirror would produce for pushed_graph."""
+    nodes = []
+    for kind in ("record", "state"):
+        for node in hg.load_local_nodes(graph_dir, kind).values():
+            fw = node.meta["flywheel"]
+            nodes.append({"node_id": fw["node_id"], "slug_name": fw["slug"],
+                          "title": node.title, "content": node.content,
+                          "summary": str(node.meta.get("summary") or ""),
+                          "revision": fw["revision"]})
+    return {"version": 1, "nodes": nodes}
+
+
+def test_verify_clean_mirror_has_no_drift(tmp_path):
+    graph_dir = pushed_graph(tmp_path)
+    export = tmp_path / "export.json"
+    export.write_text(json.dumps(mirror_export_of(graph_dir)))
+    assert run("push", "--verify", "--against", export, "--graph-dir", graph_dir) == 0
+    assert hg.verify_mirror(graph_dir, export).violations() == []
+
+
+def test_verify_detects_each_drift_kind(tmp_path):
+    graph_dir = pushed_graph(tmp_path)
+    export = mirror_export_of(graph_dir)
+    by_id = {n["node_id"]: n for n in export["nodes"]}
+    by_id["fw-wise-anchor-1001"]["content"] += "\ntampered\n"      # body hash
+    by_id["fw-quiet-summit-2002"]["summary"] = "different"          # summary
+    by_id["fw-brave-otter-1002"]["revision"] = 7                    # revision skew
+    export["nodes"] = [n for n in export["nodes"]                    # missing from mirror
+                       if n["node_id"] != "fw-calm-fern-1003"]
+    export["nodes"].append({"node_id": "fw-extra", "slug_name": "extra-node-9999",
+                            "title": "Orphan", "content": "x", "summary": ""})
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(export))
+    messages = {f.node: f.message for f in hg.verify_mirror(graph_dir, path).violations()}
+    assert "body hash mismatch" in messages["wise-anchor-1001"]
+    assert "summary mismatch" in messages["quiet-summit-2002"]
+    assert "revision skew" in messages["brave-otter-1002"]
+    assert any("missing from the mirror export" in m for m in messages.values())
+    assert "no local counterpart" in messages["extra-node-9999"]
+    assert run("push", "--verify", "--against", path, "--graph-dir", graph_dir) == 1
+
+
+def test_verify_exempts_the_slug_legend_and_flags_unpushed(tmp_path):
+    graph_dir = pushed_graph(tmp_path)
+    export = mirror_export_of(graph_dir)
+    export["nodes"].append({"node_id": "fw-legend", "slug_name": "shiny-map-0001",
+                            "title": hg.LEGEND_TITLE, "content": "| legend |", "summary": ""})
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(export))
+    assert hg.verify_mirror(graph_dir, path).violations() == []
+    # a never-pushed graph is all drift: every local node unpushed, every mirror
+    # node unmatched — except the legend, still exempt
+    report = hg.verify_mirror(LOCAL / "graph", path)
+    messages = [f.message for f in report.violations()]
+    assert sum("never pushed" in m for m in messages) == 5
+    assert sum("no local counterpart" in m for m in messages) == 5
+    assert len(messages) == 10  # the legend node adds nothing
+
+
+def test_legend_lists_diverged_slug_pairs(tmp_path, capsys):
+    graph_dir = pushed_graph(tmp_path)
+    text = hg.legend_content(graph_dir)
+    assert "| record | wise-anchor-1001 | wild-river-1001 |" in text
+    assert "| state | quiet-summit-2002 | wild-river-2002 |" in text
+    code, out = run_out(capsys, "push", "--legend", "--graph-dir", graph_dir)
+    assert code == 0 and "wild-river-1001" in out
+
+
+def test_import_skips_the_mirror_legend_node(tmp_path, capsys):
+    graph = json.loads((CLEAN / "record.json").read_text())
+    graph["nodes"].append({"node_id": "40000000-0000-0000-0000-000000000009",
+                           "slug_name": "shiny-map-0009", "title": hg.LEGEND_TITLE,
+                           "content": "| legend |", "parent_ids": [],
+                           "created_at": "2026-08-05T00:00:00+00:00"})
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps(graph))
+    graph_dir = tmp_path / "graph"
+    code, out = run_out(capsys, "import", "--record", path, "--graph-dir", graph_dir)
+    assert code == 0
+    assert "mirror-only" in out
+    assert not (graph_dir / "record" / "shiny-map-0009.md").exists()
+
+
 # ------------------------------------------------------------------ diagnostics
 
 @pytest.mark.parametrize("mutate,expected", [

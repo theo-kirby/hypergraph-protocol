@@ -231,6 +231,26 @@ directions and the byte-identical change detector (`content_sha256`) would stop 
 as-is. Use the mirror for reading, sharing and cloud-agent access; treat the repo as the
 graph of record.
 
+**Slug legend (mirror-only).** `hypergraph push --legend` emits the body of a
+dedicated legend node — a table mapping each diverged local slug to the slug
+Flywheel minted for its mirror copy — so mirror readers can resolve locally-minted
+provenance. The skill layer regenerates it on every push: commit it as a node titled
+exactly `Hypergraph mirror slug legend`, parented to the mirror's *record* root
+(locate an existing one among the root's children by title; lease + commit to
+update, create otherwise). The legend lives only on the mirror: it has no local node
+file, mirrored node bodies are never rewritten to reference it (byte-identity holds),
+and both `import` and `push --verify` exclude it by its title.
+
+**Drift detection.** `hypergraph push --verify --against <export.json>` diffs a
+fresh mirror export (`flywheel_export_subgraph` over both mirror roots,
+`include_descendants: true`) against the local node files — read-only, exit 1 on any
+drift, `check`-style DRIFT report. It flags: local nodes never pushed or missing
+from the export, body-hash mismatches, summary mismatches, local edits pending push
+(`flywheel.content_sha256` vs current body), and revision skew between the export
+and each file's `flywheel:` block. The reconcile skill runs it after every push
+(step 8). Local files are canonical — drift is fixed by re-pushing or investigating
+the foreign write, never by editing local nodes to match the mirror.
+
 ## Failure handling
 
 - All local-backend errors exit **2** with a one-line `error:` on stderr; `check` keeps
