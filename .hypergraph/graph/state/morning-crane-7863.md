@@ -5,7 +5,7 @@ title: Adoption
 created_at: '2026-08-07T20:01:01+00:00'
 parents:
 - cool-king-8586
-summary: 'Adoption thrust delivered end-to-end: epoch mechanism, adopt skill, verify+legend, 0.0.2 skills install, a3go+tbinn adopted, acceptance loop held; PyPI publish pending Operator credentials.'
+summary: 'Adoption thrust delivered end-to-end and fully unblocked: epoch mechanism, adopt skill, verify+legend, a3go+tbinn adopted, acceptance loop held, 0.0.2 published and adopters un-pinned.'
 flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
@@ -21,7 +21,7 @@ Status: working
 - Epoch mechanism live: `epoch.marker` in config; `check` exempts record nodes created strictly before the marker from I2 (authoring-time validation never exempted; unresolvable marker is itself a violation); parentage rules per mode — full-import marker parents on the newest legacy node, mode B on the newest prehistory node, epoch-split marker is a parentless local root [rec: shady-quill-2790] [rec: stormy-dew-2969].
 - Mirror integrity closed: `push --verify --against <export>` detects missing nodes, body-hash and summary drift, and revision skew; a mirror-only slug legend node is regenerated on every push; verify exempts config-declared `mirror_roots` (gap found live on a3go) [rec: careful-harbor-3902] [rec: humble-clover-7048].
 - hypergraph-adopt skill shipped (mode A: import-as-fork with mandatory `archive:`; mode B: authored prehistory), with distillation guidance (per-branch subagent mining, id-prefix→slug resolution, honest statuses, user interview), the idempotent sentinel AGENTS.md block with contract reconciliation, and full `.hypergraph/AGENTS.md` onboarding [rec: late-isle-6483].
-- Release 0.0.2 built and wheel-verified with `hypergraph skills install` (skills + agents-block as package data); the PyPI publish itself is blocked on Operator credentials — adopter repos pin the dev-checkout CLI in their onboarding until it lands [rec: crisp-lake-4496].
+- Release 0.0.2 built with `hypergraph skills install` (skills + agents-block as package data) [rec: crisp-lake-4496] and now published to PyPI and verified from the public index — skills install works via uvx and the published CLI checks both adopted repos clean; the adopter onboarding pins on the dev checkout are removed [rec: rough-reef-5869].
 - Field adoptions landed: a3go mode A (108-node legacy graph imported verbatim, 107 nodes epoch-exempt, check 0/0, verified mirror on fresh roots with the legacy graph frozen as archive) [rec: humble-clover-7048]; tbinn mode B (authored prehistory, frontier honestly led by a broken node, full mirror verified) [rec: stormy-dew-2969].
 - Acceptance test passed: a fresh agent with no protocol context completed the full loop in a3go — orient in 6 calls, genuine frontier work (GEO-1 precondition: d=1 boards proven exactly 2D Go, corner-flip endpoint measured), causally-parented record, no state writes, librarian reconcile, mirror verify clean — zero protocol violations [rec: fond-tree-4727].
 
@@ -39,3 +39,4 @@ Status: working
 - humble-clover-7048 — M5: a3go adopted (mode A)
 - stormy-dew-2969 — M6: tbinn adopted (mode B); mode-B marker rule corrected
 - fond-tree-4727 — M7: fresh-agent acceptance loop held
+- rough-reef-5869 — 0.0.2 published; adopters un-pinned; thrust tail closed

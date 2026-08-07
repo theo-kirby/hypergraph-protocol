@@ -18,5 +18,5 @@ Children mirror the project architecture. Statuses per SPEC I6; frontier = open/
 
 ## Reconciliation
 
-- high_water_mark: fond-tree-4727
-- reconciled_at: 2026-08-07T21:26:00+00:00
+- high_water_mark: rough-reef-5869
+- reconciled_at: 2026-08-07T22:05:07+00:00
