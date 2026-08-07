@@ -47,7 +47,9 @@ Flywheel a regenerable projection, refreshed at the end of each reconcile.
 ## What ships
 
 - **[SPEC.md](SPEC.md)** — the protocol: invariants I1–I8 + conventions.
-- **[skills/](skills/)** — four Claude skills: `hypergraph-init`, `hypergraph-record`,
+- **[skills/](skills/)** — five Claude skills: `hypergraph-init`, `hypergraph-adopt`
+  (bring a project with a past under the protocol: legacy-graph import or authored
+  prehistory, adoption epoch, AGENTS.md onboarding), `hypergraph-record`,
   `hypergraph-reconcile`, `hypergraph-orient`.
 - **[tools/hypergraph.py](tools/hypergraph.py)** — single-file uv script: `check`
   validates the mechanical invariants over JSON graph exports (CI-ready, nonzero exit
@@ -81,9 +83,11 @@ uv run tools/hypergraph.py check --record .hypergraph/cache/record.json \
 git add .hypergraph/graph                             # the memory travels with the repo
 ```
 
-Already on Flywheel? `flywheel_export_subgraph` both roots into `.hypergraph/cache/`,
-then `hypergraph import --record … --state …` — node_ids and slugs are preserved
-verbatim, so your existing config, provenance slugs, and high-water mark stay valid.
+Already on Flywheel — or adopting a repo with real history? Run the
+`hypergraph-adopt` skill: it imports the legacy graph verbatim (`hypergraph import`
+preserves node_ids and slugs, so provenance and the high-water mark stay valid),
+draws an adoption epoch so legacy nodes are exempt from template compliance, and
+distills an honest state graph from what the project actually knows.
 
 Checker/renderer/visualizer, standalone:
 
@@ -116,7 +120,7 @@ SPEC.md                     the protocol (invariants + conventions)
 backend/INTERFACE.md        ~10 abstract backend operations
 backend/local-adapter.md    op → node files + hypergraph CLI (git-native)
 backend/flywheel-adapter.md op → Flywheel MCP call recipes
-skills/hypergraph-*/        the four skills (install.sh symlinks these)
+skills/hypergraph-*/        the five skills (install.sh symlinks these)
 templates/                  record-node / state-node / config shapes
 tools/hypergraph.py         checker + renderer + visualizer + local backend (uv script)
 tools/fixtures/             test fixtures (clean, per-invariant violations, local-graph)

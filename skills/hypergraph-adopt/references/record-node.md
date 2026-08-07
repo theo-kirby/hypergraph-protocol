@@ -1,0 +1,1 @@
+../../../templates/record-node.md
