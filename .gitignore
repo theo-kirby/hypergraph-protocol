@@ -218,5 +218,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Hypergraph
+# Regenerable from the graph — `hypergraph export` / `hypergraph.py viz`.
 .hypergraph/cache/
 .hypergraph/viz.html
+# NOT ignored, deliberately: .hypergraph/config.yml and .hypergraph/graph/ (the local
+# backend's node files) are the project's memory and must travel with the repo.

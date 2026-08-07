@@ -1,9 +1,14 @@
 # Backend Interface
 
 The Hypergraph skills are written against these abstract operations, not against any
-concrete graph store. v0.0.1 ships one adapter
-([flywheel-adapter.md](flywheel-adapter.md)); a future git-native backend should be a
-drop-in second adapter implementing the same table.
+concrete graph store. Two adapters implement this table:
+
+- [local-adapter.md](local-adapter.md) — git-native. Markdown node files committed in
+  the repo, driven by `tools/hypergraph.py`. No network, no account.
+- [flywheel-adapter.md](flywheel-adapter.md) — Flywheel MCP. Hosted, reachable by cloud
+  agents; also usable as a mirror of a local graph.
+
+`backend:` in `.hypergraph/config.yml` selects which one the skills follow.
 
 Requirements on the backend: a DAG of nodes with markdown content, immutable node IDs,
 immutable human-readable slugs, optimistic-locking writes, and JSON export of a
@@ -34,6 +39,7 @@ subgraph. Artifacts and tags are optional.
 - **Append vs update.** Record graph uses only ops 1–2 for writes; state graph uses
   ops 1–2 at init (seeding) and op 7 thereafter. An adapter must make op 7's
   concurrency story explicit (lease, lock, CAS) — reconcile is single-writer by
-  protocol, but the backend should still refuse a stale write.
+  protocol, but the backend should still refuse a stale write. Flywheel uses
+  `base_committed_revision`; the local backend uses a body-hash CAS (`--expect`).
 - **Export determinism.** Op 8 output for the same graph revision should be stable
   enough for diffing; ordering by `created_at` then `node_id` is recommended.

@@ -1,7 +1,8 @@
 # Hypergraph Protocol — v0.0.1
 
 Hypergraph is a protocol for maintaining **two graphs per research project** on top of a
-graph store (v0.0.1 backend: [Flywheel](backend/flywheel-adapter.md)):
+graph store — either [markdown files in the repo](backend/local-adapter.md) or a hosted
+store such as [Flywheel](backend/flywheel-adapter.md):
 
 - **Record graph** — the append-only historical log of everything that happened:
   decisions, experiments, evidence, dead ends. Topology is causal/chronological.
@@ -235,15 +236,27 @@ pointers made visible, still never graph edges.
 ## Backend
 
 The protocol is written against ~10 abstract operations
-([backend/INTERFACE.md](backend/INTERFACE.md)) so the graph store is swappable.
-v0.0.1 ships one adapter: [backend/flywheel-adapter.md](backend/flywheel-adapter.md).
+([backend/INTERFACE.md](backend/INTERFACE.md)) so the graph store is swappable. Two
+adapters ship, selected by `backend:` in `.hypergraph/config.yml`:
+
+- **`local`** ([backend/local-adapter.md](backend/local-adapter.md)) — git-native:
+  each node is a committed markdown file under `.hypergraph/graph/<kind>/<slug>.md`,
+  frontmatter carrying identity and parent slugs, body carrying the content verbatim.
+  `hypergraph export` produces the same JSON the checker consumes, so nothing above
+  this section changes. No network, no account; the graphs travel with the repo.
+- **`flywheel`** ([backend/flywheel-adapter.md](backend/flywheel-adapter.md)) — hosted
+  graph store over MCP; recommended when cloud agents need the graph. It can also be a
+  mirror of a local graph (`mirror: flywheel`), refreshed after each reconcile.
+
+Both satisfy op 7's "refuse a stale write": Flywheel by revision, local by a body-hash
+compare-and-swap. Under `local`, `--reconcile` is the mechanical I3 gate — the only
+commands that write state nodes refuse to run without it.
 
 ## Future work (out of scope for v0.0.1)
 
 Committed forward work lives in the state graph as open frontier nodes (see Forward
-work above) — for this repo, that is where the git-native backend and field
-dogfooding are tracked. The list below is speculative protocol machinery only, not
-yet worth a standing state claim:
+work above) — for this repo, that is where field dogfooding is tracked. The list below
+is speculative protocol machinery only, not yet worth a standing state claim:
 
 - Repo-drift check: `check` warns when the repo HEAD is ahead of the newest record
   node's `head_commit_sha` — unrecorded work is otherwise invisible (unreconciled
@@ -254,4 +267,6 @@ yet worth a standing state claim:
 - Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
 - `provenance.json` machine-readable artifact per state node.
 - One-only `current-best` tags for competing approaches (Flywheel supports natively).
-- pip-installable package.
+- Local backend: artifacts (op 9) and tags (op 10); slug translation on push; a
+  bidirectional local↔Flywheel sync (today git is the merge substrate and the mirror is
+  a one-way projection).

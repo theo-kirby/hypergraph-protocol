@@ -13,4 +13,9 @@ cache_dir: .hypergraph/cache
 
 state_md: STATE.md
 
-backend: flywheel
+# Backend adapter the skills dispatch on (backend/INTERFACE.md).
+# local: the node files under graph_dir are the source of truth (offline, in-repo).
+# mirror: Flywheel stays a regenerable projection, refreshed after each reconcile.
+backend: local
+graph_dir: .hypergraph/graph
+mirror: flywheel

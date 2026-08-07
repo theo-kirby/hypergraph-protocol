@@ -1,7 +1,8 @@
 # Hypergraph
 
 A protocol for keeping research projects legible to fresh agents. Hypergraph maintains
-**two graphs per project** on top of a graph store (v0.0.1: [Flywheel](backend/flywheel-adapter.md)):
+**two graphs per project** on top of a graph store — [markdown files in your
+repo](backend/local-adapter.md), or a hosted one like [Flywheel](backend/flywheel-adapter.md):
 
 - **Record graph** — the append-only log of everything that happened: decisions,
   experiments, evidence, dead ends. Optimized for audit, not orientation.
@@ -23,11 +24,27 @@ rule: new directions (including Operator directives) enter as decision record no
 whose impacts open `Status: open` state nodes — the frontier carries intent as claims
 about gaps, never as task lists.
 
-## v0.0.1 = protocol + skills + checker
+## Two backends
 
-Deliberately not a package. Flywheel (MCP) is the load-bearing graph store; the
-protocol is written against a [thin abstract backend interface](backend/INTERFACE.md)
-so an open, git-native backend can be a drop-in second adapter later.
+The protocol is written against a [thin abstract backend
+interface](backend/INTERFACE.md) — ~10 operations — and two adapters implement it. Pick
+one at init time; `backend:` in `.hypergraph/config.yml` is what every skill dispatches
+on.
+
+| | **`local`** ([adapter](backend/local-adapter.md)) | **`flywheel`** ([adapter](backend/flywheel-adapter.md)) |
+|---|---|---|
+| Source of truth | committed `.md` files in your repo | hosted graph store over MCP |
+| Requires | nothing (offline, no account) | Flywheel MCP |
+| Writes | `hypergraph new` / `update` | `flywheel_commit_new_node` / lease→commit |
+| Op 7 concurrency | body-hash CAS (`--expect`) + git | `base_committed_revision` (409) |
+| Good for | solo/offline work, the graph travelling with the repo, CI | hosting, cloud agents, a graph shared across repos |
+
+Flywheel is the **recommended** path when you want your graph reachable by agents that
+aren't sitting in your working tree. The local backend is fully independent of it, and
+the two compose: `backend: local` + `mirror: flywheel` keeps the files canonical and
+Flywheel a regenerable projection, refreshed at the end of each reconcile.
+
+## What ships
 
 - **[SPEC.md](SPEC.md)** — the protocol: invariants I1–I8 + conventions.
 - **[skills/](skills/)** — four Claude skills: `hypergraph-init`, `hypergraph-record`,
@@ -37,7 +54,8 @@ so an open, git-native backend can be a drop-in second adapter later.
   on violations); `render` generates `STATE.md` (frontier first, architecture tree
   below); `viz` emits a self-contained interactive HTML visualization — record view,
   state view, and the combined hypergraph view with cross-graph provenance/impact
-  links (zero JS dependencies, no network; opens straight from `file://`).
+  links (zero JS dependencies, no network; opens straight from `file://`); and
+  `export`/`import`/`new`/`update`/`push` implement the local backend.
 - **[templates/](templates/)** — the exact markdown shapes the checker parses.
 
 ## Quickstart
@@ -45,12 +63,27 @@ so an open, git-native backend can be a drop-in second adapter later.
 ```bash
 ./install.sh                       # symlink the skills into ~/.claude/skills
 
-# in a Claude session inside your project repo (Flywheel MCP connected):
+# in a Claude session inside your project repo:
 #   run hypergraph-init            → roots + state skeleton + .hypergraph/config.yml + STATE.md
 #   ... do work; run hypergraph-record after each unit of work
 #   run hypergraph-reconcile       → fold impacts into state, regenerate STATE.md
 #   (fresh session) hypergraph-orient → frontier brief in ≤ ~6 tool calls
 ```
+
+The local backend, standalone — no MCP anywhere in this loop:
+
+```bash
+hypergraph new record --title "Fixed the streaming parser" --body body.md \
+    --parent <causal-slug> --impact "<state-slug> — status broken → working" --repo-auto
+hypergraph export --config .hypergraph/config.yml     # node files → cache JSON
+uv run tools/hypergraph.py check --record .hypergraph/cache/record.json \
+    --state .hypergraph/cache/state.json --config .hypergraph/config.yml
+git add .hypergraph/graph                             # the memory travels with the repo
+```
+
+Already on Flywheel? `flywheel_export_subgraph` both roots into `.hypergraph/cache/`,
+then `hypergraph import --record … --state …` — node_ids and slugs are preserved
+verbatim, so your existing config, provenance slugs, and high-water mark stay valid.
 
 Checker/renderer/visualizer, standalone:
 
@@ -81,12 +114,13 @@ to a node.
 ```
 SPEC.md                     the protocol (invariants + conventions)
 backend/INTERFACE.md        ~10 abstract backend operations
+backend/local-adapter.md    op → node files + hypergraph CLI (git-native)
 backend/flywheel-adapter.md op → Flywheel MCP call recipes
 skills/hypergraph-*/        the four skills (install.sh symlinks these)
 templates/                  record-node / state-node / config shapes
-tools/hypergraph.py         checker + STATE.md renderer + interactive visualizer (uv script)
-tools/fixtures/             checker test fixtures (clean + per-invariant violations)
-tests/                      pytest suites (checker + viz)
+tools/hypergraph.py         checker + renderer + visualizer + local backend (uv script)
+tools/fixtures/             test fixtures (clean, per-invariant violations, local-graph)
+tests/                      pytest suites (checker + viz + local backend)
 ```
 
 This repo dogfoods itself: see [.hypergraph/config.yml](.hypergraph/config.yml) and

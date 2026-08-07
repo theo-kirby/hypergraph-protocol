@@ -1,0 +1,38 @@
+---
+node_id: a4fad33e-262f-5f4a-8d83-298e76523a0e
+slug: bold-field-1268
+title: Dogfooding
+created_at: '2026-08-06T21:41:24.844400+00:00'
+parents:
+- cool-king-8586
+summary: Self-host cycle green; cold-start passed; blind-test pair complete — AGENTS.md countermeasure validated by controlled retest.
+flywheel:
+  node_id: a4fad33e-262f-5f4a-8d83-298e76523a0e
+  slug: bold-field-1268
+  revision: 4
+  pushed_at: '2026-08-07T18:12:06.426139+00:00'
+  content_sha256: 4da92b8616a93e78858ced336545b9b07b9338bfadc585bbbaf69fd7e95f1605
+---
+Status: working
+
+## Current
+
+- Full self-host cycle completed on this repo: live init, retro-recorded design + M1–M4, reconcile pass over four state nodes + HWM advance, checker green (0 violations/warnings/unreconciled) over real exports, STATE.md committed [rec: steep-cell-5173].
+- Cold-start acceptance passed: a fresh agent with no prior context oriented to the frontier in 4 Flywheel MCP calls against the ≤6 budget, with correct provenance pointers [rec: steep-cell-5173].
+- Reconcile recipes proven in practice, including failure paths: one stage-lease expiry mid-pass recovered by re-acquire + retry per the adapter recipe [rec: steep-cell-5173] [rec: tiny-sunset-0847].
+- Forward-looking intent moved out of this node onto frontier nodes (Field dogfooding, Git-native backend) per the forward-work convention [rec: patient-limit-9007].
+- Blind test #1 (no onboarding): a protocol-naive agent shipped a real feature and used the graph machinery (exports, render, viz) but recorded nothing — machinery discovery held, obligation legibility failed; countermeasure was AGENTS.md onboarding, and the work was recorded retroactively [rec: tiny-sunset-0847].
+- Blind test #2 (with AGENTS.md, only changed variable): passed — the arriving agent oriented, committed its work to git, recorded a causally-parented node with a valid impact declaration, never touched state, and explicitly deferred reconcile to the Operator; the countermeasure is validated [rec: little-bar-4131].
+- Operating pattern observed across cycles: worker sessions (fresh context) do work and append record nodes; a standing librarian session reconciles — the division of labor I3 implies, emerging in practice [rec: little-bar-4131].
+
+## Negative knowledge
+
+None yet.
+
+## Provenance
+
+- wandering-rice-9747 — component seeded at project init
+- steep-cell-5173 — M5 cycle completion + cold-start test result
+- patient-limit-9007 — forward-work convention; intent relocated to frontier nodes
+- tiny-sunset-0847 — blind test #1 result + countermeasure
+- little-bar-4131 — blind test #2 result: countermeasure validated; librarian pattern observed

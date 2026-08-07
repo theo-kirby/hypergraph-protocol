@@ -15,4 +15,20 @@ cache_dir: .hypergraph/cache
 # Generated state snapshot (committed; never hand-edited).
 state_md: STATE.md
 
-backend: flywheel
+# Which backend adapter the skills follow (backend/INTERFACE.md). This is the live
+# dispatch key: every skill reads it and follows the matching reference doc.
+#
+#   local     — markdown node files in this repo are the source of truth
+#               (backend/local-adapter.md). No MCP, no account; the graphs travel
+#               with the repo and `hypergraph export` feeds check/render/viz.
+#   flywheel  — Flywheel MCP is the source of truth (backend/flywheel-adapter.md).
+#               Recommended when you want hosting and cloud agents.
+backend: local
+
+# Where the local backend keeps node files (committed). `local` backend only.
+graph_dir: .hypergraph/graph
+
+# Optional: mirror the local graphs into a hosted store. With `backend: local` and
+# `mirror: flywheel`, local stays canonical and Flywheel is a regenerable projection
+# refreshed via `hypergraph push --plan` → skill executes → `push --record-result`.
+# mirror: flywheel

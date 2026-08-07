@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["pyyaml"]
 # ///
-"""Hypergraph protocol tooling: invariant checker + STATE.md renderer.
+"""Hypergraph protocol tooling: invariant checker, STATE.md renderer, local backend.
 
 Consumes JSON graph exports (backend `export_graph`, e.g. flywheel_export_subgraph
 saved to .hypergraph/cache/{record,state}.json). No network, no auth, deterministic.
@@ -16,13 +16,31 @@ check exits 1 on any I2/I4/I5/I6/I7 violation (see SPEC.md). Warnings (I1 proxie
 and info lines never affect the exit code. viz emits a self-contained interactive
 HTML file (no network, no JS dependencies) with record, state, and combined
 hypergraph views; open it directly in a browser.
+
+The local (git-native) backend keeps both graphs as committed markdown files under
+.hypergraph/graph/{record,state}/<slug>.md and produces the very same export JSON
+(backend/local-adapter.md):
+
+    hypergraph.py export [--config config.yml] [--graph-dir D] [--out-dir cache/]
+    hypergraph.py import --record record.json --state state.json [--graph-dir D]
+    hypergraph.py new record|state --title T --body body.md ...
+    hypergraph.py update SLUG --body new.md --expect <sha256> --reconcile
+    hypergraph.py push --plan [-o plan.json] | --record-result results.json
+
+Mirroring to Flywheel stays out of this file: `push --plan` emits an ordered plan of
+MCP calls for the skill layer to execute, and `push --record-result` folds the
+returned ids back into the node files. The tool itself never touches the network.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import random
 import re
+import subprocess
 import sys
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -766,6 +784,631 @@ def cmd_viz(args: argparse.Namespace) -> int:
     else:
         print(output)
     return 0
+
+
+# ----------------------------------------------------------------- local backend
+# The git-native adapter (backend/local-adapter.md): markdown files under
+# .hypergraph/graph/{record,state}/<slug>.md are the source of truth, and `export`
+# turns them into exactly the JSON that check/render/viz already consume — so the
+# local backend is a drop-in behind backend/INTERFACE.md without touching any of
+# the code above. Flywheel, when used, becomes a regenerable mirror.
+
+# uuid5(NAMESPACE_URL, "https://github.com/theo-kirby/hypergraph-protocol"): node ids
+# are derived from slugs, so they are reproducible and never depend on randomness.
+HYPERGRAPH_NS = uuid.UUID("830284cc-4acf-58ee-a7cc-67d88855cb41")
+GRAPH_KINDS = ("record", "state")
+DEFAULT_GRAPH_DIR = Path(".hypergraph/graph")
+DEFAULT_CACHE_DIR = Path(".hypergraph/cache")
+EXPORT_VERSION = 1
+FM_ORDER = ("node_id", "slug", "title", "created_at", "parents", "summary", "flywheel")
+
+# Two wordlists for slug minting; `adjective-noun-####` matches SLUG_RE, which every
+# provenance line, [rec:] citation, impact target and high-water mark depends on.
+SLUG_ADJECTIVES = """
+amber ancient autumn blue bold brave brisk calm candid careful chilly civic clear
+clever cold cool copper crimson crisp curious damp dawn deep dry dusty eager early
+easy empty even fair falling fierce first flat floral fond forest fresh frosty gentle
+gilded glad golden grand green happy hidden hollow honest humble icy idle jolly keen
+kind late lawful lean light little lively lone long loyal lucid lucky mellow merry
+mild misty modest morning narrow neat nimble noble northern odd old open pale patient
+peaceful placid plain polished proud quiet rapid rare ready red restless rich rising
+rough round royal rustic sage salty scarlet shady sharp shy silent silver simple
+sleepy slender small smooth snowy soft solar solemn southern spring square staid
+steady still stormy strong sunny sweet swift tender terse tidy tiny true twilight
+upright vast violet warm wandering weathered western wild windy winter wise witty
+young zesty
+""".split()
+SLUG_NOUNS = """
+anchor arbor arrow ash aspen badger banner basin bay beacon bell birch bloom bluff
+bramble branch brook cabin canyon cedar chart cliff cloud clover comet cove crane
+creek crest crow current dawn delta dew dune dusk eagle ember falcon fern field
+fjord flame flint forest fountain fox garden gate glacier glade grove grotto harbor
+harvest haven hawk heron hill hollow horizon isle ivy jasper journey key lake lantern
+ledge light lily lodge loom marsh meadow mesa mist moon moss mountain nest oak ocean
+orchard otter path peak pebble pine pond prairie quartz quill rain raven reef ridge
+river road rock rose sail sage sand sea shade shore sky slope snow spark spire spring
+star stone stream summit sun tide timber tooth tower trail tree union vale valley
+vine walrus water wave willow wind wing wolf wood
+""".split()
+
+
+class LocalGraphError(Exception):
+    """Anything wrong with the on-disk graph; the CLI turns these into exit 2."""
+
+
+@dataclass
+class LocalNode:
+    """One `.hypergraph/graph/<kind>/<slug>.md` file: frontmatter + verbatim body."""
+    kind: str
+    path: Path
+    meta: dict
+    content: str
+
+    @property
+    def slug(self) -> str:
+        return str(self.meta.get("slug") or "")
+
+    @property
+    def node_id(self) -> str:
+        return str(self.meta.get("node_id") or "")
+
+    @property
+    def title(self) -> str:
+        return str(self.meta.get("title") or "")
+
+    @property
+    def created_at(self) -> str:
+        return str(self.meta.get("created_at") or "")
+
+    @property
+    def parents(self) -> list[str]:
+        raw = self.meta.get("parents") or []
+        return [str(p) for p in (raw if isinstance(raw, list) else [raw])]
+
+    @property
+    def sha256(self) -> str:
+        return body_sha256(self.content)
+
+
+def node_id_for(slug: str) -> str:
+    return str(uuid.uuid5(HYPERGRAPH_NS, slug))
+
+
+def body_sha256(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def mint_slug(taken: set[str], rng: random.Random | None = None) -> str:
+    rng = rng or random.Random()
+    for _ in range(10000):
+        slug = f"{rng.choice(SLUG_ADJECTIVES)}-{rng.choice(SLUG_NOUNS)}-{rng.randrange(10000):04d}"
+        if slug not in taken and SLUG_RE.fullmatch(slug):
+            return slug
+    raise LocalGraphError("could not mint a free slug — the wordlists are exhausted")
+
+
+# ------------------------------------------------------------- node file plumbing
+
+def split_frontmatter(text: str, where: str = "node file") -> tuple[dict, str]:
+    """`---` YAML block then the body. The body is returned byte-for-byte: it *is*
+    the node `content` the checker sees, with no transformation anywhere."""
+    import yaml
+
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        raise LocalGraphError(f"{where}: file does not start with a `---` frontmatter block")
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            meta = yaml.safe_load("\n".join(lines[1:i])) or {}
+            if not isinstance(meta, dict):
+                raise LocalGraphError(f"{where}: frontmatter is not a YAML mapping")
+            return meta, "\n".join(lines[i + 1:])
+    raise LocalGraphError(f"{where}: unterminated frontmatter block (no closing `---`)")
+
+
+def render_node_file(meta: dict, content: str) -> str:
+    import yaml
+
+    ordered = {k: meta[k] for k in FM_ORDER if k in meta}
+    ordered.update({k: v for k, v in meta.items() if k not in ordered})
+    # width high enough that no value line-wraps: frontmatter stays greppable
+    fm = yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True,
+                        default_flow_style=False, width=4096).rstrip("\n")
+    return f"---\n{fm}\n---\n{content}"
+
+
+def graph_kind_dir(graph_dir: Path, kind: str) -> Path:
+    return Path(graph_dir) / kind
+
+
+def load_local_nodes(graph_dir: Path, kind: str, missing_ok: bool = False) -> dict[str, LocalNode]:
+    """→ {slug: LocalNode} for one graph, with per-file structural validation."""
+    directory = graph_kind_dir(graph_dir, kind)
+    if not directory.is_dir():
+        if missing_ok:
+            return {}
+        raise LocalGraphError(f"no {kind} graph directory at {directory}")
+    nodes: dict[str, LocalNode] = {}
+    seen_ids: dict[str, str] = {}
+    for path in sorted(directory.glob("*.md")):
+        meta, content = split_frontmatter(path.read_text(), str(path))
+        node = LocalNode(kind=kind, path=path, meta=meta, content=content)
+        if not SLUG_RE.fullmatch(node.slug):
+            raise LocalGraphError(
+                f"{path}: slug {node.slug!r} is not `adjective-noun-####` — every "
+                "provenance pointer in the protocol depends on that shape")
+        if path.stem != node.slug:
+            raise LocalGraphError(f"{path}: filename does not match frontmatter slug {node.slug!r}")
+        if not node.node_id:
+            raise LocalGraphError(f"{path}: frontmatter has no `node_id`")
+        if node.node_id in seen_ids:
+            raise LocalGraphError(
+                f"{path}: node_id collides with {seen_ids[node.node_id]}")
+        if parse_ts(node.created_at) is None:
+            raise LocalGraphError(
+                f"{path}: `created_at` missing or not ISO-8601 (got {node.created_at!r}) — "
+                "the unreconciled/high-water-mark partition is timestamp-ordered")
+        seen_ids[node.node_id] = str(path)
+        nodes[node.slug] = node
+    return nodes
+
+
+def local_graph(nodes: dict[str, LocalNode], kind: str) -> Graph:
+    """Resolve parent *slugs* to node_ids and build the same Graph load_graph builds."""
+    out: dict[str, Node] = {}
+    for node in nodes.values():
+        parent_ids = []
+        for parent in node.parents:
+            if parent not in nodes:
+                raise LocalGraphError(
+                    f"{node.path}: parent slug `{parent}` is not a {kind} node")
+            parent_ids.append(nodes[parent].node_id)
+        out[node.node_id] = Node(node_id=node.node_id, slug=node.slug, title=node.title,
+                                 content=node.content, parent_ids=parent_ids,
+                                 created_at=node.created_at)
+    return Graph(nodes=out, by_slug={n.slug: n for n in out.values() if n.slug})
+
+
+def load_local_graph(graph_dir: Path, kind: str, missing_ok: bool = False) -> Graph:
+    return local_graph(load_local_nodes(graph_dir, kind, missing_ok), kind)
+
+
+def topo_order(nodes: dict[str, LocalNode]) -> list[LocalNode]:
+    """Parents before children; ties broken by (created_at, slug) for determinism."""
+    key = lambda s: (nodes[s].created_at, s)  # noqa: E731
+    pending = {s: [p for p in n.parents if p in nodes] for s, n in nodes.items()}
+    out: list[LocalNode] = []
+    done: set[str] = set()
+    while pending:
+        ready = sorted((s for s, ps in pending.items() if all(p in done for p in ps)), key=key)
+        if not ready:  # cycle guard: emit the rest in stable order rather than hang
+            ready = sorted(pending, key=key)
+        for slug in ready:
+            out.append(nodes[slug])
+            done.add(slug)
+            pending.pop(slug)
+    return out
+
+
+# ---------------------------------------------------------------- export / import
+
+def export_graph_json(graph_dir: Path, kind: str) -> dict:
+    nodes = load_local_nodes(graph_dir, kind)
+    graph = local_graph(nodes, kind)  # validates parent references
+    records = []
+    for slug, node in nodes.items():
+        records.append({
+            "node_id": node.node_id,
+            "slug_name": slug,
+            "title": node.title,
+            "content": node.content,
+            "summary": str(node.meta.get("summary") or ""),
+            "parent_ids": graph.nodes[node.node_id].parent_ids,
+            "created_at": node.created_at,
+        })
+    records.sort(key=lambda r: (r["created_at"], r["node_id"]))  # INTERFACE op 8
+    return {"version": EXPORT_VERSION, "exported_at": utc_now(), "nodes": records}
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    out_dir = args.out_dir or Path(config.get("cache_dir") or DEFAULT_CACHE_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for kind in GRAPH_KINDS:
+        payload = export_graph_json(graph_dir, kind)
+        path = out_dir / f"{kind}.json"
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+        print(f"wrote {path} ({len(payload['nodes'])} {kind} node(s))")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    written = skipped = 0
+    for kind, path in (("record", args.record), ("state", args.state)):
+        if path is None:
+            continue
+        graph = load_graph(path)
+        raw = json.loads(Path(path).read_text())
+        extras = {}
+        if isinstance(raw, dict):
+            for item in raw.get("nodes") or []:
+                if isinstance(item, dict) and item.get("node_id"):
+                    extras[str(item["node_id"])] = item
+        pushed_at = (isinstance(raw, dict) and raw.get("exported_at")) or utc_now()
+        directory = graph_kind_dir(graph_dir, kind)
+        directory.mkdir(parents=True, exist_ok=True)
+        for node in sorted(graph.nodes.values(), key=lambda n: (n.created_at, n.node_id)):
+            if not SLUG_RE.fullmatch(node.slug):
+                raise LocalGraphError(
+                    f"{path}: node {node.node_id} has slug {node.slug!r}, which is not "
+                    "`adjective-noun-####`; the local backend needs it to name the file")
+            parents = []
+            for pid in node.parent_ids:
+                parent = graph.nodes.get(pid)
+                if parent is None:
+                    raise LocalGraphError(
+                        f"{path}: node `{node.slug}` has parent id {pid} that is not in "
+                        "the export (re-export with include_descendants from the root)")
+                parents.append(parent.slug)
+            src = extras.get(node.node_id, {})
+            flywheel = {"node_id": node.node_id, "slug": node.slug}
+            revision = src.get("committed_revision", src.get("revision"))
+            if revision is not None:
+                flywheel["revision"] = revision
+            flywheel["pushed_at"] = str(pushed_at)
+            flywheel["content_sha256"] = body_sha256(node.content)
+            meta = {
+                "node_id": node.node_id,          # preserved verbatim: no identity drift
+                "slug": node.slug,
+                "title": node.title,
+                "created_at": node.created_at,
+                "parents": parents,
+                "summary": str(src.get("summary") or ""),
+                "flywheel": flywheel,
+            }
+            text = render_node_file(meta, node.content)
+            target = directory / f"{node.slug}.md"
+            if target.exists() and not args.force:
+                if target.read_text() == text:
+                    skipped += 1
+                    continue
+                raise LocalGraphError(
+                    f"{target} exists and differs from the import — pass --force to overwrite")
+            target.write_text(text)
+            written += 1
+    print(f"import: wrote {written} node file(s), {skipped} already up to date "
+          f"under {graph_dir}")
+    return 0
+
+
+# ------------------------------------------------------------------- authoring
+
+def read_body(spec: str | None) -> str:
+    if spec is None:
+        return ""
+    if spec == "-":
+        return sys.stdin.read()
+    return Path(spec).read_text()
+
+
+def git_repo_context() -> dict[str, str]:
+    """Local `git` reads only (no fetch, no remote round-trip)."""
+    def run(*argv: str) -> str | None:
+        try:
+            proc = subprocess.run(["git", *argv], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else None
+
+    return {
+        "repo": run("config", "--get", "remote.origin.url") or "none",
+        "branch": run("rev-parse", "--abbrev-ref", "HEAD") or "none",
+        "commit": run("rev-parse", "HEAD") or "none",
+    }
+
+
+def compose_record_content(body: str, impacts: list[str], none_reason: str | None,
+                           repo: dict[str, str] | None, is_root: bool) -> str:
+    parts: list[str] = []
+    if body.strip():
+        parts.append(body.strip())
+    if repo:
+        parts.append("## Repo\n\n"
+                     f"- repo: {repo['repo']}\n- branch: {repo['branch']}\n"
+                     f"- commit: {repo['commit']}")
+    lines = [f"- target: {i}" for i in impacts]
+    if none_reason:
+        lines.append(f"none: {none_reason}")
+    if lines or not is_root:
+        parts.append("## State Impact\n\n" + "\n".join(lines))
+    return "\n\n".join(parts) + "\n"
+
+
+def compose_state_content(body: str, status: str, prov: list[str], neg: list[str],
+                          hwm: str | None, reconciled_at: str, is_root: bool) -> str:
+    if is_root:
+        parts = [body.strip()] if body.strip() else []
+        parts.append("## Reconciliation\n\n"
+                     f"- high_water_mark: {hwm or 'none'}\n"
+                     f"- reconciled_at: {reconciled_at}")
+        return "\n\n".join(parts) + "\n"
+    parts = [f"Status: {status}", "## Current\n\n" + body.strip()]
+    parts.append("## Negative knowledge\n\n" + ("\n".join(f"- {n}" for n in neg)
+                                                if neg else "None yet."))
+    parts.append("## Provenance\n\n" + "\n".join(f"- {p}" for p in prov))
+    return "\n\n".join(parts) + "\n"
+
+
+def _solo_graph(slug: str, title: str, content: str, created_at: str) -> tuple[Node, Graph]:
+    node = Node(node_id=node_id_for(slug), slug=slug, title=title, content=content,
+                parent_ids=[], created_at=created_at)
+    return node, Graph(nodes={node.node_id: node}, by_slug={slug: node})
+
+
+def validate_node_content(kind: str, slug: str, title: str, content: str, created_at: str,
+                          record: Graph, state: Graph, is_root: bool) -> Report:
+    """Run the real checker over a single candidate node, before it is written —
+    a bad impact target or dangling provenance slug fails at authoring time."""
+    report = Report()
+    node, solo = _solo_graph(slug, title, content, created_at)
+    if kind == "record":
+        check_impacts(solo, state, node if is_root else None, report)
+    else:
+        check_state_nodes(record, solo, node if is_root else None, report)
+        if is_root:
+            check_hwm(record, solo, None, node, report)
+    return report
+
+
+def _report_and_raise(report: Report, what: str) -> None:
+    for finding in report.warnings():  # stderr: stdout is the new node's slug
+        print(f"warning   {finding}", file=sys.stderr)
+    violations = report.violations()
+    if violations:
+        detail = "\n".join(f"  VIOLATION {f}" for f in violations)
+        raise LocalGraphError(f"{what} would violate the protocol:\n{detail}")
+
+
+def cmd_new(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    kind = args.kind
+    if kind == "state" and not args.reconcile:
+        raise LocalGraphError(
+            "refusing to write a state node: only hypergraph-reconcile may write state "
+            "(SPEC I3). Declare a `## State Impact` on a record node instead; pass "
+            "--reconcile only from inside a reconcile pass.")
+
+    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in GRAPH_KINDS}
+    record = local_graph(existing["record"], "record")
+    state = local_graph(existing["state"], "state")
+    taken = set(existing["record"]) | set(existing["state"])
+
+    parents = list(args.parent or [])
+    if not parents and not args.root:
+        raise LocalGraphError(
+            f"a {kind} node needs at least one causal --parent (or --root for the graph root)")
+    if parents and args.root:
+        raise LocalGraphError("--root nodes are parentless; drop --parent or --root")
+    for parent in parents:
+        if parent not in existing[kind]:
+            raise LocalGraphError(f"parent `{parent}` is not a {kind} node under {graph_dir}")
+    if args.root and existing[kind]:
+        roots = [s for s, n in existing[kind].items() if not n.parents]
+        if roots:
+            raise LocalGraphError(f"the {kind} graph already has a root: {', '.join(roots)}")
+
+    slug = args.slug or mint_slug(taken)
+    if not SLUG_RE.fullmatch(slug):
+        raise LocalGraphError(f"--slug {slug!r} is not `adjective-noun-####`")
+    if slug in taken:
+        raise LocalGraphError(f"slug `{slug}` already exists in this project")
+
+    created_at = args.created_at or utc_now()
+    if parse_ts(created_at) is None:
+        raise LocalGraphError(f"--created-at {created_at!r} is not ISO-8601")
+    body = read_body(args.body)
+
+    if kind == "record":
+        for heading in ("## State Impact", "## Repo"):
+            if heading in body and (heading != "## Repo" or args.repo_auto):
+                raise LocalGraphError(
+                    f"--body already contains `{heading}` — the CLI generates that section")
+        if args.impact and args.none:
+            raise LocalGraphError("pass either --impact lines or --none, not both (SPEC I2)")
+        if not args.impact and not args.none and not args.root:
+            raise LocalGraphError(
+                "a record node must declare `## State Impact`: --impact \"<slug> — <delta>\", "
+                "--impact \"NEW <kebab-name> — <delta>\", or --none \"<reason>\" (SPEC I2)")
+        content = compose_record_content(body, list(args.impact or []), args.none,
+                                         git_repo_context() if args.repo_auto else None,
+                                         args.root)
+    else:
+        if not args.root and not args.prov:
+            raise LocalGraphError("a state node needs --prov \"<record-slug> — <why>\" (SPEC I4)")
+        if not args.root and args.status not in STATUSES:
+            raise LocalGraphError(
+                f"--status must be one of {', '.join(sorted(STATUSES))} (SPEC I6)")
+        content = compose_state_content(body, args.status or "", list(args.prov or []),
+                                        list(args.neg or []), args.hwm, created_at, args.root)
+
+    _report_and_raise(
+        validate_node_content(kind, slug, args.title, content, created_at,
+                              record, state, args.root),
+        f"new {kind} node `{slug}`")
+
+    meta = {
+        "node_id": node_id_for(slug),
+        "slug": slug,
+        "title": args.title,
+        "created_at": created_at,
+        "parents": parents,
+        "summary": args.summary or "",
+    }
+    directory = graph_kind_dir(graph_dir, kind)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{slug}.md"
+    target.write_text(render_node_file(meta, content))
+    print(f"{slug}  ({kind})  {target}")
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in GRAPH_KINDS}
+    kinds = [k for k in GRAPH_KINDS if args.slug in existing[k]]
+    if not kinds:
+        raise LocalGraphError(f"`{args.slug}` is not a node under {graph_dir}")
+    kind = kinds[0]
+    node = existing[kind][args.slug]
+
+    if args.print_sha:  # the read half of op 7's compare-and-swap
+        print(node.sha256)
+        return 0
+    if kind == "record":
+        raise LocalGraphError(
+            f"`{args.slug}` is a record node: the record graph is append-only. "
+            "Corrections are new child nodes, not edits (SPEC conventions).")
+    if not args.reconcile:
+        raise LocalGraphError(
+            "refusing to write a state node: only hypergraph-reconcile may write state "
+            "(SPEC I3). Pass --reconcile only from inside a reconcile pass.")
+    if node.sha256 != args.expect:
+        raise LocalGraphError(
+            f"stale write refused (optimistic lock, INTERFACE op 7): --expect "
+            f"{args.expect} but `{args.slug}` is now {node.sha256}. Re-read the node, "
+            "re-fold your delta onto the current content, and retry.")
+
+    content = read_body(args.body)
+    if not content.endswith("\n"):
+        content += "\n"
+    record = local_graph(existing["record"], "record")
+    state = local_graph(existing["state"], "state")
+    is_root = not node.parents
+    _report_and_raise(
+        validate_node_content("state", node.slug, args.title or node.title, content,
+                              node.created_at, record, state, is_root),
+        f"update to state node `{args.slug}`")
+
+    meta = dict(node.meta)
+    if args.title:
+        meta["title"] = args.title
+    if args.summary is not None:
+        meta["summary"] = args.summary
+    node.path.write_text(render_node_file(meta, content))
+    print(f"updated {node.path} ({node.sha256[:12]} → {body_sha256(content)[:12]})")
+    return 0
+
+
+# -------------------------------------------------------------- flywheel mirror
+
+def push_plan(graph_dir: Path) -> dict:
+    """Diff local files against their `flywheel:` frontmatter → an ordered op list.
+
+    This tool never calls MCP; the skill layer executes the plan and feeds the
+    returned ids back via `push --record-result` (backend/local-adapter.md)."""
+    ops: list[dict] = []
+    violations: list[str] = []
+    for kind in GRAPH_KINDS:
+        nodes = load_local_nodes(graph_dir, kind, missing_ok=True)
+        local_graph(nodes, kind)  # validates parent references before planning writes
+        for node in topo_order(nodes):  # parents first: creates are dependency-ordered
+            flywheel = node.meta.get("flywheel") or {}
+            payload = {
+                "graph": kind,
+                "slug": node.slug,
+                "title": node.title,
+                "content": node.content,
+                "summary": str(node.meta.get("summary") or ""),
+                "content_sha256": node.sha256,
+            }
+            if not flywheel.get("node_id"):
+                parent_fw = []
+                for parent in node.parents:
+                    pfw = (nodes[parent].meta.get("flywheel") or {}).get("node_id")
+                    parent_fw.append(pfw)
+                ops.append({**payload, "op": "create", "parent_slugs": node.parents,
+                            "parent_flywheel_ids": parent_fw,
+                            "created_at": node.created_at})
+            elif flywheel.get("content_sha256") != node.sha256:
+                if kind == "record":
+                    violations.append(
+                        f"{node.slug}: record node body changed since it was pushed — the "
+                        "record graph is append-only; do not mirror this edit")
+                ops.append({**payload, "op": "update",
+                            "flywheel_node_id": flywheel.get("node_id"),
+                            "flywheel_slug": flywheel.get("slug"),
+                            "base_revision": flywheel.get("revision")})
+    return {"version": EXPORT_VERSION, "graph_dir": str(graph_dir),
+            "generated_at": utc_now(), "ops": ops, "violations": violations}
+
+
+def apply_push_results(graph_dir: Path, results: object) -> int:
+    """Fold Flywheel's returned ids/revisions back into each node's frontmatter."""
+    if isinstance(results, dict):
+        results = results.get("results", results.get("ops", []))
+    if not isinstance(results, list):
+        raise LocalGraphError("results file must be a list, or an object with a `results` list")
+    nodes = {}
+    for kind in GRAPH_KINDS:
+        for slug, node in load_local_nodes(graph_dir, kind, missing_ok=True).items():
+            nodes[slug] = node
+    applied = 0
+    for entry in results:
+        if not isinstance(entry, dict):
+            raise LocalGraphError(f"unexpected result entry: {entry!r}")
+        slug = str(entry.get("slug") or entry.get("local_slug") or "")
+        node = nodes.get(slug)
+        if node is None:
+            raise LocalGraphError(f"result names `{slug}`, which is not a local node")
+        source = entry.get("flywheel") if isinstance(entry.get("flywheel"), dict) else entry
+        fw = dict(node.meta.get("flywheel") or {})
+        for key, aliases in (("node_id", ("node_id", "flywheel_node_id")),
+                             ("slug", ("slug_name", "flywheel_slug")),
+                             ("revision", ("revision", "committed_revision"))):
+            for alias in aliases:
+                if source.get(alias) is not None:
+                    fw[key] = source[alias]
+                    break
+        if not fw.get("node_id"):
+            raise LocalGraphError(f"result for `{slug}` carries no Flywheel node_id")
+        fw["pushed_at"] = str(entry.get("pushed_at") or utc_now())
+        fw["content_sha256"] = str(entry.get("content_sha256") or node.sha256)
+        meta = dict(node.meta)
+        meta["flywheel"] = fw
+        node.path.write_text(render_node_file(meta, node.content))
+        applied += 1
+    return applied
+
+
+def cmd_push(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    if args.record_result:
+        count = apply_push_results(graph_dir, json.loads(Path(args.record_result).read_text()))
+        print(f"push: stamped Flywheel identity onto {count} node file(s)")
+        return 0
+    plan = push_plan(graph_dir)
+    text = json.dumps(plan, indent=2, ensure_ascii=False) + "\n"
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"wrote {args.output}")
+    else:
+        print(text, end="")
+    creates = sum(1 for o in plan["ops"] if o["op"] == "create")
+    print(f"push plan: {creates} create(s), {len(plan['ops']) - creates} update(s)",
+          file=sys.stderr)
+    for violation in plan["violations"]:
+        print(f"VIOLATION {violation}", file=sys.stderr)
+    return 1 if plan["violations"] else 0
 
 
 # Self-contained page: no network requests, no JS dependencies. All SVG styling is
@@ -2069,8 +2712,88 @@ def main(argv: list[str] | None = None) -> int:
     p_viz.add_argument("-o", "--output", type=Path, help="output path (default: stdout)")
     p_viz.set_defaults(func=cmd_viz)
 
+    # ---- local (git-native) backend: backend/local-adapter.md
+    def graph_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--config", type=Path, help=".hypergraph/config.yml")
+        p.add_argument("--graph-dir", type=Path,
+                       help=f"node-file root (default: {DEFAULT_GRAPH_DIR})")
+
+    p_export = sub.add_parser("export", help="emit record.json/state.json from local node files")
+    graph_args(p_export)
+    p_export.add_argument("--out-dir", type=Path,
+                          help=f"where to write the exports (default: {DEFAULT_CACHE_DIR})")
+    p_export.set_defaults(func=cmd_export)
+
+    p_import = sub.add_parser("import", help="explode graph export JSON into local node files")
+    graph_args(p_import)
+    p_import.add_argument("--record", type=Path, help="record-graph export JSON")
+    p_import.add_argument("--state", type=Path, help="state-graph export JSON")
+    p_import.add_argument("--force", action="store_true", help="overwrite differing node files")
+    p_import.set_defaults(func=cmd_import)
+
+    p_new = sub.add_parser("new", help="author a new record or state node file")
+    p_new.add_argument("kind", choices=list(GRAPH_KINDS))
+    graph_args(p_new)
+    p_new.add_argument("--title", required=True)
+    p_new.add_argument("--body", help="markdown body file, or `-` for stdin")
+    p_new.add_argument("--summary", default="")
+    p_new.add_argument("--parent", action="append", metavar="SLUG",
+                       help="causal parent slug (repeatable)")
+    p_new.add_argument("--root", action="store_true", help="parentless graph root")
+    p_new.add_argument("--slug", help="explicit slug (default: minted adjective-noun-####)")
+    p_new.add_argument("--created-at", help="ISO-8601 timestamp (default: now, UTC)")
+    p_new.add_argument("--impact", action="append", metavar="'SLUG — delta'",
+                       help="record only: a `## State Impact` line (repeatable)")
+    p_new.add_argument("--none", metavar="REASON",
+                       help="record only: declare no state change (SPEC I2)")
+    p_new.add_argument("--repo-auto", action="store_true",
+                       help="record only: fill `## Repo` from local git")
+    p_new.add_argument("--status", help="state only: working|open|broken|blocked|superseded")
+    p_new.add_argument("--prov", action="append", metavar="'SLUG — why'",
+                       help="state only: a `## Provenance` line (repeatable)")
+    p_new.add_argument("--neg", action="append", metavar="'[scope: … | confidence: … | evidence: …] stmt'",
+                       help="state only: a negative-knowledge entry (repeatable)")
+    p_new.add_argument("--hwm", help="state root only: initial high_water_mark (default: none)")
+    p_new.add_argument("--reconcile", action="store_true",
+                       help="required for state nodes: assert this is a reconcile pass (SPEC I3)")
+    p_new.set_defaults(func=cmd_new)
+
+    p_update = sub.add_parser("update", help="replace a state node's body (reconcile only)")
+    p_update.add_argument("slug")
+    graph_args(p_update)
+    p_update.add_argument("--body", help="new full markdown body, or `-` for stdin")
+    p_update.add_argument("--title")
+    p_update.add_argument("--summary")
+    p_update.add_argument("--expect", help="sha256 of the body you read (optimistic lock)")
+    p_update.add_argument("--print-sha", action="store_true",
+                          help="print the current body sha256 and exit (the read half of the CAS)")
+    p_update.add_argument("--reconcile", action="store_true",
+                          help="required: assert this is a reconcile pass (SPEC I3)")
+    p_update.set_defaults(func=cmd_update)
+
+    p_push = sub.add_parser("push", help="plan/record a Flywheel mirror push (no network)")
+    graph_args(p_push)
+    p_push.add_argument("--plan", action="store_true", help="emit the ordered push plan")
+    p_push.add_argument("--record-result", type=Path, metavar="RESULTS.JSON",
+                        help="fold executed-push ids back into the node frontmatter")
+    p_push.add_argument("-o", "--output", type=Path, help="plan output path (default: stdout)")
+    p_push.set_defaults(func=cmd_push)
+
     args = parser.parse_args(argv)
-    return args.func(args)
+    if getattr(args, "command", None) == "push" and not (args.plan or args.record_result):
+        parser.error("push needs --plan or --record-result")
+    if getattr(args, "command", None) == "import" and not (args.record or args.state):
+        parser.error("import needs --record and/or --state")
+    if getattr(args, "command", None) == "update" and not args.print_sha:
+        if not args.body:
+            parser.error("update needs --body (or --print-sha)")
+        if not args.expect:
+            parser.error("update needs --expect <sha256> — get it with --print-sha first")
+    try:
+        return args.func(args)
+    except LocalGraphError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
