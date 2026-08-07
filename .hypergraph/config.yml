@@ -1,5 +1,5 @@
 # Hypergraph per-project config — written by hypergraph-init (2026-08-06).
-project: hypergraph
+project: hypergraph-protocol
 
 record_root:
   node_id: cdbea53e-8865-5138-b033-948b4690daf3
