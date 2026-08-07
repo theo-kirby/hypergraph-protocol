@@ -248,6 +248,9 @@ yet worth a standing state claim:
 - Repo-drift check: `check` warns when the repo HEAD is ahead of the newest record
   node's `head_commit_sha` — unrecorded work is otherwise invisible (unreconciled
   and unrecorded are different failure modes; the checker only sees the former).
+- Export-freshness check: `check` warns when the cache export's `exported_at`
+  predates recent activity — an agent that records after its last export leaves
+  `check` reporting 0 unreconciled while the live graph is ahead.
 - Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
 - `provenance.json` machine-readable artifact per state node.
 - One-only `current-best` tags for competing approaches (Flywheel supports natively).
