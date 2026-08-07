@@ -7,6 +7,12 @@ parents:
 - green-field-8645
 - patient-limit-9007
 summary: 'Adoption path settled: epoch exemption for legacy history, fork-by-import (all-local default, split for scale), one-way mirror with push --verify, hypergraph-adopt skill + AGENTS.md block, 0.0.2 with skills install, dogfooding on a3go (mode A) and tbinn (mode B).'
+flywheel:
+  node_id: 7e9d61e9-20b4-5752-b3a6-24af11057248
+  slug: little-pond-8702
+  revision: 0
+  pushed_at: '2026-08-07T20:03:23+00:00'
+  content_sha256: 3261361dbffa1b37e81de3af4e79917db0b726492d4312ead6446a8ddb610dd1
 ---
 ## What
 

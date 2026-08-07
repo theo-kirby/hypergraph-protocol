@@ -6,6 +6,12 @@ created_at: '2026-08-07T20:01:01+00:00'
 parents:
 - cool-king-8586
 summary: 'Adoption thrust open: epoch mechanism, hypergraph-adopt skill (modes A/B), push --verify, 0.0.2 skills install — decided, M1–M7 pending.'
+flywheel:
+  node_id: 67d32718-3dcf-5321-978a-212599c531b4
+  slug: long-hall-1227
+  revision: 0
+  pushed_at: '2026-08-07T20:03:23+00:00'
+  content_sha256: a6d92e2ad789fc69de2b2741b708bb314cdf339dbeed7e07868ce52078deea25
 ---
 Status: open
 

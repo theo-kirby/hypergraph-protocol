@@ -9,9 +9,9 @@ summary: 'Publication thrust: 0.0.1 live on PyPI as hypergraph-protocol; 0.0.2 s
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
-  revision: 0
-  pushed_at: '2026-08-07T18:12:06.426139+00:00'
-  content_sha256: 6d3fa023742bdc073d741a48c2df422e8ce5457130a3d55e0d63350a88051f7c
+  revision: 1
+  pushed_at: '2026-08-07T20:03:23+00:00'
+  content_sha256: deaf9c0fa3a6dfe574ef731bf610104a082c9fdb6f8842e26a6c9777e576776b
 ---
 Status: open
 

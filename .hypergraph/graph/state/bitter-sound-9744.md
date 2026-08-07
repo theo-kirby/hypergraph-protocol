@@ -9,9 +9,9 @@ summary: 'Open gap: run the protocol on real external projects — targets chose
 flywheel:
   node_id: 47030781-d078-5801-b4ae-d12ecc5d988f
   slug: bitter-sound-9744
-  revision: 0
-  pushed_at: '2026-08-07T18:12:06.426139+00:00'
-  content_sha256: 5287dca0560bf2071f8cf2e362ff6c1f6eb4e2e959b7ab649e952b14331a23a8
+  revision: 1
+  pushed_at: '2026-08-07T20:03:23+00:00'
+  content_sha256: e4614703c030c3a8859a903993c7b3d0c9ecb4695ea3e2926dccce861fb749b4
 ---
 Status: open
 
