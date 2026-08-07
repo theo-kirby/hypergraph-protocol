@@ -9,9 +9,9 @@ summary: SPEC.md with invariants I1-I8, templates, forward-work conventions, and
 flywheel:
   node_id: 3310b4b6-38dc-5091-b321-0a62ce235f80
   slug: young-wave-9364
-  revision: 2
-  pushed_at: '2026-08-07T18:12:06.426139+00:00'
-  content_sha256: 9c4d93cda92abb27aabc2a512b6946af907d611fe514ce763918fed749eb929c
+  revision: 3
+  pushed_at: '2026-08-07T21:22:58+00:00'
+  content_sha256: 6d42c27bb0482d19f3891d5ad85125df7117d854b5163e70877e82ce4ca18e31
 ---
 Status: working
 

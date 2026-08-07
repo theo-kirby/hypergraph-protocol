@@ -6,6 +6,12 @@ created_at: '2026-08-07T20:16:27+00:00'
 parents:
 - shady-quill-2790
 summary: push --verify (read-only mirror drift check, exit 1) + push --legend (mirror-only slug legend node). First live run caught 3 silent manual-push deviations + 1 double-scaffolded state body; all repaired, guard added, verify clean. 60 tests green.
+flywheel:
+  node_id: da12e9f7-dd2f-5666-a942-e390000d59fe
+  slug: purple-sunset-9437
+  revision: 0
+  pushed_at: '2026-08-07T21:20:13+00:00'
+  content_sha256: 354e7c50bc5c0ed323840e12dd7f3d0595c2f9538513e10d14d6d0a0f5d1cc19
 ---
 ## What
 

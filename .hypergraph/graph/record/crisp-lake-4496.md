@@ -6,6 +6,12 @@ created_at: '2026-08-07T20:21:01+00:00'
 parents:
 - late-isle-6483
 summary: 'skills install subcommand + skills/templates as package data; wheel/sdist twine-clean and verified end-to-end from the built wheel. uv publish failed: no PyPI token on this machine — Operator publish pending; M5/M6 proceed on repo-path CLI.'
+flywheel:
+  node_id: fea4cf57-1e03-529c-a738-115ac0b3cde2
+  slug: solitary-water-7540
+  revision: 1
+  pushed_at: '2026-08-07T21:21:27+00:00'
+  content_sha256: 147d9b0d1679d4ca1ce429314af61931826296c5b29c13c07408d62cf26a5680
 ---
 ## What
 

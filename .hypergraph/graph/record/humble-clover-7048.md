@@ -7,6 +7,12 @@ parents:
 - late-isle-6483
 - crisp-lake-4496
 summary: 'First field adoption: a3go under the protocol end-to-end — union import (108 nodes), epoch marker, distilled state graph with honest frontier, contract reconciliation, fresh mirror roots verified clean. Protocol fix found: mirror_roots verify exemption.'
+flywheel:
+  node_id: b51b96f5-6287-55d3-b0e7-e8bf3763c813
+  slug: shiny-mountain-4553
+  revision: 1
+  pushed_at: '2026-08-07T21:21:27+00:00'
+  content_sha256: 7c8c61c06b4adf29c48e2cd50a628c8d2f104c1f3eefa2e7f26041647ec35c65
 ---
 ## What
 

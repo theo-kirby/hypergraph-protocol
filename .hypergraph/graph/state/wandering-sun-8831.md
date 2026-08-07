@@ -9,9 +9,9 @@ summary: 'check/render/viz + local backend + epoch support + push --verify/--leg
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 7
-  pushed_at: '2026-08-07T18:57:11+00:00'
-  content_sha256: 98df6d57d28ef04ad7f5bfb7e8e719b0108c75879444afe5374083f36a54ee24
+  revision: 8
+  pushed_at: '2026-08-07T21:23:28+00:00'
+  content_sha256: 7cb57dcb0d86b0dd49846e4b3e3466e81e6b33fe1f694ce6417af81dd3e756fc
 ---
 Status: working
 

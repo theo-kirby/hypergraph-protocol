@@ -9,9 +9,9 @@ summary: 'Adoption thrust delivered end-to-end: epoch mechanism, adopt skill, ve
 flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
-  revision: 0
-  pushed_at: '2026-08-07T20:15:27+00:00'
-  content_sha256: b20462f57783dcc6ebab4d87bb9487b7e5dfe631295101b65502c11c25127809
+  revision: 1
+  pushed_at: '2026-08-07T21:25:27+00:00'
+  content_sha256: 855a020a835d7aaab38e552a3ce4ca738c2a9270959f8984006442c76ffdedc2
 ---
 Status: working
 

@@ -9,9 +9,9 @@ summary: 'Both targets live: a3go (mode A) + tbinn (mode B) adopted, acceptance 
 flywheel:
   node_id: 47030781-d078-5801-b4ae-d12ecc5d988f
   slug: bitter-sound-9744
-  revision: 1
-  pushed_at: '2026-08-07T20:03:23+00:00'
-  content_sha256: e4614703c030c3a8859a903993c7b3d0c9ecb4695ea3e2926dccce861fb749b4
+  revision: 2
+  pushed_at: '2026-08-07T21:24:42+00:00'
+  content_sha256: 7e9ac0fe16c2594525877b770b72eed8300fa7adec3cf015d2bcd58ced314b0a
 ---
 Status: working
 

@@ -6,6 +6,12 @@ created_at: '2026-08-07T20:55:23+00:00'
 parents:
 - humble-clover-7048
 summary: 'Ground-up adoption proven on tbinn: three prehistory nodes from repo docs, epoch marker, state graph with a genuinely broken frontier node (the T metric), full mirror verified clean from plan bytes. Mode-B marker parentage defect found and fixed upstream.'
+flywheel:
+  node_id: aa45f5e7-378a-51f2-8937-8608d125fde8
+  slug: rough-frost-3558
+  revision: 0
+  pushed_at: '2026-08-07T21:21:52+00:00'
+  content_sha256: 3b83434b24bc6edd48078a04a4eb4b835a299b5245722b38887b75d99456e052
 ---
 ## What
 
