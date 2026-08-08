@@ -9,9 +9,9 @@ summary: 'Named on PyPI + npm, MIT-licensed, 0.0.2 live and index-verified; last
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
-  revision: 3
-  pushed_at: '2026-08-07T22:06:45+00:00'
-  content_sha256: e58f08b66afb2f4848e064e5aa8d04816eb99263dbbbf03876b3d555c56a71c3
+  revision: 4
+  pushed_at: '2026-08-08T08:47:33+00:00'
+  content_sha256: 9e2a9a0d2f518910b155f6d1f6035d3ff24ac2b999dedcac7dfccf4aa882efb6
 ---
 Status: open
 
