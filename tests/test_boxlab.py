@@ -339,3 +339,41 @@ def test_spend_guard_measures_account_usage_not_key_usage():
     src = inspect.getsource(spend_mod.SpendGuard)
     assert "account_usage" in src
     assert "key_status(api_key).usage" not in src
+
+
+# ---- driver recovery ----------------------------------------------------------
+
+def test_driver_log_parse_recovers_boxes_and_launch_times(tmp_path):
+    """A dead driver's log must be enough to rebuild the whole schedule.
+
+    The driver holds the schedule in memory, so if it dies the agents keep
+    working (they are detached) but nothing cuts, harvests, or stops them. This
+    happened: a caller-side timeout killed the first nine-box driver ten minutes
+    into a two-hour run.
+    """
+    from boxlab.attach import parse_driver_log
+    log = tmp_path / "driver.log"
+    log.write_text(
+        "[22:58:20] git-s2: box bx_epyadecb\n"
+        "[22:58:23] git-s2: provisioning arm=git harness=pi\n"
+        "[22:59:31] git-s2: phase 1 launched (detached; ssh did not return)\n"
+        "[22:59:47] flywheel-s2: box bx_t7bhu5d4\n"
+        "[23:00:03] flywheel-s2: phase 1 launched (detached)\n"
+        "[23:00:15] hypergraph-s3: box bx_9kwgwta6\n",  # never launched
+        encoding="utf-8")
+    specs = parse_driver_log(log, day_epoch=0.0)
+    by_id = {s.run_id: s for s in specs}
+    # A box with no launch line is not an in-flight run and must not be resumed.
+    assert set(by_id) == {"git-s2", "flywheel-s2"}
+    assert by_id["git-s2"].box_id == "bx_epyadecb"
+    assert by_id["git-s2"].arm == "git" and by_id["git-s2"].seed == 2
+    # Timing comes from the launch line, not the box line.
+    assert by_id["git-s2"].phase1_launched_at == 22 * 3600 + 59 * 60 + 31
+
+
+def test_a_late_cold_start_cut_is_skipped_not_forced(tmp_path):
+    """Firing the cut late would look like a measurement and not be one."""
+    import inspect
+    from boxlab import attach
+    src = inspect.getsource(attach.finish_runs)
+    assert "skip = now > cut_at" in src
