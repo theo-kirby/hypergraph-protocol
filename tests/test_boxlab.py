@@ -377,3 +377,56 @@ def test_a_late_cold_start_cut_is_skipped_not_forced(tmp_path):
     from boxlab import attach
     src = inspect.getsource(attach.finish_runs)
     assert "skip = now > cut_at" in src
+
+
+# ---- reporting ----------------------------------------------------------------
+
+def _arm(median, lo, hi, runs=3, vec=3):
+    return {"runs": runs, "produced_vectors": vec,
+            "accuracy_median": median, "accuracy_range": (lo, hi),
+            "accuracy_values": [lo, median, hi],
+            "cold_start_s_median": None, "cold_start_s_range": None,
+            "orientation_calls_median": None, "tool_calls_median": None,
+            "turns_median": None, "cost_usd_median": None}
+
+
+def test_overlapping_ranges_report_no_detectable_difference():
+    """At n=3 an overlapping range means 'not detectable', not a ranking.
+
+    Picking the higher median anyway would invent a result the data does not
+    support — the single easiest way for this experiment to mislead.
+    """
+    from boxlab.report import verdict
+    summary = {"git": _arm(0.19, 0.17, 0.21),
+               "hypergraph": _arm(0.22, 0.205, 0.24)}
+    assert "no detectable difference" in verdict(summary, "accuracy")
+
+
+def test_separated_ranges_do_report_a_leader():
+    from boxlab.report import verdict
+    summary = {"git": _arm(0.19, 0.18, 0.20),
+               "hypergraph": _arm(0.30, 0.28, 0.32)}
+    out = verdict(summary, "accuracy")
+    assert "hypergraph leads" in out and "no range overlap" in out
+
+
+def test_a_missing_measure_prints_as_dash_not_zero():
+    """An arm that produced nothing and an arm that scored zero differ."""
+    from boxlab.report import _fmt
+    assert _fmt(None, ".2%") == "-"
+    assert _fmt(0.0, ".2%") == "0.00%"
+
+
+def test_by_arm_counts_runs_that_produced_no_vectors():
+    """A run that produced nothing must still count in `runs`, not vanish."""
+    from boxlab.report import by_arm
+    runs = [
+        {"arm": "git", "totals": {"tool_calls": 10, "assistant_turns": 5,
+                                  "cost_usd": 0.01},
+         "fidelity": {"total": {"accuracy": 0.2}}},
+        {"arm": "git", "totals": {"tool_calls": 8, "assistant_turns": 4,
+                                  "cost_usd": 0.02}},
+    ]
+    summary = by_arm(runs)
+    assert summary["git"]["runs"] == 2
+    assert summary["git"]["produced_vectors"] == 1

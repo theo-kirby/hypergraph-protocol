@@ -24,6 +24,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 # Long runs are watched through a redirected file, never a TTY, so Python's
 # block buffering would hide all progress until the process exits.
@@ -31,7 +32,7 @@ print = functools.partial(print, flush=True)  # noqa: A001
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from boxlab import analyze, experiment, provision, runner, spend  # noqa: E402
+from boxlab import analyze, experiment, provision, report, runner, spend  # noqa: E402
 from boxlab.arms import ARM_ORDER, compose_primer, get_arm  # noqa: E402
 from boxlab.box_ctl import BoxController  # noqa: E402
 from boxlab.config import LabConfig  # noqa: E402
@@ -246,6 +247,25 @@ def cmd_run(args) -> int:
     return 0 if all(r.ok for r in results.values()) else 1
 
 
+def _score_fidelity(workspace: Path) -> Optional[dict]:
+    """Run OUR evaluator over a harvested vectors.txt. Never the arm's own score."""
+    matches = list(workspace.rglob("artifacts/vectors.txt"))
+    if not matches:
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "analogy", Path(__file__).resolve().parent / "eval" / "analogy.py")
+    analogy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(analogy)
+    try:
+        index, matrix = analogy.load_vectors(matches[0])
+    except SystemExit:
+        return None
+    result = analogy.evaluate(index, matrix, analogy.load_questions())
+    result["bands"] = analogy.score_bands(result)
+    return result
+
+
 def cmd_analyze(args) -> int:
     """Turn harvested run directories into the numbers METRICS.md asks for."""
     root = Path(args.outdir)
@@ -257,7 +277,6 @@ def cmd_analyze(args) -> int:
 
     reports = []
     for run_dir in run_dirs:
-        # The workspace arrives as a tarball; unpack once, next to it.
         tarball = run_dir / "workspace.tar.gz"
         unpacked = run_dir / "workspace"
         if tarball.exists() and not unpacked.exists():
@@ -265,24 +284,25 @@ def cmd_analyze(args) -> int:
             unpacked.mkdir(parents=True, exist_ok=True)
             with tarfile.open(tarball) as tf:
                 tf.extractall(unpacked, filter="data")
-        report = analyze.analyse_run(unpacked if unpacked.exists() else run_dir)
-        # Label by the run, not by the unpacked directory's name.
-        report["run"] = run_dir.name
-        report["arm"] = json.loads((run_dir / "run.json").read_text()).get("arm")
-        reports.append(report)
+        r = analyze.analyse_run(unpacked if unpacked.exists() else run_dir)
+        r["run"] = run_dir.name
+        meta = json.loads((run_dir / "run.json").read_text())
+        r["arm"] = meta.get("arm")
+        r["harvested"] = meta.get("harvested")
+        if unpacked.exists():
+            fidelity = _score_fidelity(unpacked)
+            if fidelity:
+                r["fidelity"] = fidelity
+        print(f"  scored {run_dir.name}", flush=True)
+        reports.append(r)
 
-    print(f"{'run':<18} {'arm':<11} {'turns':>6} {'tools':>6} {'cost$':>8} "
-          f"{'cold-start s':>13}")
-    for r in reports:
-        cs = (r.get("cold_start") or {}).get("time_to_first_productive_s")
-        print(f"{r['run']:<18} {str(r.get('arm')):<11} "
-              f"{r['totals']['assistant_turns']:>6} "
-              f"{r['totals']['tool_calls']:>6} "
-              f"{r['totals']['cost_usd']:>8.3f} "
-              f"{(f'{cs:.0f}' if cs is not None else '-'):>13}")
+    summary = report.by_arm(reports)
+    print()
+    print(report.render(summary))
 
     out = root / "analysis.json"
-    out.write_text(json.dumps(reports, indent=2), encoding="utf-8")
+    out.write_text(json.dumps({"runs": reports, "by_arm": summary}, indent=2),
+                   encoding="utf-8")
     print(f"\nwrote {out}")
     return 0
 
