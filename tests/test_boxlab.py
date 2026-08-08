@@ -272,3 +272,56 @@ def test_spend_guard_treats_an_unreadable_status_as_exceeded():
     assert guard.exceeded() is False
     guard.spent = lambda: 10.0
     assert guard.exceeded() is True
+
+
+# ---- analysis ------------------------------------------------------------------
+
+def test_reasoning_tokens_are_priced_as_output():
+    """pi reports cost 0 for a custom provider; a reasoning model is not free.
+
+    `usage.reasoning` is not included in `usage.output`, so pricing only `output`
+    understates a reasoning model's cost — silently, and in the direction that
+    makes the run look cheaper than it was.
+    """
+    from boxlab.analyze import PRICING, SessionMetrics, Turn
+    s = SessionMetrics(harness="pi", model="deepseek/deepseek-v4-pro")
+    s.turns = [Turn(timestamp=0.0, input_tokens=1000, output_tokens=100,
+                    reasoning_tokens=900)]
+    price = PRICING["deepseek/deepseek-v4-pro"]
+    expected = 1000 * price["input"] + 1000 * price["output"]
+    assert abs(s.cost_usd() - expected) < 1e-12
+    assert s.cost_usd() is not None and s.cost_usd() > 0
+
+
+def test_unknown_model_reports_no_cost_rather_than_zero():
+    """A missing price must read as unknown, never as free."""
+    from boxlab.analyze import SessionMetrics, Turn
+    s = SessionMetrics(harness="pi", model="some/unlisted-model")
+    s.turns = [Turn(timestamp=0.0, input_tokens=10, output_tokens=10)]
+    assert s.cost_usd() is None
+
+
+def test_orientation_is_distinguished_from_work():
+    """Reading/listing is orientation; writing or a real command is work."""
+    from boxlab.analyze import SessionMetrics, Turn
+    s = SessionMetrics(harness="pi", model="deepseek/deepseek-v4-pro")
+    s.started_at = 100.0
+    s.turns = [
+        Turn(timestamp=110.0, tools=["read"]),
+        Turn(timestamp=120.0, tools=["bash"], bash_commands=["ls -la ~/research"]),
+        Turn(timestamp=130.0, tools=["bash"], bash_commands=["git log --oneline"]),
+        Turn(timestamp=140.0, tools=["write"]),
+    ]
+    assert s.first_productive(strict=True) == 40.0   # the write
+    assert s.first_productive(strict=False) == 10.0  # the first read
+
+
+def test_read_only_bash_matcher_is_anchored():
+    """`lsof` is not `ls`, and `catalogue` is not `cat`."""
+    from boxlab.analyze import READ_ONLY_BASH
+    assert READ_ONLY_BASH.match("ls -la")
+    assert READ_ONLY_BASH.match("git log --oneline")
+    assert not READ_ONLY_BASH.match("lsof -i")
+    assert not READ_ONLY_BASH.match("catalogue.py")
+    assert not READ_ONLY_BASH.match("python3 train.py")
+    assert not READ_ONLY_BASH.match("git commit -m x")
