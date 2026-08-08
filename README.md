@@ -84,10 +84,13 @@ git add .hypergraph/graph                             # the memory travels with 
 ```
 
 Already on Flywheel — or adopting a repo with real history? Run the
-`hypergraph-adopt` skill: it imports the legacy graph verbatim (`hypergraph import`
-preserves node_ids and slugs, so provenance and the high-water mark stay valid),
-draws an adoption epoch so legacy nodes are exempt from template compliance, and
-distills an honest state graph from what the project actually knows.
+`hypergraph-adopt` skill: it imports the legacy graph verbatim (`hypergraph import
+--fork` preserves node_ids and slugs, so provenance and the high-water mark stay
+valid), draws an adoption epoch so legacy nodes are exempt from template compliance,
+and distills an honest state graph from what the project actually knows. The import
+is a **fork**: the source graph stays frozen as the archive, and the project
+re-publishes its *whole* imported history to a mirror it owns, with the original
+topology and a lineage pointer at the mirror root naming where it came from.
 
 Checker/renderer/visualizer, standalone:
 

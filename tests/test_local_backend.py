@@ -70,6 +70,9 @@ def test_import_preserves_flywheel_identity_and_is_idempotent(tmp_path, capsys):
     assert meta["parents"] == ["royal-anchor-0001"]                   # edges as slugs
     assert meta["flywheel"]["node_id"] == meta["node_id"]
     assert meta["flywheel"]["content_sha256"] == hg.body_sha256(body)
+    # regression guard: without --fork this is a re-home of a graph you own, so the
+    # source identity stays the push target and no `origin:` block appears
+    assert "origin" not in meta
     capsys.readouterr()
     assert run("import", "--record", CLEAN / "record.json", "--state", CLEAN / "state.json",
                "--graph-dir", graph_dir) == 0
@@ -468,6 +471,163 @@ def test_import_skips_the_mirror_legend_node(tmp_path, capsys):
     assert code == 0
     assert "mirror-only" in out
     assert not (graph_dir / "record" / "shiny-map-0009.md").exists()
+
+
+# ----------------------------------------------------------------- fork import
+
+def forked(tmp_path, name="graph"):
+    """The clean fixture imported as an adoption fork: `origin:`, no `flywheel:`."""
+    graph_dir = tmp_path / name
+    assert run("import", "--record", CLEAN / "record.json", "--state", CLEAN / "state.json",
+               "--graph-dir", graph_dir, "--fork") == 0
+    return graph_dir
+
+
+ARCHIVE_CONFIG = """
+project: demo
+graph_dir: graph
+archive:
+  backend: flywheel
+  roots:
+    - slug: royal-anchor-0001
+      node_id: 10000000-0000-0000-0000-000000000001
+      title: 'demo: the graph we forked from'
+  artifacts: retained-on-archive
+"""
+
+
+def archive_config(tmp_path, text=ARCHIVE_CONFIG):
+    path = tmp_path / "config.yml"
+    path.write_text(text)
+    return path
+
+
+def test_import_fork_writes_origin_and_omits_flywheel(tmp_path):
+    graph_dir = forked(tmp_path)
+    meta, _body = hg.split_frontmatter((graph_dir / "record" / "brisk-otter-0002.md").read_text())
+    assert meta["node_id"] == "10000000-0000-0000-0000-000000000002"  # verbatim, no drift
+    assert meta["parents"] == ["royal-anchor-0001"]
+    assert meta["origin"]["backend"] == "flywheel"
+    assert meta["origin"]["node_id"] == meta["node_id"]
+    assert meta["origin"]["slug"] == "brisk-otter-0002"
+    assert meta["origin"]["exported_at"]
+    assert "flywheel" not in meta          # the fork owns its own mirror identity
+    assert "content_sha256" not in meta["origin"]  # provenance, not a change detector
+    # frontmatter order: origin sits immediately before where flywheel would go
+    keys = list(meta)
+    assert keys == ["node_id", "slug", "title", "created_at", "parents", "summary", "origin"]
+
+
+def test_import_fork_preserves_the_archive_revision(tmp_path):
+    graph = json.loads((CLEAN / "record.json").read_text())
+    for node in graph["nodes"]:
+        node["committed_revision"] = 3
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps(graph))
+    graph_dir = tmp_path / "graph"
+    assert run("import", "--record", path, "--graph-dir", graph_dir, "--fork") == 0
+    meta, _ = hg.split_frontmatter((graph_dir / "record" / "royal-anchor-0001.md").read_text())
+    assert meta["origin"]["revision"] == 3
+
+
+def test_reimport_with_fork_force_replaces_flywheel_with_origin(tmp_path):
+    graph_dir = imported(tmp_path)                     # old format: flywheel: present
+    before, _ = hg.split_frontmatter((graph_dir / "record" / "calm-heron-0003.md").read_text())
+    assert "flywheel" in before and "origin" not in before
+    assert run("import", "--record", CLEAN / "record.json", "--state", CLEAN / "state.json",
+               "--graph-dir", graph_dir, "--fork", "--force") == 0
+    after, _ = hg.split_frontmatter((graph_dir / "record" / "calm-heron-0003.md").read_text())
+    assert "flywheel" not in after
+    assert after["origin"]["node_id"] == before["flywheel"]["node_id"]
+
+
+def test_push_plan_over_a_forked_import_creates_every_node_parents_first(tmp_path):
+    graph_dir = forked(tmp_path)
+    plan = hg.push_plan(graph_dir)
+    assert plan["violations"] == []
+    assert {o["op"] for o in plan["ops"]} == {"create"}
+    assert len(plan["ops"]) == 7                       # 4 record + 3 state, none skipped
+    seen = set()
+    for op in plan["ops"]:
+        for parent in op["parent_slugs"]:
+            assert parent in seen, f"{op['slug']} planned before its parent {parent}"
+        seen.add(op["slug"])
+
+
+def test_check_is_unchanged_by_the_presence_of_origin(tmp_path):
+    plain = tmp_path / "plain-cache"
+    fork = tmp_path / "fork-cache"
+    run("export", "--graph-dir", imported(tmp_path), "--out-dir", plain)
+    run("export", "--graph-dir", forked(tmp_path, "fork-graph"), "--out-dir", fork)
+    assert json.loads((plain / "record.json").read_text())["nodes"] == \
+           json.loads((fork / "record.json").read_text())["nodes"]
+    report = hg.run_check(fork / "record.json", fork / "state.json")
+    assert report.violations() == [] and report.warnings() == []
+
+
+def pushed_fork(tmp_path):
+    """A forked import with the whole plan executed against a mirror we own."""
+    graph_dir = forked(tmp_path)
+    plan = hg.push_plan(graph_dir)
+    hg.apply_push_results(graph_dir, {"results": [
+        {"slug": op["slug"],
+         "flywheel": {"node_id": f"ours-{op['slug']}",
+                      "slug_name": f"lively-feather-{op['slug'][-4:]}", "revision": 1},
+         "content_sha256": op["content_sha256"]} for op in plan["ops"]]})
+    return graph_dir
+
+
+def test_verify_is_clean_against_a_mirror_roots_only_export_after_a_full_push(tmp_path):
+    graph_dir = pushed_fork(tmp_path)
+    export = mirror_export_of(graph_dir)               # only nodes on our own mirror
+    ids = {n["node_id"] for n in export["nodes"]}
+    assert len(ids) == 7
+    assert not any(i.startswith("10000000") or i.startswith("20000000") for i in ids), \
+        "no archive anchor is spliced into the export"
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(export))
+    assert hg.verify_mirror(graph_dir, path).violations() == []
+    assert run("push", "--verify", "--against", path, "--graph-dir", graph_dir) == 0
+    assert hg.push_plan(graph_dir)["ops"] == []        # nothing left to mirror
+
+
+def test_legend_maps_every_forked_node_from_its_archive_slug(tmp_path):
+    text = hg.legend_content(pushed_fork(tmp_path))
+    assert "archive→mirror map" in text
+    assert "| record | brisk-otter-0002 | lively-feather-0002 |" in text
+    assert "| state | quiet-lantern-0103 | lively-feather-0103 |" in text
+
+
+def test_push_lineage_renders_from_the_config_archive_block(tmp_path, capsys):
+    graph_dir = forked(tmp_path)
+    code, out = run_out(capsys, "push", "--lineage", "--graph-dir", graph_dir,
+                        "--config", archive_config(tmp_path))
+    assert code == 0
+    assert "frozen" in out and "never writes to it" in out
+    assert "| royal-anchor-0001 | 10000000-0000-0000-0000-000000000001 |" in out
+    assert "demo: the graph we forked from" in out
+    assert "7 node(s) were imported verbatim" in out   # counted from `origin:` blocks
+    assert "Artifacts did not survive the import" in out
+
+
+def test_push_lineage_errors_without_an_archive_block(tmp_path, capsys):
+    graph_dir = forked(tmp_path)
+    config = archive_config(tmp_path, "project: demo\ngraph_dir: graph\n")
+    capsys.readouterr()
+    assert run("push", "--lineage", "--graph-dir", graph_dir, "--config", config) == 2
+    assert "`archive:` block" in capsys.readouterr().err
+
+
+def test_push_plan_warns_above_the_create_threshold(tmp_path, capsys, monkeypatch):
+    graph_dir = forked(tmp_path)
+    monkeypatch.setattr(hg, "PUSH_CREATE_WARN", 3)     # 7 creates in the fixture
+    assert run("push", "--plan", "--graph-dir", graph_dir, "-o", tmp_path / "plan.json") == 0
+    err = capsys.readouterr().err
+    assert "push plan: 7 create(s)" in err
+    assert "WARNING 7 creates" in err and "epoch" in err
+    monkeypatch.setattr(hg, "PUSH_CREATE_WARN", 200)
+    assert run("push", "--plan", "--graph-dir", graph_dir, "-o", tmp_path / "plan.json") == 0
+    assert "WARNING" not in capsys.readouterr().err
 
 
 # -------------------------------------------------------------- skills install

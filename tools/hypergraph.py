@@ -843,7 +843,11 @@ LEGEND_TITLE = "Hypergraph mirror slug legend"
 DEFAULT_GRAPH_DIR = Path(".hypergraph/graph")
 DEFAULT_CACHE_DIR = Path(".hypergraph/cache")
 EXPORT_VERSION = 1
-FM_ORDER = ("node_id", "slug", "title", "created_at", "parents", "summary", "flywheel")
+# Above this many creates in one plan, `push --plan` warns: each create is a mirror
+# write, so a plan this size is a rate-limit and partial-push risk (not a violation).
+PUSH_CREATE_WARN = 200
+FM_ORDER = ("node_id", "slug", "title", "created_at", "parents", "summary",
+            "origin", "flywheel")
 
 # Two wordlists for slug minting; `adjective-noun-####` matches SLUG_RE, which every
 # provenance line, [rec:] citation, impact target and high-water mark depends on.
@@ -1106,12 +1110,7 @@ def cmd_import(args: argparse.Namespace) -> int:
                         "the export (re-export with include_descendants from the root)")
                 parents.append(parent.slug)
             src = extras.get(node.node_id, {})
-            flywheel = {"node_id": node.node_id, "slug": node.slug}
             revision = src.get("committed_revision", src.get("revision"))
-            if revision is not None:
-                flywheel["revision"] = revision
-            flywheel["pushed_at"] = str(pushed_at)
-            flywheel["content_sha256"] = body_sha256(node.content)
             meta = {
                 "node_id": node.node_id,          # preserved verbatim: no identity drift
                 "slug": node.slug,
@@ -1119,8 +1118,25 @@ def cmd_import(args: argparse.Namespace) -> int:
                 "created_at": node.created_at,
                 "parents": parents,
                 "summary": str(src.get("summary") or ""),
-                "flywheel": flywheel,
             }
+            if args.fork:
+                # A fork takes its own mirror identity: the source graph's ids are
+                # provenance only (`origin:`), never a push target. With `flywheel:`
+                # absent, push plans every node as a create under our own roots.
+                origin = {"backend": "flywheel", "node_id": node.node_id,
+                          "slug": node.slug}
+                if revision is not None:
+                    origin["revision"] = revision
+                origin["exported_at"] = str(pushed_at)
+                meta["origin"] = origin
+            else:
+                # Re-homing a graph you own: keep mirroring to the same nodes.
+                flywheel = {"node_id": node.node_id, "slug": node.slug}
+                if revision is not None:
+                    flywheel["revision"] = revision
+                flywheel["pushed_at"] = str(pushed_at)
+                flywheel["content_sha256"] = body_sha256(node.content)
+                meta["flywheel"] = flywheel
             text = render_node_file(meta, node.content)
             target = directory / f"{node.slug}.md"
             if target.exists() and not args.force:
@@ -1496,10 +1512,60 @@ def legend_content(graph_dir: Path) -> str:
         "provenance slugs, [rec: …] citations, impact targets and the high-water mark",
         "written locally may not resolve natively here. Read them through this table.",
         "",
+        "For an adopted project this table is also the archive→mirror map: an imported",
+        "node keeps its archive slug as its local slug (`origin.slug` in the repo).",
+        "",
         "| graph | local slug (authoritative) | mirror slug |",
         "| --- | --- | --- |",
     ]
     lines += sorted(rows) or ["| — | (no diverged slugs) | — |"]
+    return "\n".join(lines) + "\n"
+
+
+def lineage_content(graph_dir: Path, config: dict) -> str:
+    """Body for the mirror record root of a forked (adopted) project.
+
+    Names the frozen archive the history came from, and states what did and did
+    not travel. Rendered from the config `archive:` block plus a count of the node
+    files carrying `origin:`."""
+    archive = config.get("archive") or {}
+    if not archive:
+        raise LocalGraphError(
+            "push --lineage needs an `archive:` block in .hypergraph/config.yml "
+            "(backend, roots: [slug, node_id, title], artifacts)")
+    roots = archive.get("roots") or []
+    if not roots:
+        raise LocalGraphError("config `archive:` block declares no `roots:`")
+    imported = 0
+    for kind in GRAPH_KINDS:
+        for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
+            if node.meta.get("origin"):
+                imported += 1
+    if not imported:
+        imported = archive.get("imported") or 0
+    lines = [
+        "This graph continues history that began on another Flywheel graph. That",
+        "earlier graph still exists and is frozen: this project never writes to it.",
+        "",
+        "| archive root | node_id | title |",
+        "| --- | --- | --- |",
+    ]
+    for root in roots:
+        if not isinstance(root, dict):
+            raise LocalGraphError(f"config `archive.roots` entry is not a mapping: {root!r}")
+        title = str(root.get("title") or "—").replace("|", r"\|")
+        lines.append(f"| {root.get('slug') or '—'} | {root.get('node_id') or '—'} | "
+                     f"{title} |")
+    lines += [
+        "",
+        f"{imported} node(s) were imported verbatim and are re-published here with their",
+        "original topology. Each carries its archive identity in `origin:` in the repo.",
+        "Flywheel mints a fresh slug on create, so archive slugs do not resolve here —",
+        "read them through the slug legend, which doubles as the archive→mirror map.",
+        "",
+        "Artifacts did not survive the import: the local backend has no artifact",
+        "operation. They remain on the archive roots above.",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -1606,6 +1672,14 @@ def cmd_push(args: argparse.Namespace) -> int:
         else:
             print(text, end="")
         return 0
+    if args.lineage:
+        text = lineage_content(graph_dir, config)
+        if args.output:
+            Path(args.output).write_text(text)
+            print(f"wrote {args.output}")
+        else:
+            print(text, end="")
+        return 0
     plan = push_plan(graph_dir)
     text = json.dumps(plan, indent=2, ensure_ascii=False) + "\n"
     if args.output:
@@ -1616,6 +1690,11 @@ def cmd_push(args: argparse.Namespace) -> int:
     creates = sum(1 for o in plan["ops"] if o["op"] == "create")
     print(f"push plan: {creates} create(s), {len(plan['ops']) - creates} update(s)",
           file=sys.stderr)
+    if creates > PUSH_CREATE_WARN:
+        print(f"WARNING {creates} creates is one mirror write each — expect rate limits "
+              f"(429 backoff) and record results in batches so a partial run stays "
+              f"resumable. To mirror less history, split the adoption epoch later so "
+              f"fewer nodes are imported (SPEC: Adoption epochs).", file=sys.stderr)
     for violation in plan["violations"]:
         print(f"VIOLATION {violation}", file=sys.stderr)
     return 1 if plan["violations"] else 0
@@ -2939,6 +3018,10 @@ def main(argv: list[str] | None = None) -> int:
     p_import.add_argument("--record", type=Path, help="record-graph export JSON")
     p_import.add_argument("--state", type=Path, help="state-graph export JSON")
     p_import.add_argument("--force", action="store_true", help="overwrite differing node files")
+    p_import.add_argument("--fork", action="store_true",
+                          help="adoption: record the source ids under `origin:` and omit "
+                               "`flywheel:`, so push re-publishes the history to a mirror "
+                               "this project owns")
     p_import.set_defaults(func=cmd_import)
 
     p_new = sub.add_parser("new", help="author a new record or state node file")
@@ -3001,13 +3084,16 @@ def main(argv: list[str] | None = None) -> int:
                         help="the mirror export to verify against")
     p_push.add_argument("--legend", action="store_true",
                         help="emit the mirror-only slug-legend node body")
+    p_push.add_argument("--lineage", action="store_true",
+                        help="emit the archive-lineage body for the mirror record root "
+                             "(needs an `archive:` block in the config)")
     p_push.add_argument("-o", "--output", type=Path, help="plan output path (default: stdout)")
     p_push.set_defaults(func=cmd_push)
 
     args = parser.parse_args(argv)
     if getattr(args, "command", None) == "push" and not (
-            args.plan or args.record_result or args.verify or args.legend):
-        parser.error("push needs --plan, --record-result, --verify, or --legend")
+            args.plan or args.record_result or args.verify or args.legend or args.lineage):
+        parser.error("push needs --plan, --record-result, --verify, --legend, or --lineage")
     if getattr(args, "command", None) == "import" and not (args.record or args.state):
         parser.error("import needs --record and/or --state")
     if getattr(args, "command", None) == "update" and not args.print_sha:

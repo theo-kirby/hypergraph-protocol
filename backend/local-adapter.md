@@ -25,6 +25,12 @@ title: local — state
 created_at: '2026-08-02T00:00:00+00:00'
 parents: []
 summary: ''
+origin:                         # only on nodes from `import --fork` (see §Bootstrapping)
+  backend: flywheel             # immutable provenance; never a push target
+  node_id: 8e1c…                # the archive's id
+  slug: bright-harbor-2001      # the archive's slug — same as `slug:` above
+  revision: 3
+  exported_at: '2026-08-01T00:00:00+00:00'
 flywheel:                       # only present once mirrored (see §Mirroring)
   node_id: 9e68…
   slug: wild-river-2201
@@ -157,23 +163,40 @@ git add .hypergraph/graph && git commit -m "Import the graph into the repo"
 
 `import` is idempotent (unchanged files are skipped) and refuses to clobber a differing
 file without `--force`. It stamps each node's `flywheel:` block so the mirror knows what
-has already been pushed.
+has already been pushed — this is the **re-home** case: you own the source graph and
+you keep mirroring to it, so its ids stay the push target. Do not pass `--fork` here.
 
-**Adopting a project with a pre-protocol past** (the hypergraph-adopt skill): the same
-`import` is the fork — node_ids/slugs are preserved verbatim, the source graph stays
-untouched as the frozen archive (`archive:` in config), and an `epoch.marker` config
-key exempts the strictly-older legacy nodes from I2 (SPEC: Adoption epochs). Artifacts
+**Adopting a project with a pre-protocol past** (the hypergraph-adopt skill, mode A):
+`import --fork`. The graph you are importing belongs to somebody else, so the copy
+takes its own mirror identity:
+
+- node_ids and slugs are preserved verbatim, as always — config, provenance slugs and
+  the HWM stay valid;
+- the source ids are written to **`origin:`** (`backend`, `node_id`, `slug`,
+  `revision`, `exported_at`) — immutable provenance, read by nothing;
+- **`flywheel:` is omitted**, so `push --plan` plans every imported node as a `create`
+  under roots this project owns. The project re-publishes its whole imported history
+  with the original topology (SPEC: Adoption epochs).
+
+Getting this wrong is silent in both directions: import a foreign graph *without*
+`--fork` and the mirror push omits every legacy node (nothing is created, `--verify`
+still passes if the archive is spliced into the export); import your own graph *with*
+`--fork` and the next push duplicates the entire graph.
+
+The source graph stays untouched as the frozen archive (`archive:` in config). Artifacts
 do **not** survive import — the local backend has no artifact op (§9) — so the archive
-reference is the only pointer to them. In epoch-split mode (huge graphs, history left
-on the archive) the marker is authored with `--root`: node files can only parent on
-slugs that resolve locally, so the archive lineage is recorded in the marker's content
-instead of as a parent edge.
+reference is the only pointer to them, and `push --lineage` says so at the mirror record
+root (below). In epoch-split mode (huge graphs, history left on the archive) the marker
+is authored with `--root`: node files can only parent on slugs that resolve locally, so
+the archive lineage is recorded in the marker's content instead of as a parent edge.
 
 ## Mirroring to Flywheel
 
 Local files stay canonical; Flywheel becomes a regenerable, continuously-updated
-projection. `tools/hypergraph.py` never makes an MCP call, so the push is two steps with
-the skill layer in between:
+projection. **The mirror projects the repo, never the archive** — for an adopted
+project the mirror carries the full imported history under this project's own roots,
+not a pointer to the graph it forked from. `tools/hypergraph.py` never makes an MCP
+call, so the push is two steps with the skill layer in between:
 
 ```bash
 hypergraph push --plan -o /tmp/plan.json      # 1. diff local files vs `flywheel:` frontmatter
@@ -209,7 +232,12 @@ committed, the executor substitutes the id it just received:
 
 Results feed back as a list of `{slug, flywheel: {node_id, slug_name, revision},
 content_sha256}` (top level or under `"results"`); `push --record-result` writes them
-into each file's `flywheel:` block.
+into each file's `flywheel:` block. **Record results incrementally** on a large plan —
+in batches of roughly 20, not once at the end. `push --plan` is a diff, so a run that
+dies midway resumes safely *only* for the batches already recorded; anything created
+but unrecorded is created a second time on the retry, and duplicate mirror nodes cannot
+be cleanly merged. Above `PUSH_CREATE_WARN` (200) creates, `push --plan` prints this
+warning to stderr itself and names epoch-split as the way to mirror less history.
 
 **The mirror is a readable projection, not an independently valid graph.** Content is
 pushed byte-identical, but Flywheel mints its own `slug_name` on create — so a node
@@ -239,15 +267,29 @@ exactly `Hypergraph mirror slug legend`, parented to the mirror's *record* root
 (locate an existing one among the root's children by title; lease + commit to
 update, create otherwise). The legend lives only on the mirror: it has no local node
 file, mirrored node bodies are never rewritten to reference it (byte-identity holds),
-and both `import` and `push --verify` exclude it by its title.
+and both `import` and `push --verify` exclude it by its title. For an adopted project
+the same table is the **archive→mirror map**: an imported node keeps its archive slug
+as its local slug, so the "local slug" column reads as the archive slug.
+
+**Archive lineage (adopted projects).** `hypergraph push --lineage` emits the body for
+the mirror's **record root**, rendered from the config `archive:` block plus a count of
+node files carrying `origin:`. It names each archive root (slug, node_id, title), says
+the archive is frozen and never written to, and states plainly that artifacts stayed
+behind. The skill layer commits it as the root's body — the first thing a mirror reader
+sees — on adoption, and refreshes it on reconcile when `archive:` changes. It errors
+(exit 2) when the config has no `archive:` block, so a mode-B project simply never calls
+it. Mirror root titles stay plain — `<project> — record`, `<project> — state`; the
+mirror-and-lineage facts live in this body, not in the title.
 
 **Drift detection.** `hypergraph push --verify --against <export.json>` diffs a
-fresh mirror export (`flywheel_export_subgraph` over both mirror roots,
-`include_descendants: true`) against the local node files — read-only, exit 1 on any
-drift, `check`-style DRIFT report. Mirror-only structure is exempt: the legend node
-(by title) and any roots declared under `mirror_roots:` in config — adopted projects
-mirror their post-epoch nodes under fresh roots that have no local counterpart
-(the archive holds the legacy mirror), so those root ids are read from config. It flags: local nodes never pushed or missing
+fresh mirror export (`flywheel_export_subgraph` over **this project's own mirror
+roots only**, `include_descendants: true`) against the local node files — read-only,
+exit 1 on any drift, `check`-style DRIFT report. Never splice the archive roots into
+that export: a mode-A mirror that holds almost none of the graph verifies clean when
+you do, because the imported nodes' archive-owned ids resolve through the spliced
+subgraph. Mirror-only structure is exempt: the legend node (by title) and any roots
+declared under `mirror_roots:` in config — adopted projects mirror under fresh roots
+that have no local counterpart, so those root ids are read from config. It flags: local nodes never pushed or missing
 from the export, body-hash mismatches, summary mismatches, local edits pending push
 (`flywheel.content_sha256` vs current body), and revision skew between the export
 and each file's `flywheel:` block. The reconcile skill runs it after every push

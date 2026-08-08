@@ -116,6 +116,31 @@ export silently weakens every cross-graph check.
 3. `flywheel_finalize_artifact_uploads` → appends all staged artifacts in one revision
    bump. Give every artifact a real `title` — it's the display label.
 
+### 10a. Re-parenting an existing node → `flywheel_add_parent` / `flywheel_remove_parent`
+
+Not an INTERFACE operation — a mirror-repair move. It exists for one situation: an
+adopted project mirrors a node under a placeholder parent (typically the mirror root)
+before its real parent is on the mirror, and the true edge has to be restored once the
+parent lands. **Add first, then remove**, so the node is never momentarily parentless:
+
+```bash
+flywheel nodes:add-parent    --node_id <child> --parent_id <true parent> \
+    --expected_revision <child rev> --expected_parent_revision <parent rev>
+flywheel nodes:remove-parent --node_id <child> --parent_id <placeholder parent> \
+    --expected_revision <child rev, now bumped> --expected_parent_revision <its rev>
+```
+
+MCP equivalents: `flywheel_add_parent` / `flywheel_remove_parent` (full-surface only;
+HTTP `POST /nodes/{node_id}/parents/{add,remove}`). All four revisions are required
+optimistic locks — read them with `flywheel_get_node` immediately before each call, and
+re-read after the add, because it bumps the child's revision. Both are **graph writes**,
+so they count against the 120/min graph-write budget. On 409, re-read and retry; the
+add validates against cycles and refuses an edge that would create one.
+
+Prove it on a single node before trusting it on a batch. If a node cannot be
+re-parented, leave the placeholder edge in place and record the limitation — never
+re-mint the mirror to fix topology.
+
 ### 10. `tag` → `flywheel_create_node_tag` / `flywheel_set_node_tag_assignments`
 
 Reserved for future work (`unreconciled` auto-tagging via hooks, one-only

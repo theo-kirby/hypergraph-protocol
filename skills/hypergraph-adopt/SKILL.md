@@ -30,14 +30,19 @@ available and the user wants hosting) — same decision framework as init.
    `include_descendants: true`) and confirm the node count covers what the docs
    cite before proceeding.
 2. **Bring in the history.**
-   - **Mode A**: `hypergraph import --record <export> [--state <export>]` — node_ids
-     and slugs are preserved verbatim; this *is* the fork (Flywheel has no native
-     one — slugs are minted on create, immutable). Config must gain a mandatory
-     `archive:` block naming the legacy roots — **artifacts do not survive import**
-     (the local backend has no artifact op), so the archive reference is the only
-     pointer to them. For graphs above ~1000 nodes, offer **epoch-split**: import
-     only the recent epoch and leave older history on the archive (never truncate —
-     the archive keeps everything).
+   - **Mode A**: `hypergraph import --record <export> [--state <export>] --fork` —
+     node_ids and slugs are preserved verbatim; this *is* the fork (Flywheel has no
+     native one — slugs are minted on create, immutable). **`--fork` is mandatory
+     here**: it files the archive's ids under `origin:` as provenance and omits
+     `flywheel:`, so the project re-publishes its whole imported history to a mirror
+     it owns (step 5). Without it, push silently omits every legacy node. Config must
+     gain a mandatory `archive:` block naming the legacy roots, each with a `title` —
+     **artifacts do not survive import** (the local backend has no artifact op), so
+     the archive reference is the only pointer to them, and the block is what
+     `push --lineage` renders from. For graphs above ~1000 nodes, offer
+     **epoch-split**: import only the recent epoch and leave older history on the
+     archive (never truncate — the archive keeps everything); it is also how you
+     mirror less history when a full push would be thousands of creates.
    - **Mode B**: author the prehistory record node(s) from README/docs/CHANGELOG/git
      shape (`hypergraph new record` after the record root exists; they may parent on
      the root). Each covers a real era or workstream with `## State Impact` lines
@@ -72,9 +77,28 @@ available and the user wants hosting) — same decision framework as init.
 5. **Init tail** (init steps 5–8): advance the HWM to the marker; write
    `.hypergraph/config.yml` from [config.example.yml](references/config.example.yml)
    (backend, `graph_dir`, `mirror:`, `epoch:`, and `archive:` in mode A); gitignore
-   `.hypergraph/cache/`; `hypergraph export` → `render` → `check` **exit 0**;
-   commit. With `mirror: flywheel`: create NEW mirror roots (never push into the
-   archive graph), push, legend node, `push --verify` clean (reconcile step 8).
+   `.hypergraph/cache/`; `hypergraph export` → `render` → `check` **exit 0**; commit.
+
+   With `mirror: flywheel`, the mirror carries the **whole** graph — the mirror
+   projects the repo, never the archive:
+   - Create NEW mirror roots and record them under `mirror_roots:`. Never push into
+     the archive graph. Titles are plain: `<project> — record`, `<project> — state`
+     (no "(hypergraph mirror)" parenthetical — the lineage belongs in the body).
+   - Body of the mirror **record** root = `hypergraph push --lineage`, so the first
+     thing a mirror reader sees names the frozen archive and says what stayed behind.
+   - `hypergraph push --plan` → one `create` per node, including every imported one.
+     Execute it in order (local-adapter §Mirroring). A local root has no local parent,
+     so parent it to the matching mirror root.
+   - **Record results incrementally** — `push --record-result` after each batch of
+     roughly 20 creates, never once at the end. `push --plan` is a diff, so a run that
+     dies midway resumes cleanly only for batches already recorded; anything created
+     but unrecorded gets created a second time, and duplicate mirror nodes cannot be
+     merged. On a large plan `push --plan` warns about this on stderr.
+   - Legend node, then `push --verify` clean **against the `mirror_roots:` export
+     alone** — export only those roots, with `include_descendants`. Never add the
+     archive anchors: a mirror holding almost none of the graph verifies clean when
+     you do, because the imported nodes' archive-owned ids resolve through the
+     spliced subgraph.
 6. **Onboarding install.**
    - Append [agents-block.md](references/agents-block.md) to the repo's `AGENTS.md`
      (create the file if absent) — idempotently: if `<!-- hypergraph:begin -->` is

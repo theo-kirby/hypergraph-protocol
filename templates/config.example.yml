@@ -39,9 +39,10 @@ graph_dir: .hypergraph/graph
 # epoch:
 #   marker: adjective-noun-0000
 
-# Optional: fresh mirror roots minted for an adopted project's post-epoch nodes
-# (the archive holds the legacy mirror). Exempt from push --verify's
-# no-local-counterpart check; the skill layer parents mirror pushes here.
+# Optional: fresh mirror roots minted for an adopted project, which mirrors its own
+# full history under roots it owns. Exempt from push --verify's
+# no-local-counterpart check; the skill layer parents mirror pushes here. Verify
+# against these roots alone — never splice the archive roots into that export.
 # mirror_roots:
 #   record:
 #     node_id: 00000000-0000-0000-0000-000000000000
@@ -51,11 +52,17 @@ graph_dir: .hypergraph/graph
 #     slug: adjective-noun-0000
 
 # Optional (mandatory for mode-A adoptions): where the pre-adoption graph lives.
-# Purely documentary — the checker doesn't read it — but it is the only pointer to
-# legacy artifacts, which do not survive import to the local backend.
+# The checker doesn't read it, but it does two jobs: it is the only pointer to legacy
+# artifacts (they do not survive import to the local backend), and it is the source
+# `hypergraph push --lineage` renders the mirror record root's body from — so give
+# every root a `title`, and keep the block current if roots are added.
+# The archive is frozen: this project never writes to it.
 # archive:
 #   backend: flywheel
 #   roots:
 #     - node_id: 00000000-0000-0000-0000-000000000000
 #       slug: adjective-noun-0000
+#       title: the graph this project forked from
+#   imported: 0                    # fallback count if no node file carries `origin:`
+#   artifacts: retained-on-archive
 #   note: frozen pre-adoption graph; artifacts live here

@@ -83,12 +83,21 @@ record it first (SPEC I1), then reconcile it in.
      legend node (title exactly "Hypergraph mirror slug legend", parented to the
      mirror's record root; find it among the root's children by title, lease +
      commit if it exists, create otherwise). It never gets a local node file.
-   - **Verify**: fetch a fresh export of both mirror roots
-     (`flywheel_export_subgraph`, `include_descendants: true`, one call with both
-     node_ids) and run `hypergraph push --verify --against <export.json>`. Exit 1
-     means drift — report each DRIFT line; local files are canonical, so drift is
-     fixed by re-pushing (or investigating who wrote to the mirror), never by
-     editing local nodes to match the mirror.
+   - **Archive lineage** (adopted projects, config has `archive:`): refresh it
+     alongside the legend. `hypergraph push --lineage` → lease + commit the mirror
+     **record root**'s body when it differs from what is there. It changes only when
+     the `archive:` block or the imported-node count does, so this is usually a no-op
+     read; a mode-B project has no `archive:` block and skips it (the command exits 2).
+   - **Verify**: fetch a fresh export of the project's own mirror roots — the ones in
+     `mirror_roots:` (or the config record/state roots) — via
+     `flywheel_export_subgraph`, `include_descendants: true`, one call with those
+     node_ids, and run `hypergraph push --verify --against <export.json>`. **Never
+     add the archive roots to that export**: an adopted project's mirror can hold
+     almost none of the graph and still verify clean when the archive is spliced in,
+     because the imported nodes' archive-owned ids resolve through it. Exit 1 means
+     drift — report each DRIFT line; local files are canonical, so drift is fixed by
+     re-pushing (or investigating who wrote to the mirror), never by editing local
+     nodes to match the mirror.
 9. **Report honestly**: what was folded, what was created, checker output verbatim —
    including violations you could not fix. Impacts that could not be applied cleanly
    (ambiguous target, contradictory deltas) get reported, not guessed at.

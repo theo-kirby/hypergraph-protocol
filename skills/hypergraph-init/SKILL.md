@@ -78,10 +78,13 @@ initialized; use hypergraph-record / hypergraph-reconcile / hypergraph-orient in
    ```
    The check must exit 0 before you report success.
 8. **Commit** (`local`): `git add .hypergraph/config.yml .hypergraph/graph STATE.md`.
-   **Adopting an existing Flywheel project instead?** Export both graphs to
+   **Re-homing your own Flywheel project instead?** Export both graphs to
    `.hypergraph/cache/`, then `hypergraph import --record … --state …` — node_ids and
-   slugs are preserved verbatim, so the existing config stays valid (local-adapter
-   §Bootstrapping).
+   slugs are preserved verbatim, so the existing config stays valid and the mirror
+   keeps pushing to the same nodes (local-adapter §Bootstrapping). No `--fork` here:
+   that is for adopting somebody else's graph, and it would duplicate yours on the
+   next push. A repo with a *past* rather than a graph you own goes to
+   hypergraph-adopt.
 
 ## Guardrails
 
