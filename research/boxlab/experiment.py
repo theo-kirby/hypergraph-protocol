@@ -126,6 +126,14 @@ def _harvest(ctl: BoxController, box_id: str, dest: Path,
         "--exclude='*/node_modules' "
         "--exclude='*/__pycache__' "
         "--exclude='research/text8*' "
+        # Agents create their own virtualenvs and build trees. Measured on the
+        # nine-run harvest: archives reached 657 MB with these included, against
+        # 28 MB on the pilot which happened not to make a venv. None of it is
+        # evidence — it is reconstructible from the committed code.
+        "--exclude='*/venv' "
+        "--exclude='*/.venv' "
+        "--exclude='*/build' "
+        "--exclude='*.zip' "
         "research "
         "$([ -d .pi/agent/sessions ] && echo .pi/agent/sessions) "
         "$([ -d .claude/projects ] && echo .claude/projects) "

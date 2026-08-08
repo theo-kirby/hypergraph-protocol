@@ -1,0 +1,21 @@
+{
+  "arm": "flywheel",
+  "seed": 2,
+  "run_id": "flywheel-s2",
+  "box_id": "bx_t7bhu5d4",
+  "ok": true,
+  "note": "complete",
+  "phase1_launched_at": 1786222787.0,
+  "coldstart_at": 1786226413.535785,
+  "ended_at": 1786227009.473493,
+  "harvested": true,
+  "events": [
+    "[00:00:08] flywheel-s2: phase 1 exited early",
+    "[00:00:08] flywheel-s2: cold-start cut: killing the session",
+    "[00:01:01] flywheel-s2: phase 2 launched (detached; ssh did not return)",
+    "[00:10:04] flywheel-s2: session exited early",
+    "[00:10:04] flywheel-s2: budget reached: stopping the session",
+    "[00:18:16] flywheel-s2: complete",
+    "[00:18:18] flywheel-s2: stopped box bx_t7bhu5d4"
+  ]
+}

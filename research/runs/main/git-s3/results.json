@@ -1,0 +1,108 @@
+{
+  "hyperparameters": {
+    "dimension": 200,
+    "window": 5,
+    "negative_samples": 15,
+    "epochs": 5,
+    "subsampling_threshold": 0.0001,
+    "learning_rate": 0.015,
+    "seed": 42,
+    "min_count": 5,
+    "wall_clock_seconds": 1059.6
+  },
+  "results": {
+    "per_section": {
+      "capital-common-countries": {
+        "correct": 0,
+        "total": 0,
+        "skipped": 506,
+        "accuracy": 0.0
+      },
+      "capital-world": {
+        "correct": 0,
+        "total": 0,
+        "skipped": 4524,
+        "accuracy": 0.0
+      },
+      "currency": {
+        "correct": 0,
+        "total": 0,
+        "skipped": 866,
+        "accuracy": 0.0
+      },
+      "city-in-state": {
+        "correct": 0,
+        "total": 0,
+        "skipped": 2467,
+        "accuracy": 0.0
+      },
+      "family": {
+        "correct": 0,
+        "total": 420,
+        "skipped": 86,
+        "accuracy": 0.0
+      },
+      "gram1-adjective-to-adverb": {
+        "correct": 0,
+        "total": 992,
+        "skipped": 0,
+        "accuracy": 0.0
+      },
+      "gram2-opposite": {
+        "correct": 0,
+        "total": 756,
+        "skipped": 56,
+        "accuracy": 0.0
+      },
+      "gram3-comparative": {
+        "correct": 0,
+        "total": 1332,
+        "skipped": 0,
+        "accuracy": 0.0
+      },
+      "gram4-superlative": {
+        "correct": 0,
+        "total": 992,
+        "skipped": 130,
+        "accuracy": 0.0
+      },
+      "gram5-present-participle": {
+        "correct": 0,
+        "total": 1056,
+        "skipped": 0,
+        "accuracy": 0.0
+      },
+      "gram6-nationality-adjective": {
+        "correct": 0,
+        "total": 0,
+        "skipped": 1599,
+        "accuracy": 0.0
+      },
+      "gram7-past-tense": {
+        "correct": 0,
+        "total": 1560,
+        "skipped": 0,
+        "accuracy": 0.0
+      },
+      "gram8-plural": {
+        "correct": 0,
+        "total": 1332,
+        "skipped": 0,
+        "accuracy": 0.0
+      },
+      "gram9-plural-verbs": {
+        "correct": 0,
+        "total": 870,
+        "skipped": 0,
+        "accuracy": 0.0
+      }
+    },
+    "total": 9310,
+    "skipped": 10234,
+    "overall_accuracy": 0.0,
+    "semantic_accuracy": 0.0,
+    "syntactic_accuracy": 0.0,
+    "semantic_total": 420,
+    "syntactic_total": 8890
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "hyperparameters": {
+    "dim": 200,
+    "window": 5,
+    "negative_samples": 15,
+    "epochs": 7,
+    "subsampling_threshold": 1e-05,
+    "learning_rate": 0.025,
+    "min_count": 5,
+    "seed": 42,
+    "training_time_seconds": 1371.3
+  },
+  "vocabulary_size": 71290,
+  "corpus_tokens_after_filter": 16718844,
+  "accuracy": 0.2578111852807539,
+  "semantic_accuracy": 0.24258360302049622,
+  "syntactic_accuracy": 0.2686581500336183,
+  "total_correct": 4596,
+  "total_asked": 17827,
+  "total_skipped": 1717,
+  "section_details": {
+    "capital-common-countries": {
+      "correct": 255,
+      "asked": 506,
+      "skipped": 0,
+      "accuracy": 0.5039525691699605
+    },
+    "capital-world": {
+      "correct": 781,
+      "asked": 3564,
+      "skipped": 960,
+      "accuracy": 0.2191358024691358
+    },
+    "currency": {
+      "correct": 61,
+      "asked": 596,
+      "skipped": 270,
+      "accuracy": 0.10234899328859061
+    },
+    "city-in-state": {
+      "correct": 518,
+      "asked": 2330,
+      "skipped": 137,
+      "accuracy": 0.2223175965665236
+    },
+    "family": {
+      "correct": 184,
+      "asked": 420,
+      "skipped": 86,
+      "accuracy": 0.4380952380952381
+    },
+    "gram1-adjective-to-adverb": {
+      "correct": 56,
+      "asked": 992,
+      "skipped": 0,
+      "accuracy": 0.056451612903225805
+    },
+    "gram2-opposite": {
+      "correct": 52,
+      "asked": 756,
+      "skipped": 56,
+      "accuracy": 0.06878306878306878
+    },
+    "gram3-comparative": {
+      "correct": 597,
+      "asked": 1332,
+      "skipped": 0,
+      "accuracy": 0.44819819819819817
+    },
+    "gram4-superlative": {
+      "correct": 144,
+      "asked": 992,
+      "skipped": 130,
+      "accuracy": 0.14516129032258066
+    },
+    "gram5-present-participle": {
+      "correct": 235,
+      "asked": 1056,
+      "skipped": 0,
+      "accuracy": 0.22253787878787878
+    },
+    "gram6-nationality-adjective": {
+      "correct": 970,
+      "asked": 1521,
+      "skipped": 78,
+      "accuracy": 0.6377383300460223
+    },
+    "gram7-past-tense": {
+      "correct": 203,
+      "asked": 1560,
+      "skipped": 0,
+      "accuracy": 0.13012820512820514
+    },
+    "gram8-plural": {
+      "correct": 388,
+      "asked": 1332,
+      "skipped": 0,
+      "accuracy": 0.2912912912912913
+    },
+    "gram9-plural-verbs": {
+      "correct": 152,
+      "asked": 870,
+      "skipped": 0,
+      "accuracy": 0.17471264367816092
+    }
+  }
+}

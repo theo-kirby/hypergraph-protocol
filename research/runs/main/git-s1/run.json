@@ -1,0 +1,19 @@
+{
+  "arm": "git",
+  "seed": 1,
+  "run_id": "git-s1",
+  "box_id": "bx_p5gb985s",
+  "ok": true,
+  "note": "complete",
+  "phase1_launched_at": 1786222750.0,
+  "coldstart_at": 1786226388.4604359,
+  "ended_at": 1786229958.67069,
+  "harvested": true,
+  "events": [
+    "[23:59:41] git-s1: cold-start cut: killing the session",
+    "[00:00:36] git-s1: phase 2 launched (detached; ssh did not return)",
+    "[00:59:10] git-s1: budget reached: stopping the session",
+    "[01:04:34] git-s1: complete",
+    "[01:04:37] git-s1: stopped box bx_p5gb985s"
+  ]
+}
