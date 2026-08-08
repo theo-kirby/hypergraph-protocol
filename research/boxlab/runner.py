@@ -31,41 +31,37 @@ from typing import Optional, Tuple
 
 from .arms import Arm
 from .box_ctl import BoxController, still_booting
+from .harness import Harness, build_launch_command, get_harness
 from .provision import RESEARCH_DIR
 
 # Keep the launch wait short: we expect it not to return.
 LAUNCH_TIMEOUT_S = 45.0
-
-# `pgrep -f` / `pkill -f` pattern matching the mission process.
-PROCESS_MATCH = "claude -p"
 
 
 def log_path(run_id: str) -> str:
     return f"{RESEARCH_DIR}/runs/{run_id}.log"
 
 
-def build_launch_script(run_id: str, mission: str, arm: Arm, *,
+def build_launch_script(run_id: str, mission: str, arm: Arm,
+                        harness: Optional[Harness] = None, *,
                         model: Optional[str] = None) -> str:
-    """The detached headless-Claude launch bash (pure — no side effects).
+    """The detached headless launch bash (pure — no side effects).
 
-    Sources the box's `.env` so `CLAUDE_CODE_OAUTH_TOKEN` (the subscription) and
-    `GITHUB_TOKEN` are present, then launches under `nohup setsid` with
-    stream-json captured to `runs/<run_id>.log`. The MCP config is wired only for
-    the arm that has one — the control must not be handed a tool it was never
-    told about.
+    Sources the box's `.env` so the harness's own auth variable and
+    `GITHUB_TOKEN` are present, then launches under `nohup setsid` with output
+    captured to `runs/<run_id>.log`. MCP is wired only for the arm that has one —
+    the control must not be handed a tool it was never told about.
     """
+    harness = harness or get_harness()
     q = shlex.quote(mission or "")
     log = log_path(run_id)
-    mcp = "--mcp-config .mcp.json " if arm.needs_flywheel_mcp else ""
-    model_flag = f"--model {shlex.quote(model)} " if model else ""
+    command = build_launch_command(harness, q, model=model,
+                                   mcp_config=arm.needs_flywheel_mcp)
     return (
         f"cd {RESEARCH_DIR} && "
         f'export PATH="$HOME/.local/bin:$HOME/.flywheel/bin:$PATH" && '
         f"set -a && . ./.env && set +a && "
-        f"nohup setsid claude -p {q} "
-        f"--output-format stream-json --verbose "
-        f"--dangerously-skip-permissions "
-        f"{model_flag}{mcp}"
+        f"{command}"
         f"< /dev/null > {log} 2>&1 &\n"
         f'echo "launched {run_id} pid $!"\n'
     )
@@ -93,7 +89,8 @@ class RunHandle:
         }
 
 
-def launch(box_id: str, run_id: str, mission: str, arm: Arm, *,
+def launch(box_id: str, run_id: str, mission: str, arm: Arm,
+           harness: Optional[Harness] = None, *,
            model: Optional[str] = None,
            box: Optional[BoxController] = None) -> Tuple[bool, str]:
     """Start the mission detached. Returns `(launched, note)`.
@@ -102,8 +99,9 @@ def launch(box_id: str, run_id: str, mission: str, arm: Arm, *,
     `machine_not_running` result with rc 0 is NOT: that is the silent no-op where
     the mission never ran, and it must be loud.
     """
+    harness = harness or get_harness()
     ctl = box or BoxController()
-    script = build_launch_script(run_id, mission, arm, model=model)
+    script = build_launch_script(run_id, mission, arm, harness, model=model)
     try:
         rc, out = ctl.ssh_exec(box_id, script, timeout=LAUNCH_TIMEOUT_S)
     except subprocess.TimeoutExpired:
@@ -115,10 +113,18 @@ def launch(box_id: str, run_id: str, mission: str, arm: Arm, *,
     return True, "launched (detached)"
 
 
-def is_alive(box_id: str, *, box: Optional[BoxController] = None) -> Optional[bool]:
-    """True/False if the mission process is running; None if the probe failed."""
+def is_alive(box_id: str, harness: Optional[Harness] = None, *,
+             box: Optional[BoxController] = None) -> Optional[bool]:
+    """True/False if the mission process is running; None if the probe failed.
+
+    The pattern comes from the harness because pi rewrites its process title to
+    the bare word `pi` once running — a launch-shaped pattern never matches it,
+    and box-wheel's probe consequently declared healthy agents dead and stopped
+    their boxes mid-mission.
+    """
+    harness = harness or get_harness()
     ctl = box or BoxController()
-    probe = (f"if pgrep -f {shlex.quote(PROCESS_MATCH)} >/dev/null 2>&1; "
+    probe = (f"if pgrep -f {shlex.quote(harness.process_match)} >/dev/null 2>&1; "
              "then echo ALIVE; else echo DEAD; fi\n")
     try:
         _, out = ctl.ssh_exec(box_id, probe, timeout=60.0)
@@ -161,20 +167,23 @@ def fetch_log(box_id: str, run_id: str, *,
     return out
 
 
-def kill_mission(box_id: str, *, box: Optional[BoxController] = None) -> bool:
+def kill_mission(box_id: str, harness: Optional[Harness] = None, *,
+                 box: Optional[BoxController] = None) -> bool:
     """Kill the mission process, leaving the box and its filesystem intact.
 
     This is the cold-start intervention: the session dies, the work on disk
     survives, and the next `launch()` starts with no conversation history.
     """
+    harness = harness or get_harness()
     ctl = box or BoxController()
     try:
-        ctl.ssh_exec(box_id, f"pkill -f {shlex.quote(PROCESS_MATCH)} || true\n",
+        ctl.ssh_exec(box_id,
+                     f"pkill -f {shlex.quote(harness.process_match)} || true\n",
                      timeout=60.0)
     except Exception:
         return False
     for _ in range(10):
-        if is_alive(box_id, box=ctl) is False:
+        if is_alive(box_id, harness, box=ctl) is False:
             return True
         time.sleep(2.0)
     return False

@@ -27,9 +27,12 @@ from typing import Optional
 
 from .arms import Arm, compose_primer
 from .box_ctl import BoxController
-from .config import BOX_ENV_VARS, FORBIDDEN_ON_BOX, LabConfig
+from .config import (BOX_ENV_VARS, FORBIDDEN_ON_BOX, HARNESS_AUTH_VARS,
+                     LabConfig)
+from .harness import Harness, get_harness
 
 RESEARCH_DIR = "~/research"
+PI_AGENT_DIR = "~/.pi/agent"
 PRIMER_PATH = f"{RESEARCH_DIR}/RESEARCH_PRIMER.md"
 CLAUDE_MD_PATH = f"{RESEARCH_DIR}/CLAUDE.md"
 ENV_PATH = f"{RESEARCH_DIR}/.env"
@@ -49,6 +52,9 @@ _MCP_EOF = "BOXLAB_MCP_EOF"
 _PRIMER_EOF = "BOXLAB_PRIMER_EOF"
 _HELPER_EOF = "BOXLAB_HELPER_EOF"
 _GITIGNORE_EOF = "BOXLAB_GITIGNORE_EOF"
+_PI_MODELS_EOF = "BOXLAB_PI_MODELS_EOF"
+_PI_SETTINGS_EOF = "BOXLAB_PI_SETTINGS_EOF"
+_PI_MCP_EOF = "BOXLAB_PI_MCP_EOF"
 
 # Carried from box-wheel almost verbatim: create-or-reuse a public GitHub repo
 # and push. The token is used inline on push so it is never persisted into
@@ -124,15 +130,18 @@ def mcp_config_json(config: LabConfig) -> str:
     }, indent=2)
 
 
-def env_file_body(config: LabConfig, arm: Arm) -> str:
+def env_file_body(config: LabConfig, arm: Arm, harness: Harness) -> str:
     """The box's `~/research/.env`, chmod 600.
 
-    Only the variables this arm needs are written — the control arm has no
-    business holding a Flywheel key, and an arm that cannot reach a service it
-    was never told about is one less way for the comparison to blur.
+    Only what this (arm, harness) pair needs is written. Two omissions are
+    deliberate: one harness's token is never readable as another's, and the
+    control arm never holds a Flywheel key — an arm that cannot reach a service
+    it was never told about is one less way for the comparison to blur.
     """
     lines = []
     for name in BOX_ENV_VARS:
+        if name in HARNESS_AUTH_VARS and name != harness.auth_env:
+            continue
         if name == "FLYWHEEL_API_KEY" and not arm.needs_flywheel_mcp:
             continue
         lines.append(f"{name}={config.get(name) or ''}")
@@ -142,39 +151,111 @@ def env_file_body(config: LabConfig, arm: Arm) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build_script(config: LabConfig, arm: Arm) -> str:
-    """The idempotent provisioning bash for one arm (pure — no side effects)."""
+def pi_config_block(config: LabConfig, arm: Harness, harness: Harness) -> str:
+    """pi's three config files: OpenRouter provider, defaults, and MCP.
+
+    The OpenRouter key stays a literal `$OPENROUTER_API_KEY` reference that pi
+    interpolates at runtime from the box's `.env`, so it is never duplicated into
+    a second file. `defaultProjectTrust: always` is load-bearing on a detached
+    launch: without it a TTY-less run blocks forever on an interactive trust
+    prompt and writes a zero-byte log.
+    """
+    model = harness.default_model
+    models_json = json.dumps({
+        "providers": {
+            "openrouter": {
+                "baseUrl": "https://openrouter.ai/api/v1",
+                "api": "openai-completions",
+                "apiKey": "$OPENROUTER_API_KEY",
+                "models": ([{"id": model, "name": model}] if model else []),
+            }
+        }
+    }, indent=2)
+    settings_json = json.dumps({
+        "defaultProvider": "openrouter",
+        **({"defaultModel": model} if model else {}),
+        "defaultProjectTrust": "always",
+    }, indent=2)
+    return f"""
+# pi config: OpenRouter provider + defaults
+mkdir -p {PI_AGENT_DIR}
+cat > {PI_AGENT_DIR}/models.json <<'{_PI_MODELS_EOF}'
+{models_json}
+{_PI_MODELS_EOF}
+cat > {PI_AGENT_DIR}/settings.json <<'{_PI_SETTINGS_EOF}'
+{settings_json}
+{_PI_SETTINGS_EOF}
+"""
+
+
+def pi_mcp_block(config: LabConfig) -> str:
+    """pi's Flywheel MCP wiring, read through the pi-mcp-adapter."""
+    mcp_json = json.dumps({
+        "mcpServers": {
+            "flywheel": {
+                "url": config.flywheel_mcp_url,
+                "headers": {
+                    "Authorization": f"Bearer {config.flywheel_api_key or ''}"
+                },
+                "auth": "bearer",
+                "lifecycle": "lazy",
+            }
+        }
+    }, indent=2)
+    return f"""
+# Flywheel MCP for pi (via the pi-mcp-adapter)
+pi install npm:pi-mcp-adapter || echo "warn: pi-mcp-adapter install non-zero"
+cat > {PI_AGENT_DIR}/mcp.json <<'{_PI_MCP_EOF}'
+{mcp_json}
+{_PI_MCP_EOF}
+"""
+
+
+def build_script(config: LabConfig, arm: Arm,
+                 harness: Optional[Harness] = None) -> str:
+    """The idempotent provisioning bash for one (arm, harness) (pure)."""
+    harness = harness or get_harness()
     primer = compose_primer(arm)
+
     mcp_block = ""
     if arm.needs_flywheel_mcp:
-        mcp_block = f"""
+        if harness.uses_pi_mcp_adapter:
+            mcp_block = pi_mcp_block(config)
+        else:
+            mcp_block = f"""
 # Flywheel MCP server config (Claude Code reads it via --mcp-config)
 cat > {MCP_PATH} <<'{_MCP_EOF}'
 {mcp_config_json(config)}
 {_MCP_EOF}
 """
+
+    harness_config_block = ""
+    if harness.name == "pi":
+        harness_config_block = pi_config_block(config, arm, harness)
+
     arm_block = ""
-    if arm.install_sh:
-        arm_block = f"\n# arm toolchain: {arm.label}\n{arm.install_sh}"
+    install = arm.install_for(harness)
+    if install:
+        arm_block = f"\n# arm toolchain: {arm.label}\n{install}"
 
     return f"""set -e
 mkdir -p {RESEARCH_DIR}/runs {RESEARCH_DIR}/artifacts {BIN_DIR}
 cd {RESEARCH_DIR}
 
-# 1. Claude Code CLI (boxes may ship it; install only if missing)
-if ! command -v claude >/dev/null 2>&1; then
-  curl -fsSL https://claude.ai/install.sh | bash || \
-    npm install -g @anthropic-ai/claude-code
+# 1. harness CLI: {harness.name} (install only if missing)
+if ! command -v {harness.cli_bin} >/dev/null 2>&1; then
+  {harness.install_sh}
 fi
 export PATH="$HOME/.local/bin:$HOME/.flywheel/bin:$PATH"
-{arm_block}
+
 # 2. credentials — chmod 600; the heredoc keeps keys out of the process list
 cat > {ENV_PATH} <<'{_ENV_EOF}'
-{env_file_body(config, arm)}{_ENV_EOF}
+{env_file_body(config, arm, harness)}{_ENV_EOF}
 chmod 600 {ENV_PATH}
+{harness_config_block}{arm_block}
 {mcp_block}
-# 3. primer -> RESEARCH_PRIMER.md + CLAUDE.md (Claude Code auto-loads CLAUDE.md
-#    from its working directory). Shared core + this arm's memory section.
+# 3. primer -> RESEARCH_PRIMER.md + CLAUDE.md (agents auto-load CLAUDE.md from
+#    the working directory). Shared core + this arm's memory section.
 cat > {PRIMER_PATH} <<'{_PRIMER_EOF}'
 {primer}{_PRIMER_EOF}
 cp {PRIMER_PATH} {CLAUDE_MD_PATH}
@@ -185,21 +266,23 @@ cat > {PUBLISH_HELPER_PATH} <<'{_HELPER_EOF}'
 {_PUBLISH_HELPER}{_HELPER_EOF}
 chmod +x {PUBLISH_HELPER_PATH}
 
-# 5. verify (best-effort) + drop the arm-stamped marker
-claude --version || echo "warn: claude --version non-zero"
+# 5. verify (best-effort) + drop the arm+harness-stamped marker
+{harness.cli_bin} --version || echo "warn: {harness.cli_bin} --version non-zero"
 git --version || echo "warn: git not found (publish-repo will fail)"
 python3 --version || echo "warn: python3 not found"
-echo "{arm.name} $(date -u +%Y-%m-%dT%H:%M:%SZ)" > {MARKER_PATH}
+echo "{arm.name} {harness.name} $(date -u +%Y-%m-%dT%H:%M:%SZ)" > {MARKER_PATH}
 echo "{OK_SENTINEL}"
 """
 
 
-def provisioned_arm(box_id: str, box: Optional[BoxController] = None
-                    ) -> Optional[str]:
-    """The arm a box was provisioned for, or None.
+def provisioned_as(box_id: str, box: Optional[BoxController] = None
+                   ) -> Optional[tuple]:
+    """The `(arm, harness)` a box was provisioned for, or None.
 
-    The marker's first token is the arm name. Scanning lines rather than reading
-    the whole output matters: ssh banners and warnings interleave with it.
+    The marker's first two tokens are the arm and the harness. Both matter: a box
+    reused under a different arm runs the wrong primer, and one reused under a
+    different harness has the wrong CLI and the wrong auth variable. Scanning
+    lines rather than reading the whole output matters — ssh banners interleave.
     """
     ctl = box or BoxController()
     try:
@@ -209,19 +292,22 @@ def provisioned_arm(box_id: str, box: Optional[BoxController] = None
         return None
     for line in out.splitlines():
         parts = line.split()
-        if parts and parts[0] in {"git", "flywheel", "hypergraph"}:
-            return parts[0]
+        if len(parts) >= 2 and parts[0] in {"git", "flywheel", "hypergraph"}:
+            return (parts[0], parts[1])
     return None
 
 
-def apply(box_id: str, config: LabConfig, arm: Arm, *,
+def apply(box_id: str, config: LabConfig, arm: Arm,
+          harness: Optional[Harness] = None, *,
           box: Optional[BoxController] = None,
           force: bool = False) -> ProvisionResult:
-    """Run the provisioning script on `box_id`. Skipped if already this arm's."""
+    """Run the provisioning script. Skipped only on an exact arm+harness match."""
+    harness = harness or get_harness()
     ctl = box or BoxController()
-    if not force and provisioned_arm(box_id, ctl) == arm.name:
+    if not force and provisioned_as(box_id, ctl) == (arm.name, harness.name):
         return ProvisionResult(ok=True, log="already provisioned for this arm",
                                box_id=box_id)
-    rc, out = ctl.ssh_exec(box_id, build_script(config, arm), timeout=900.0)
+    rc, out = ctl.ssh_exec(box_id, build_script(config, arm, harness),
+                           timeout=1200.0)
     return ProvisionResult(ok=(rc == 0 and OK_SENTINEL in out), log=out,
                            box_id=box_id)

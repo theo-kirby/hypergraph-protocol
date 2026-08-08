@@ -38,6 +38,8 @@ class Arm:
     # Extra bash run during provisioning, after the shared toolchain. Empty for
     # the control — its memory system is git, which every box already has.
     install_sh: str = ""
+    # Bash appended only when the harness reads Claude Code's `.claude/skills`.
+    claude_skills_sh: str = ""
     # Whether the box needs the Flywheel MCP config wired into `.mcp.json`.
     needs_flywheel_mcp: bool = False
 
@@ -47,6 +49,20 @@ class Arm:
 
     def memory_primer(self) -> str:
         return self.memory_primer_path.read_text(encoding="utf-8")
+
+    def install_for(self, harness) -> str:
+        """This arm's provisioning bash for a given harness.
+
+        The skills bundle is Claude Code-specific — `.claude/skills` is a Claude
+        Code convention that pi does not read. Installing it under pi would be
+        inert weight and, worse, would imply the protocol arm had a workflow
+        layer it does not actually have. Under pi the protocol arm runs on its
+        primer and the `hypergraph` CLI alone, and the write-up must say so.
+        """
+        parts = [self.install_sh]
+        if self.claude_skills_sh and getattr(harness, "reads_claude_skills", False):
+            parts.append(self.claude_skills_sh)
+        return "".join(p for p in parts if p)
 
 
 # `uv tool install` is deliberately the install path for the hypergraph arm: it
@@ -59,7 +75,10 @@ fi
 export PATH="$HOME/.local/bin:$PATH"
 uv tool install hypergraph-protocol
 hypergraph --help >/dev/null || echo "warn: hypergraph CLI not runnable"
-hypergraph skills install --user || echo "warn: hypergraph skills install non-zero"
+"""
+
+_HYPERGRAPH_SKILLS = """hypergraph skills install --user \
+  || echo "warn: hypergraph skills install non-zero"
 """
 
 # The flywheel CLI is a secondary read interface — the agent works through the
@@ -85,6 +104,7 @@ ARMS: Dict[str, Arm] = {
         name="hypergraph",
         label="C — Hypergraph protocol",
         install_sh=_HYPERGRAPH_INSTALL,
+        claude_skills_sh=_HYPERGRAPH_SKILLS,
     ),
 }
 

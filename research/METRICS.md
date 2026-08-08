@@ -8,6 +8,40 @@ results is not a target.
 
 Decision node: `southern-ridge-1802`.
 
+## The harness — a constant across arms, and what it costs us
+
+Runs use **pi** (pi.dev) against **OpenRouter**, model
+`deepseek/deepseek-v4-pro`, pinned explicitly. Chosen for cost: nine three-hour
+missions on a metered API is a bounded, visible spend, where the same nine on a
+subscription risks a quota wall mid-run — and a quota wall would truncate arms
+unevenly and bias the comparison while the charts still rendered.
+
+The harness is identical across arms, so the comparison stays internally valid.
+Two consequences must be stated plainly in any write-up:
+
+1. **The result is about this agent.** "The protocol helps *DeepSeek V4 Pro under
+   pi*" does not automatically generalise to Claude Code. The Claude Code path is
+   built and smoke-tested (`--harness claude_code`) precisely so the finding can
+   be checked against a second agent later.
+2. **Arm C runs without the skills layer.** `hypergraph skills install` writes
+   Claude Code skills into `.claude/skills`, which pi does not read. Under pi the
+   protocol arm has its primer and the `hypergraph` CLI and nothing else. That is
+   a *narrower* test of arm C than the packaged product offers, and it biases
+   against arm C rather than for it.
+
+## Where the measurements come from
+
+Not from the run log. pi's print mode writes only the final answer — 82 bytes for
+an entire smoke run. The measurable record is pi's **session JSONL**, which it
+auto-saves to `~/.pi/agent/sessions/` as a tree of entries carrying the
+turn-by-turn transcript, the tool calls, and token and cost totals. The harvest
+step pulls that directory home alongside the workspace; without it a run
+completes and is simply unmeasurable.
+
+Claude Code's equivalent is `--output-format stream-json --verbose`, whose
+`result` event carries `num_turns`, `duration_ms`, `total_cost_usd` and full
+token usage. Both are harvested, so either harness can be analysed the same way.
+
 ## The task given to every arm
 
 Implement **word2vec** (Mikolov et al., 2013 — *Efficient Estimation of Word

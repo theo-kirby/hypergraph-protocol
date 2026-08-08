@@ -19,17 +19,23 @@ plumbing, not the research.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 import time
 from pathlib import Path
 
+# Long runs are watched through a redirected file, never a TTY, so Python's
+# block buffering would hide all progress until the process exits.
+print = functools.partial(print, flush=True)  # noqa: A001
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from boxlab import provision, runner  # noqa: E402
+from boxlab import experiment, provision, runner, spend  # noqa: E402
 from boxlab.arms import ARM_ORDER, compose_primer, get_arm  # noqa: E402
 from boxlab.box_ctl import BoxController  # noqa: E402
 from boxlab.config import LabConfig  # noqa: E402
+from boxlab.harness import HARNESSES, get_harness  # noqa: E402
 
 # The smoke mission writes one file and stops. No publishing, no network work —
 # a smoke test that creates public GitHub repos is not a smoke test.
@@ -51,7 +57,12 @@ SMOKE_MISSION_2 = (
 
 
 def cmd_creds(args) -> int:
-    print(LabConfig.load().describe())
+    config = LabConfig.load()
+    harness = get_harness(getattr(args, "harness", None))
+    print(config.describe(harness.auth_env))
+    key = config.get("OPENROUTER_API_KEY")
+    if key:
+        print(spend.probe(key))
     return 0
 
 
@@ -65,13 +76,13 @@ def cmd_primer(args) -> int:
     return 0
 
 
-def _wait_for_finish(box_id: str, run_id: str, ctl: BoxController,
+def _wait_for_finish(box_id: str, run_id: str, ctl: BoxController, harness,
                      *, timeout_s: float, label: str) -> str:
     """Poll until the mission process exits or the bound elapses. Returns state."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         time.sleep(15.0)
-        alive = runner.is_alive(box_id, box=ctl)
+        alive = runner.is_alive(box_id, harness, box=ctl)
         elapsed = int(timeout_s - (deadline - time.monotonic()))
         if alive is False:
             print(f"  [{label}] finished after ~{elapsed}s")
@@ -82,7 +93,13 @@ def _wait_for_finish(box_id: str, run_id: str, ctl: BoxController,
 
 
 def _assistant_texts(log: str) -> list:
-    """Pull assistant message text out of a stream-json log (tolerant)."""
+    """Pull assistant text out of a run log — stream-json or plain.
+
+    Claude Code emits stream-json; pi emits its own (largely plain) format. The
+    cold-start check must not depend on which, so this parses the structured form
+    when it is there and falls back to the raw text, which is enough to spot a
+    sentinel the harness printed verbatim.
+    """
     out = []
     for line in log.splitlines():
         line = line.strip()
@@ -100,16 +117,20 @@ def _assistant_texts(log: str) -> list:
                 text = (block.get("text") or "").strip()
                 if text:
                     out.append(text)
+    if not out and log.strip():
+        out.append(log.strip()[-800:])  # plain-text harness: hand back the tail
     return out
 
 
 def cmd_smoke(args) -> int:
     arm = get_arm(args.arm)
+    harness = get_harness(args.harness)
     config = LabConfig.load()
-    config.require(arm.name)
+    config.require(arm.name, harness.auth_env)
     ctl = BoxController()
 
-    print(f"== smoke test · arm {arm.label} ==")
+    print(f"== smoke test · arm {arm.label} · harness {harness.name}"
+          f"{' · ' + harness.default_model if harness.default_model else ''} ==")
     box_id = args.box
     if box_id:
         print(f"[1/6] reusing box {box_id}")
@@ -123,18 +144,20 @@ def cmd_smoke(args) -> int:
         print("      WARNING: machine never answered; continuing anyway")
 
     print(f"[3/6] provisioning for arm {arm.name} …")
-    result = provision.apply(box_id, config, arm, box=ctl, force=args.force)
+    result = provision.apply(box_id, config, arm, harness, box=ctl,
+                             force=args.force)
     if not result.ok:
         print("      FAILED:\n" + result.log[-3000:])
         return _teardown(ctl, box_id, args, code=1)
     print(f"      ok ({result.log.strip().splitlines()[-1][:60] if result.log else ''})")
 
     print("[4/6] launching mission 1 (write a file) …")
-    ok, note = runner.launch(box_id, "smoke1", SMOKE_MISSION_1, arm, box=ctl)
+    ok, note = runner.launch(box_id, "smoke1", SMOKE_MISSION_1, arm, harness,
+                             box=ctl)
     print(f"      {note}")
     if not ok:
         return _teardown(ctl, box_id, args, code=1)
-    state = _wait_for_finish(box_id, "smoke1", ctl,
+    state = _wait_for_finish(box_id, "smoke1", ctl, harness,
                              timeout_s=args.mission_timeout, label="run1")
     log1 = runner.fetch_log(box_id, "smoke1", box=ctl)
     _, out = ctl.ssh_exec(
@@ -146,12 +169,13 @@ def cmd_smoke(args) -> int:
         print("      --- log tail ---\n" + log1[-1500:])
 
     print("[5/6] cold-start probe: kill the session, relaunch, ask what it remembers …")
-    killed = runner.kill_mission(box_id, box=ctl)
+    killed = runner.kill_mission(box_id, harness, box=ctl)
     print(f"      killed={killed}")
-    ok, note = runner.launch(box_id, "smoke2", SMOKE_MISSION_2, arm, box=ctl)
+    ok, note = runner.launch(box_id, "smoke2", SMOKE_MISSION_2, arm, harness,
+                             box=ctl)
     print(f"      {note}")
-    _wait_for_finish(box_id, "smoke2", ctl, timeout_s=args.mission_timeout,
-                     label="run2")
+    _wait_for_finish(box_id, "smoke2", ctl, harness,
+                     timeout_s=args.mission_timeout, label="run2")
     log2 = runner.fetch_log(box_id, "smoke2", box=ctl)
     answers = _assistant_texts(log2)
     reply = " ".join(answers)[-400:] if answers else "(no assistant text captured)"
@@ -185,12 +209,50 @@ def _teardown(ctl: BoxController, box_id: str, args, *, code: int) -> int:
     return code
 
 
+def cmd_run(args) -> int:
+    """The measured experiment: every arm, every seed, concurrently."""
+    harness = get_harness(args.harness)
+    config = LabConfig.load()
+    arms = list(args.arms)
+    seeds = list(range(1, args.seeds + 1))
+    outdir = Path(args.outdir)
+
+    total = len(arms) * len(seeds)
+    hours = args.hours
+    print(f"== protocol benchmark ==")
+    print(f"  harness   {harness.name}"
+          f"{' · ' + harness.default_model if harness.default_model else ''}")
+    print(f"  arms      {', '.join(arms)}")
+    print(f"  seeds     {seeds}")
+    print(f"  runs      {total} boxes, {hours}h each, "
+          f"cold-start cut at {hours * args.coldstart_frac:.2f}h")
+    print(f"  budget    ${args.budget:.2f} (launch gate only — never kills a run)")
+    print(f"  output    {outdir}")
+    if not args.yes:
+        reply = input("\nproceed? [y/N] ").strip().lower()
+        if reply not in ("y", "yes"):
+            print("aborted")
+            return 1
+
+    results = experiment.run_experiment(
+        config, arms=arms, seeds=seeds, harness=harness,
+        duration_s=hours * 3600, coldstart_frac=args.coldstart_frac,
+        outdir=outdir, budget_usd=args.budget)
+
+    print("\n== results ==")
+    for rid in sorted(results):
+        r = results[rid]
+        print(f"  {rid:<20} {'ok ' if r.ok else 'FAIL'} {r.note}")
+    return 0 if all(r.ok for r in results.values()) else 1
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="lab", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("creds", help="show resolved credentials + provenance"
-                   ).set_defaults(func=cmd_creds)
+    pc = sub.add_parser("creds", help="show resolved credentials + provenance")
+    pc.add_argument("--harness", choices=sorted(HARNESSES), default=None)
+    pc.set_defaults(func=cmd_creds)
 
     pp = sub.add_parser("primer", help="print an arm's composed CLAUDE.md")
     pp.add_argument("arm", choices=ARM_ORDER)
@@ -199,6 +261,7 @@ def main(argv=None) -> int:
 
     ps = sub.add_parser("smoke", help="live end-to-end proof on one box")
     ps.add_argument("--arm", choices=ARM_ORDER, default="hypergraph")
+    ps.add_argument("--harness", choices=sorted(HARNESSES), default=None)
     ps.add_argument("--box", help="reuse an existing box id")
     ps.add_argument("--ttl", type=int, default=3600)
     ps.add_argument("--mission-timeout", type=float, default=420.0)
@@ -207,6 +270,18 @@ def main(argv=None) -> int:
                     help="re-provision even if the arm marker matches")
     ps.add_argument("--save-logs", help="directory to write the raw logs to")
     ps.set_defaults(func=cmd_smoke)
+
+    pr = sub.add_parser("run", help="the measured experiment (spends money)")
+    pr.add_argument("--arms", nargs="+", choices=ARM_ORDER, default=list(ARM_ORDER))
+    pr.add_argument("--seeds", type=int, default=3, help="seeds per arm")
+    pr.add_argument("--hours", type=float, default=3.0)
+    pr.add_argument("--coldstart-frac", type=float, default=0.5)
+    pr.add_argument("--harness", choices=sorted(HARNESSES), default=None)
+    pr.add_argument("--budget", type=float, default=40.0,
+                    help="USD launch gate; running agents always finish")
+    pr.add_argument("--outdir", default="research/runs")
+    pr.add_argument("--yes", action="store_true")
+    pr.set_defaults(func=cmd_run)
 
     args = p.parse_args(argv)
     return args.func(args)

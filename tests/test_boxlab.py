@@ -22,8 +22,10 @@ sys.path.insert(0, str(ROOT / "research"))
 from boxlab import arms as arms_mod  # noqa: E402
 from boxlab import provision, runner  # noqa: E402
 from boxlab.config import LabConfig  # noqa: E402
+from boxlab.harness import HARNESSES, get_harness  # noqa: E402
 
 ARM_NAMES = ("git", "flywheel", "hypergraph")
+HARNESS_NAMES = ("pi", "claude_code")
 
 
 @pytest.fixture
@@ -31,6 +33,7 @@ def config():
     """A config with fixed fake secrets — never reads the real .env."""
     return LabConfig(values={
         "CLAUDE_CODE_OAUTH_TOKEN": "oauth-tok-AAA",
+        "OPENROUTER_API_KEY": "or-key-DDD",
         "GITHUB_TOKEN": "gh-tok-BBB",
         "GITHUB_OWNER": "test-owner",
         "FLYWHEEL_API_KEY": "fw-key-CCC",
@@ -76,13 +79,16 @@ def test_relaunch_is_a_genuine_cold_start():
 
     This is the entire mechanism behind the cold-start-resilience measure. If a
     flag ever restores session state, the arms would carry their context across
-    the intervention and the measure would silently become meaningless.
+    the intervention and the measure would silently become meaningless. It must
+    hold for every harness, not just the one the smoke test happened to use.
     """
-    for name in ARM_NAMES:
-        script = runner.build_launch_script(
-            "run1", "do the thing", arms_mod.get_arm(name))
-        assert "--resume" not in script
-        assert "--continue" not in script
+    for hname in HARNESS_NAMES:
+        for name in ARM_NAMES:
+            script = runner.build_launch_script(
+                "run1", "do the thing", arms_mod.get_arm(name),
+                get_harness(hname))
+            assert "--resume" not in script
+            assert "--continue" not in script
 
 
 # ---- provisioning bytes -------------------------------------------------------
@@ -91,13 +97,16 @@ def test_api_key_is_never_written_to_a_box(config):
     """ANTHROPIC_API_KEY would outrank the OAuth token and bill the API."""
     config.values["ANTHROPIC_API_KEY"] = "sk-ant-SHOULD-NEVER-APPEAR"
     for name in ARM_NAMES:
-        script = provision.build_script(config, arms_mod.get_arm(name))
-        assert "ANTHROPIC_API_KEY" not in script
-        assert "sk-ant-SHOULD-NEVER-APPEAR" not in script
+        for hname in HARNESS_NAMES:
+            script = provision.build_script(
+                config, arms_mod.get_arm(name), get_harness(hname))
+            assert "ANTHROPIC_API_KEY" not in script
+            assert "sk-ant-SHOULD-NEVER-APPEAR" not in script
 
 
 def test_control_arm_gets_no_flywheel_credential_or_mcp(config):
-    script = provision.build_script(config, arms_mod.get_arm("git"))
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"))
     assert "FLYWHEEL_API_KEY" not in script
     assert "fw-key-CCC" not in script
     # `.mcp.json` appears as a .gitignore entry in the publish helper for every
@@ -107,37 +116,55 @@ def test_control_arm_gets_no_flywheel_credential_or_mcp(config):
 
 
 def test_flywheel_arm_gets_the_mcp_config(config):
-    script = provision.build_script(config, arms_mod.get_arm("flywheel"))
-    assert ".mcp.json" in script
-    assert "fw-key-CCC" in script
-    assert "mcp-server" in script
+    """Both harnesses wire Flywheel MCP, by different mechanisms."""
+    pi_script = provision.build_script(config, arms_mod.get_arm("flywheel"),
+                                       get_harness("pi"))
+    assert "pi-mcp-adapter" in pi_script
+    assert "fw-key-CCC" in pi_script
+    assert "mcp-server" in pi_script
+
+    cc_script = provision.build_script(config, arms_mod.get_arm("flywheel"),
+                                       get_harness("claude_code"))
+    assert "mcpServers" in cc_script
+    assert "fw-key-CCC" in cc_script
 
 
 def test_hypergraph_arm_installs_the_published_package(config):
     """The arm must test the real adoption route (PyPI), not a dev checkout."""
-    script = provision.build_script(config, arms_mod.get_arm("hypergraph"))
-    assert "uv tool install hypergraph-protocol" in script
-    assert "hypergraph skills install" in script
-    assert "FLYWHEEL_API_KEY" not in script
+    for hname in HARNESS_NAMES:
+        script = provision.build_script(
+            config, arms_mod.get_arm("hypergraph"), get_harness(hname))
+        assert "uv tool install hypergraph-protocol" in script
+        assert "FLYWHEEL_API_KEY" not in script
+        # `.claude/skills` is a Claude Code convention pi does not read, so the
+        # skills bundle must be installed for one harness and omitted for the
+        # other — installing it under pi would imply a workflow layer arm C
+        # does not actually have there.
+        assert ("hypergraph skills install" in script) == (hname == "claude_code")
 
 
 def test_marker_records_the_arm_not_just_a_timestamp(config):
     """A box reused across arms must re-provision, or it runs the wrong primer."""
     for name in ARM_NAMES:
-        script = provision.build_script(config, arms_mod.get_arm(name))
-        assert f'echo "{name} $(date' in script
+        for hname in HARNESS_NAMES:
+            script = provision.build_script(
+                config, arms_mod.get_arm(name), get_harness(hname))
+            assert f'echo "{name} {hname} $(date' in script
 
 
 def test_provisioning_ends_with_the_ok_sentinel(config):
-    for name in ARM_NAMES:
-        script = provision.build_script(config, arms_mod.get_arm(name))
-        assert script.rstrip().endswith(f'echo "{provision.OK_SENTINEL}"')
-        assert script.startswith("set -e")
+    for hname in HARNESS_NAMES:
+        for name in ARM_NAMES:
+            script = provision.build_script(
+                config, arms_mod.get_arm(name), get_harness(hname))
+            assert script.rstrip().endswith(f'echo "{provision.OK_SENTINEL}"')
+            assert script.startswith("set -e")
 
 
 def test_env_file_is_chmod_600(config):
     for name in ARM_NAMES:
-        script = provision.build_script(config, arms_mod.get_arm(name))
+        script = provision.build_script(config, arms_mod.get_arm(name),
+                                        get_harness("pi"))
         assert f"chmod 600 {provision.ENV_PATH}" in script
 
 
@@ -145,23 +172,57 @@ def test_env_file_is_chmod_600(config):
 
 def test_launch_script_detaches_properly():
     """nohup setsid keeps it alive; < /dev/null lets the ssh call return."""
-    script = runner.build_launch_script("r1", "mission", arms_mod.get_arm("git"))
-    assert "nohup setsid claude -p" in script
-    assert "< /dev/null" in script
-    assert "--output-format stream-json" in script
-    assert "--dangerously-skip-permissions" in script
+    for hname in HARNESS_NAMES:
+        h = get_harness(hname)
+        script = runner.build_launch_script(
+            "r1", "mission", arms_mod.get_arm("git"), h)
+        assert f"nohup setsid {h.cli_bin} -p" in script
+        assert "< /dev/null" in script
+
+
+def test_pi_launch_pins_the_model_and_provider():
+    """The model must be explicit — an inherited default is not reproducible."""
+    script = runner.build_launch_script(
+        "r1", "m", arms_mod.get_arm("git"), get_harness("pi"))
+    assert "--provider openrouter" in script
+    assert "--model deepseek/deepseek-v4-pro" in script
+    assert "-a " in script  # trust project files: a TTY-less run must not block
+
+
+def test_pi_process_match_survives_the_retitle():
+    """pi retitles itself to bare `pi`; a launch-shaped pattern kills healthy runs."""
+    match = get_harness("pi").process_match
+    import re
+    assert re.search(match, "pi")
+    assert re.search(match, "/home/user/.local/bin/pi -p -a")
+    assert not re.search(match, "/usr/bin/pipewire")
+    assert not re.search(match, "/usr/lib/at-spi-bus-launcher")
 
 
 def test_mcp_config_flag_only_for_the_flywheel_arm():
+    """Claude Code takes --mcp-config; pi reads its adapter config from disk."""
     for name in ARM_NAMES:
-        script = runner.build_launch_script("r1", "m", arms_mod.get_arm(name))
+        script = runner.build_launch_script(
+            "r1", "m", arms_mod.get_arm(name), get_harness("claude_code"))
         assert ("--mcp-config" in script) == (name == "flywheel")
+
+
+def test_one_harness_token_is_never_readable_as_anothers(config):
+    """A box gets exactly one harness auth variable — its own."""
+    for hname in HARNESS_NAMES:
+        h = get_harness(hname)
+        script = provision.build_script(config, arms_mod.get_arm("git"), h)
+        assert f"{h.auth_env}=" in script
+        for other in HARNESS_NAMES:
+            if other != hname:
+                assert f"{get_harness(other).auth_env}=" not in script
 
 
 def test_mission_is_shell_quoted():
     """A mission carries prose; unquoted it would be reinterpreted by bash."""
     script = runner.build_launch_script(
-        "r1", "implement word2vec; don't $EXPAND `this`", arms_mod.get_arm("git"))
+        "r1", "implement word2vec; don't $EXPAND `this`", arms_mod.get_arm("git"),
+        get_harness("pi"))
     assert "$EXPAND" in script
     assert "`this`" in script  # inside single quotes — inert
     assert script.count("nohup setsid") == 1
@@ -173,3 +234,41 @@ def test_config_never_exposes_secrets_in_describe(config):
     assert "gh-tok-BBB" not in text
     assert "fw-key-CCC" not in text
     assert "test-owner" in text  # the owner is not a secret, and showing it helps
+
+
+# ---- harvest ------------------------------------------------------------------
+
+def test_harvest_collects_session_transcripts_not_just_the_workspace():
+    """pi's run log holds only the final answer; the sessions hold the measures.
+
+    Measures 2 and 3 are computed from the harness session JSONL. A harvest that
+    took only ~/research would leave every run unmeasurable, and nothing would
+    report it until analysis time.
+    """
+    import inspect
+    from boxlab import experiment
+    src = inspect.getsource(experiment._harvest)
+    assert ".pi/agent/sessions" in src
+    assert ".claude/projects" in src
+
+
+def test_harvest_excludes_live_credentials():
+    """.env and the MCP bearer must be dropped at the source, not filtered later."""
+    import inspect
+    from boxlab import experiment
+    src = inspect.getsource(experiment._harvest)
+    assert "--exclude=research/.env" in src
+    assert "--exclude='.pi/agent/mcp.json'" in src
+
+
+def test_spend_guard_treats_an_unreadable_status_as_exceeded():
+    """Launching blind is how a budget cap becomes decorative."""
+    from boxlab.spend import SpendGuard
+    guard = SpendGuard.__new__(SpendGuard)
+    guard.api_key, guard.budget_usd, guard.start_usage = "k", 10.0, 0.0
+    guard.spent = lambda: None
+    assert guard.exceeded() is True
+    guard.spent = lambda: 9.99
+    assert guard.exceeded() is False
+    guard.spent = lambda: 10.0
+    assert guard.exceeded() is True

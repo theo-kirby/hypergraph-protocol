@@ -33,26 +33,31 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 REPO_ENV = REPO_ROOT / ".env"
 DEFAULT_FALLBACK_ENV = Path.home() / "box-wheel" / ".env"
 
-# Written into the box's ~/research/.env. Order is the file's order.
+# Candidates for the box's ~/research/.env. Which harness token is written
+# depends on the harness; the rest are common. Order here is the file's order.
 BOX_ENV_VARS = (
     "CLAUDE_CODE_OAUTH_TOKEN",
+    "OPENROUTER_API_KEY",
     "GITHUB_TOKEN",
     "GITHUB_OWNER",
     "FLYWHEEL_API_KEY",
 )
 
+# Every harness auth variable, so provisioning can write exactly one of them and
+# omit the others — one harness's token must never be readable as another's.
+HARNESS_AUTH_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "OPENROUTER_API_KEY")
+
 # Never write these onto a box, whatever the local environment holds.
 FORBIDDEN_ON_BOX = ("ANTHROPIC_API_KEY",)
 
-# What each arm actually needs. Arm C needs no service credential at all — the
-# Hypergraph backend for the run is `local`, so its memory system is files in the
-# agent's own git repo. That asymmetry is a finding, not an oversight: it is the
-# cheapest of the three to stand up.
-ARM_REQUIREMENTS: Dict[str, tuple] = {
-    "git": ("CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "GITHUB_OWNER"),
-    "flywheel": ("CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "GITHUB_OWNER",
-                 "FLYWHEEL_API_KEY"),
-    "hypergraph": ("CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "GITHUB_OWNER"),
+# What each arm needs beyond the harness's own auth variable. Arm C needs no
+# service credential at all — its backend is `local`, so its memory is files in
+# the agent's own git repo. That asymmetry is a finding, not an oversight: it is
+# the cheapest of the three to stand up.
+ARM_EXTRA_REQUIREMENTS: Dict[str, tuple] = {
+    "git": ("GITHUB_TOKEN", "GITHUB_OWNER"),
+    "flywheel": ("GITHUB_TOKEN", "GITHUB_OWNER", "FLYWHEEL_API_KEY"),
+    "hypergraph": ("GITHUB_TOKEN", "GITHUB_OWNER"),
 }
 
 DEFAULT_FLYWHEEL_API_URL = "https://flywheel.paradigma.inc"
@@ -168,19 +173,26 @@ class LabConfig:
 
     # ---- gates ------------------------------------------------------------
 
-    def missing_for(self, arm: str) -> list:
-        """Credential names the given arm needs and does not have."""
+    def requirements_for(self, arm: str, harness_auth_env: str) -> tuple:
+        """Everything this (arm, harness) pair needs: the harness token + extras."""
         try:
-            required = ARM_REQUIREMENTS[arm]
+            extra = ARM_EXTRA_REQUIREMENTS[arm]
         except KeyError:
             raise ValueError(
                 f"unknown arm {arm!r}; expected one of "
-                f"{', '.join(sorted(ARM_REQUIREMENTS))}") from None
-        return [name for name in required if not self.values.get(name)]
+                f"{', '.join(sorted(ARM_EXTRA_REQUIREMENTS))}") from None
+        return (harness_auth_env, *extra)
 
-    def require(self, arm: str) -> None:
+    def missing_for(self, arm: str,
+                    harness_auth_env: str = "CLAUDE_CODE_OAUTH_TOKEN") -> list:
+        """Credential names the given arm/harness needs and does not have."""
+        return [name for name in self.requirements_for(arm, harness_auth_env)
+                if not self.values.get(name)]
+
+    def require(self, arm: str,
+                harness_auth_env: str = "CLAUDE_CODE_OAUTH_TOKEN") -> None:
         """Raise with actionable instructions if the arm cannot run."""
-        missing = self.missing_for(arm)
+        missing = self.missing_for(arm, harness_auth_env)
         if not missing:
             return
         fb = fallback_env_path()
@@ -192,7 +204,7 @@ class LabConfig:
             "BOXLAB_ENV_FILE to a dotenv that has them."
         )
 
-    def describe(self) -> str:
+    def describe(self, harness_auth_env: str = "OPENROUTER_API_KEY") -> str:
         """A masked, provenance-annotated dump — safe to print or paste."""
         lines = ["boxlab credentials:"]
         for name in (*BOX_ENV_VARS, "BOX_API_KEY"):
@@ -208,8 +220,9 @@ class LabConfig:
                 lines.append(
                     f"  NOTE: {name} is set locally and will NOT be sent to any "
                     "box (it would outrank the OAuth token and bill the API).")
-        for arm in sorted(ARM_REQUIREMENTS):
-            missing = self.missing_for(arm)
+        lines.append(f"  harness auth var: {harness_auth_env}")
+        for arm in sorted(ARM_EXTRA_REQUIREMENTS):
+            missing = self.missing_for(arm, harness_auth_env)
             status = "ready" if not missing else f"missing {', '.join(missing)}"
             lines.append(f"  arm {arm:<12} {status}")
         return "\n".join(lines)
