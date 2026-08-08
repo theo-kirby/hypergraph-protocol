@@ -1,0 +1,14 @@
+project: word2vec-cpu
+
+record_root:
+  node_id: 3564957a-1c60-5592-955e-43b490c9b3c4
+  slug: silent-walrus-4425
+
+state_root:
+  node_id: c7b2453c-05d1-52ec-8216-1e04ceaad87e
+  slug: sleepy-garden-6462
+
+cache_dir: .hypergraph/cache
+state_md: STATE.md
+backend: local
+graph_dir: .hypergraph/graph

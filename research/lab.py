@@ -247,6 +247,34 @@ def cmd_run(args) -> int:
     return 0 if all(r.ok for r in results.values()) else 1
 
 
+# What analysis actually reads. Extracting only these avoids unpacking hundreds
+# of megabytes of agent-created virtualenv per run, and sidesteps the absolute
+# symlinks inside those venvs, which Python's safe tar filter refuses outright
+# (`AbsoluteLinkError` on research/venv/bin/python3 — hit on the real harvest).
+EVIDENCE_SUFFIXES = (
+    "artifacts/vectors.txt", "artifacts/results.json",
+    "NOTES.md", "DECISIONS.md", "DEAD-ENDS.md", "STATE.md", "README.md",
+)
+EVIDENCE_DIRS = (".pi/agent/sessions/", ".claude/projects/", ".hypergraph/")
+
+
+def _extract_evidence(tarball: Path, dest: Path) -> None:
+    """Unpack only the files the measures read, skipping links entirely."""
+    import tarfile
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tarball) as tf:
+        for member in tf:
+            # Symlinks are never evidence here, and an absolute one aborts the
+            # whole extraction — skip them rather than filter them.
+            if not member.isfile():
+                continue
+            name = member.name
+            wanted = (any(name.endswith(s) for s in EVIDENCE_SUFFIXES)
+                      or any(d in name for d in EVIDENCE_DIRS))
+            if wanted:
+                tf.extract(member, dest, filter="data")
+
+
 def _score_fidelity(workspace: Path) -> Optional[dict]:
     """Run OUR evaluator over a harvested vectors.txt. Never the arm's own score."""
     matches = list(workspace.rglob("artifacts/vectors.txt"))
@@ -280,10 +308,7 @@ def cmd_analyze(args) -> int:
         tarball = run_dir / "workspace.tar.gz"
         unpacked = run_dir / "workspace"
         if tarball.exists() and not unpacked.exists():
-            import tarfile
-            unpacked.mkdir(parents=True, exist_ok=True)
-            with tarfile.open(tarball) as tf:
-                tf.extractall(unpacked, filter="data")
+            _extract_evidence(tarball, unpacked)
         r = analyze.analyse_run(unpacked if unpacked.exists() else run_dir)
         r["run"] = run_dir.name
         meta = json.loads((run_dir / "run.json").read_text())

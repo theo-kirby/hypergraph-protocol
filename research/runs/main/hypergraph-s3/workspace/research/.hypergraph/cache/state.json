@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "exported_at": "2026-08-08T22:06:38+00:00",
+  "nodes": [
+    {
+      "node_id": "d75237c6-63b0-5963-b6d5-d089ef48f65a",
+      "slug_name": "cold-lodge-3139",
+      "title": "project setup",
+      "content": "Status: open\n\n## Current\n- skip-gram implementation: done (rising-forest-8621)\n- model training: baseline done with 21.5% total accuracy (early-hollow-8934)\n- analogy evaluation: baseline measured at 21.5% total (early-hollow-8934)\n\n## Intent\nProject environment is set up with all dependencies.\n\n## Reconciliation\n- high_water_mark: early-hollow-8934\n- reconciled_at: 2026-08-08T21:55:00+00:00\n",
+      "summary": "",
+      "parent_ids": [],
+      "created_at": "2026-08-08T21:02:50+00:00"
+    },
+    {
+      "node_id": "04fada21-fbe0-5978-92a4-95c4495be703",
+      "slug_name": "shady-crane-2280",
+      "title": "model training",
+      "content": "Status: open\n\n## Current\nBaseline training complete with dim=100, window=5, negative=5, epochs=5 [rec: early-hollow-8934].\n- Accuracy: 21.46% total (19.67% semantic, 22.74% syntactic)\n- Vocab: 71,290 words, 9.4M tokens after subsampling\n- Training time: 829.7s\n- Results saved to artifacts/results.json, artifacts/vectors.txt\n\nRoom for improvement: the baseline result (21.5%) is below what better hyperparameters should achieve on text8. Further training runs with larger dim, more epochs, and more negative samples are planned.\n\n## Intent\nModel trained on text8 corpus with measurable accuracy.\n\n## Negative knowledge\nNone yet.\n\n## Provenance\n- gentle-fjord-5359 — initial state skeleton\n- early-hollow-8934 — baseline training result (21.5%)\n\n## Reconciliation\n- high_water_mark: early-hollow-8934\n- reconciled_at: 2026-08-08T21:55:00+00:00\n",
+      "summary": "",
+      "parent_ids": [
+        "d75237c6-63b0-5963-b6d5-d089ef48f65a"
+      ],
+      "created_at": "2026-08-08T21:03:16+00:00"
+    },
+    {
+      "node_id": "27b5e379-8963-5a1f-ad51-c8ecdea567ae",
+      "slug_name": "crisp-field-7816",
+      "title": "skip-gram implementation",
+      "content": "Status: superseded\n\n## Current\nImplementation complete: skip-gram with negative sampling in Cython. Three modules:\n- `word2vec/vocab.py`: Vocabulary builder with min_count filtering, subsampling, and unigram^(3/4) noise distribution [rec: rising-forest-8621]\n- `word2vec/skipgram.pyx`: Cython inner training loop with LCG random, dynamic window, linear LR decay, negative sampling [rec: rising-forest-8621]\n- `word2vec/evaluate.py`: Word analogy evaluation on questions-words.txt [rec: rising-forest-8621]\n\nCompiled with Cython. Working correctly.\n\n## Intent\nSkip-gram with negative sampling model is implemented and produces correct gradients.\n\n## Negative knowledge\nNone yet.\n\n## Provenance\n- gentle-fjord-5359 — initial state skeleton\n- rising-forest-8621 — implementation complete\n\n## Reconciliation\n- high_water_mark: early-hollow-8934\n- reconciled_at: 2026-08-08T21:55:00+00:00\n",
+      "summary": "",
+      "parent_ids": [
+        "d75237c6-63b0-5963-b6d5-d089ef48f65a"
+      ],
+      "created_at": "2026-08-08T21:03:16+00:00"
+    },
+    {
+      "node_id": "53497701-e104-542e-8aa6-567f2a020807",
+      "slug_name": "wise-field-3424",
+      "title": "analogy evaluation",
+      "content": "Status: open\n\n## Current\nAnalogy evaluation on questions-words.txt [rec: early-hollow-8934]:\n- Total: 21.46% (3,827/17,827 correct, 1,717 skipped)\n- Semantic: 19.67%, Syntactic: 22.74%\n- Strongest: gram6-nationality-adjective (55.6%), capital-common-countries (41.7%)\n- Weakest: gram2-opposite (6.3%), currency (10.2%)\n\nFurther evaluations planned with improved training runs.\n\n## Intent\nWord analogy accuracy measured on questions-words.txt and reported.\n\n## Negative knowledge\nNone yet.\n\n## Provenance\n- gentle-fjord-5359 — initial state skeleton\n- early-hollow-8934 — baseline evaluation results\n\n## Reconciliation\n- high_water_mark: early-hollow-8934\n- reconciled_at: 2026-08-08T21:55:00+00:00\n",
+      "summary": "",
+      "parent_ids": [
+        "d75237c6-63b0-5963-b6d5-d089ef48f65a"
+      ],
+      "created_at": "2026-08-08T21:03:16+00:00"
+    }
+  ]
+}

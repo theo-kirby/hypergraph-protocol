@@ -1,0 +1,176 @@
+{
+  "flywheel-s1": {
+    "arm": "flywheel",
+    "seed": 1,
+    "run_id": "flywheel-s1",
+    "box_id": "bx_xaf9u58v",
+    "ok": true,
+    "note": "complete",
+    "phase1_launched_at": 1786222762.0,
+    "coldstart_at": 1786226381.260322,
+    "ended_at": 1786227078.010745,
+    "harvested": true,
+    "events": [
+      "[23:59:35] flywheel-s1: cold-start cut: killing the session",
+      "[00:00:29] flywheel-s1: phase 2 launched (detached; ssh did not return)",
+      "[00:11:11] flywheel-s1: session exited early",
+      "[00:11:11] flywheel-s1: budget reached: stopping the session",
+      "[00:13:57] flywheel-s1: complete",
+      "[00:14:02] flywheel-s1: stopped box bx_xaf9u58v"
+    ]
+  },
+  "flywheel-s2": {
+    "arm": "flywheel",
+    "seed": 2,
+    "run_id": "flywheel-s2",
+    "box_id": "bx_t7bhu5d4",
+    "ok": true,
+    "note": "complete",
+    "phase1_launched_at": 1786222787.0,
+    "coldstart_at": 1786226413.535785,
+    "ended_at": 1786227009.473493,
+    "harvested": true,
+    "events": [
+      "[00:00:08] flywheel-s2: phase 1 exited early",
+      "[00:00:08] flywheel-s2: cold-start cut: killing the session",
+      "[00:01:01] flywheel-s2: phase 2 launched (detached; ssh did not return)",
+      "[00:10:04] flywheel-s2: session exited early",
+      "[00:10:04] flywheel-s2: budget reached: stopping the session",
+      "[00:18:16] flywheel-s2: complete",
+      "[00:18:18] flywheel-s2: stopped box bx_t7bhu5d4"
+    ]
+  },
+  "git-s3": {
+    "arm": "git",
+    "seed": 3,
+    "run_id": "git-s3",
+    "box_id": "bx_hp5yz9dv",
+    "ok": true,
+    "note": "complete",
+    "phase1_launched_at": 1786222803.0,
+    "coldstart_at": 1786226426.012623,
+    "ended_at": 1786230029.95806,
+    "harvested": true,
+    "events": [
+      "[00:00:18] git-s3: cold-start cut: killing the session",
+      "[00:01:15] git-s3: phase 2 launched (detached; ssh did not return)",
+      "[01:00:21] git-s3: budget reached: stopping the session",
+      "[01:02:21] git-s3: complete",
+      "[01:02:22] git-s3: stopped box bx_hp5yz9dv"
+    ]
+  },
+  "hypergraph-s1": {
+    "arm": "hypergraph",
+    "seed": 1,
+    "run_id": "hypergraph-s1",
+    "box_id": "bx_9fwvazy2",
+    "ok": true,
+    "note": "complete",
+    "phase1_launched_at": 1786222764.0,
+    "coldstart_at": 1786226386.444754,
+    "ended_at": 1786229993.9692721,
+    "harvested": true,
+    "events": [
+      "[23:59:39] hypergraph-s1: cold-start cut: killing the session",
+      "[00:00:34] hypergraph-s1: phase 2 launched (detached; ssh did not return)",
+      "[00:59:48] hypergraph-s1: budget reached: stopping the session",
+      "[01:03:07] hypergraph-s1: complete",
+      "[01:03:08] hypergraph-s1: stopped box bx_9fwvazy2"
+    ]
+  },
+  "git-s1": {
+    "arm": "git",
+    "seed": 1,
+    "run_id": "git-s1",
+    "box_id": "bx_p5gb985s",
+    "ok": true,
+    "note": "complete",
+    "phase1_launched_at": 1786222750.0,
+    "coldstart_at": 1786226388.4604359,
+    "ended_at": 1786229958.67069,
+    "harvested": true,
+    "events": [
+      "[23:59:41] git-s1: cold-start cut: killing the session",
+      "[00:00:36] git-s1: phase 2 launched (detached; ssh did not return)",
+      "[00:59:10] git-s1: budget reached: stopping the session",
+      "[01:04:34] git-s1: complete",
+      "[01:04:37] git-s1: stopped box bx_p5gb985s"
+    ]
+  },
+  "hypergraph-s2": {
+    "arm": "hypergraph",
+    "seed": 2,
+    "run_id": "hypergraph-s2",
+    "box_id": "bx_uvxhz4x9",
+    "ok": true,
+    "note": "complete",
+    "phase1_launched_at": 1786222787.0,
+    "coldstart_at": 1786226418.774275,
+    "ended_at": 1786230003.8833039,
+    "harvested": true,
+    "events": [
+      "[00:00:12] hypergraph-s2: cold-start cut: killing the session",
+      "[00:01:06] hypergraph-s2: phase 2 launched (detached; ssh did not return)",
+      "[00:59:57] hypergraph-s2: budget reached: stopping the session",
+      "[01:05:44] hypergraph-s2: complete",
+      "[01:05:45] hypergraph-s2: stopped box bx_uvxhz4x9"
+    ]
+  },
+  "hypergraph-s3": {
+    "arm": "hypergraph",
+    "seed": 3,
+    "run_id": "hypergraph-s3",
+    "box_id": "bx_9kwgwta6",
+    "ok": true,
+    "note": "complete",
+    "phase1_launched_at": 1786222815.0,
+    "coldstart_at": 1786226453.723656,
+    "ended_at": 1786230039.2227058,
+    "harvested": true,
+    "events": [
+      "[00:00:46] hypergraph-s3: cold-start cut: killing the session",
+      "[00:01:41] hypergraph-s3: phase 2 launched (detached; ssh did not return)",
+      "[01:00:32] hypergraph-s3: budget reached: stopping the session",
+      "[01:06:29] hypergraph-s3: complete",
+      "[01:06:32] hypergraph-s3: stopped box bx_9kwgwta6"
+    ]
+  },
+  "git-s2": {
+    "arm": "git",
+    "seed": 2,
+    "run_id": "git-s2",
+    "box_id": "bx_epyadecb",
+    "ok": true,
+    "note": "no vectors.txt produced",
+    "phase1_launched_at": 1786222771.0,
+    "coldstart_at": 1786226403.72036,
+    "ended_at": 1786229988.581413,
+    "harvested": true,
+    "events": [
+      "[23:59:57] git-s2: cold-start cut: killing the session",
+      "[00:00:54] git-s2: phase 2 launched (detached; ssh did not return)",
+      "[00:59:42] git-s2: budget reached: stopping the session",
+      "[01:07:02] git-s2: no vectors.txt produced",
+      "[01:07:03] git-s2: stopped box bx_epyadecb"
+    ]
+  },
+  "flywheel-s3": {
+    "arm": "flywheel",
+    "seed": 3,
+    "run_id": "flywheel-s3",
+    "box_id": "bx_ce7jku57",
+    "ok": true,
+    "note": "complete",
+    "phase1_launched_at": 1786222803.0,
+    "coldstart_at": 1786226440.4711528,
+    "ended_at": 1786230027.385917,
+    "harvested": true,
+    "events": [
+      "[00:00:33] flywheel-s3: cold-start cut: killing the session",
+      "[00:01:28] flywheel-s3: phase 2 launched (detached; ssh did not return)",
+      "[01:00:19] flywheel-s3: budget reached: stopping the session",
+      "[01:09:03] flywheel-s3: complete",
+      "[01:09:05] flywheel-s3: stopped box bx_ce7jku57"
+    ]
+  }
+}

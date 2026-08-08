@@ -1,0 +1,19 @@
+{
+  "arm": "git",
+  "seed": 2,
+  "run_id": "git-s2",
+  "box_id": "bx_epyadecb",
+  "ok": true,
+  "note": "no vectors.txt produced",
+  "phase1_launched_at": 1786222771.0,
+  "coldstart_at": 1786226403.72036,
+  "ended_at": 1786229988.581413,
+  "harvested": true,
+  "events": [
+    "[23:59:57] git-s2: cold-start cut: killing the session",
+    "[00:00:54] git-s2: phase 2 launched (detached; ssh did not return)",
+    "[00:59:42] git-s2: budget reached: stopping the session",
+    "[01:07:02] git-s2: no vectors.txt produced",
+    "[01:07:03] git-s2: stopped box bx_epyadecb"
+  ]
+}

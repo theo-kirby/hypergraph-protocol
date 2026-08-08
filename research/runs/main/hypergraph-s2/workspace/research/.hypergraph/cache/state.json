@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "exported_at": "2026-08-08T22:09:40+00:00",
+  "nodes": [
+    {
+      "node_id": "e25d79d8-37ff-5fca-b540-995de4723041",
+      "slug_name": "peaceful-dusk-7235",
+      "title": "State root — word2vec skip-gram research",
+      "content": "Status: working\n\n## Intent\nThis is the state root for the word2vec research project. All state nodes descend from here. The state graph tracks what is currently true about the project: open work, completed work, negative knowledge, and the frontier of what to do next.\n\n## Reconciliation\n- high_water_mark: copper-delta-3306\n- reconciled_at: 2026-08-08T22:10:00+00:00\n",
+      "summary": "",
+      "parent_ids": [],
+      "created_at": "2026-08-08T22:02:12+00:00"
+    },
+    {
+      "node_id": "552592ec-72ae-52b4-94fc-e7f9e54871f0",
+      "slug_name": "floral-badger-2025",
+      "title": "Hyperparameter tuning",
+      "content": "Status: open\n\n## Current\n\n## Intent\nSystematic hyperparameter tuning to improve analogies accuracy beyond the baseline. Dimensions, window sizes, negative samples, learning rates, epoch counts.\n\n## Negative knowledge\n\nNone yet.\n\n## Provenance\n\n- wandering-rain-8497 — initial project setup\n",
+      "summary": "",
+      "parent_ids": [
+        "e25d79d8-37ff-5fca-b540-995de4723041"
+      ],
+      "created_at": "2026-08-08T22:02:43+00:00"
+    },
+    {
+      "node_id": "5874cc16-15a0-55a3-bc35-78a4dbeaef2a",
+      "slug_name": "snowy-nest-0274",
+      "title": "C training implementation",
+      "content": "Status: working\n\n## Current\n\n## Intent\nThe C implementation of skip-gram with negative sampling (train.c compiled to libtrain.so). Tracks correctness, performance characteristics, and any bugs or limitations discovered.\n\n## Negative knowledge\n\nNone yet.\n\n## Provenance\n\n- wandering-rain-8497 — initial project setup\n",
+      "summary": "",
+      "parent_ids": [
+        "e25d79d8-37ff-5fca-b540-995de4723041"
+      ],
+      "created_at": "2026-08-08T22:02:43+00:00"
+    },
+    {
+      "node_id": "5a0b27b4-e73c-5396-accb-3680615950b7",
+      "slug_name": "morning-delta-4057",
+      "title": "Baseline evaluation results",
+      "content": "Status: working\n\n## Current\nBaseline established by dusty-marsh-2661 [rec: dusty-marsh-2661]:\n- Total accuracy: 32.43% (5,781 / 17,827) [rec: dusty-marsh-2661]\n- Semantic accuracy: 32.90% (2,440 / 7,416) [rec: dusty-marsh-2661]\n- Syntactic accuracy: 32.09% (3,341 / 10,411) [rec: dusty-marsh-2661]\n- Hyperparameters: dim=200, window=5, neg=10, epochs=15, subsample_t=1e-5, lr=0.025 (linear decay), seed=42, threads=4 [rec: dusty-marsh-2661]\n- Training time: 667.8s [rec: dusty-marsh-2661]\n\n## Intent\nBaseline word2vec evaluation results on text8 with the Google analogies task. Tracks the current best numbers and the hyperparameters that produced them.\n\n## Negative knowledge\nNone yet.\n\n## Provenance\n- wandering-rain-8497 — initial project setup\n- dusty-marsh-2661 — baseline run established these numbers\n",
+      "summary": "",
+      "parent_ids": [
+        "e25d79d8-37ff-5fca-b540-995de4723041"
+      ],
+      "created_at": "2026-08-08T22:02:43+00:00"
+    },
+    {
+      "node_id": "c2464ec9-4f59-51e5-800b-f16c1752574d",
+      "slug_name": "quiet-path-5233",
+      "title": "Repository publication",
+      "content": "Status: working\n\n## Current\nRepository published at https://github.com/boxwheel/word2vec-skipgram-text8 [rec: copper-delta-3306]. Contains C implementation, Python pipeline, baseline results, and hypergraph memory.\n\n## Intent\nGitHub publication of the project — creating the repo, pushing code, artifacts, and documentation so the work is reproducible and externally visible.\n\n## Negative knowledge\nNone yet.\n\n## Provenance\n- wandering-rain-8497 — initial project setup\n- copper-delta-3306 — repository published to GitHub\n",
+      "summary": "",
+      "parent_ids": [
+        "e25d79d8-37ff-5fca-b540-995de4723041"
+      ],
+      "created_at": "2026-08-08T22:02:43+00:00"
+    },
+    {
+      "node_id": "c5115613-cfb6-51fc-932f-5948f2e8bb6a",
+      "slug_name": "first-slope-1423",
+      "title": "Python training pipeline",
+      "content": "Status: working\n\n## Current\n\n## Intent\nThe Python pipeline (train.py) that handles vocabulary building, vector initialization, invoking the C library, saving vectors, and running the Google analogies evaluation.\n\n## Negative knowledge\n\nNone yet.\n\n## Provenance\n\n- wandering-rain-8497 — initial project setup\n",
+      "summary": "",
+      "parent_ids": [
+        "e25d79d8-37ff-5fca-b540-995de4723041"
+      ],
+      "created_at": "2026-08-08T22:02:43+00:00"
+    }
+  ]
+}

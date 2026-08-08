@@ -46,7 +46,54 @@ READ_ONLY_TOOLS = {"read", "list", "ls", "glob", "grep", "find", "search"}
 # `lsof` cannot pass as `cat` or `ls`.
 READ_ONLY_BASH = re.compile(
     r"^\s*(ls|cat|head|tail|pwd|find|grep|wc|file|stat|du|df|which|echo|env|"
-    r"tree|less|more|git\s+(log|status|diff|show|branch))\b")
+    r"tree|less|more|test|ps|nvidia-smi|uptime|"
+    r"git\s+(log|status|diff|show|branch|remote))\b")
+
+# MCP tool names that READ the graph. Calling these is orienting, not working —
+# and counting them as work made the Flywheel arm look instantly productive when
+# it was reading its own notes.
+READ_ONLY_MCP = re.compile(
+    r"(get|list|read|search|find|tree|parents|children|status|contract|export)",
+    re.IGNORECASE)
+
+
+def _split_chain(command: str):
+    """Split a shell chain into its parts, dropping pure navigation.
+
+    `cd ~/research && git log` is orientation, but a naive prefix match sees
+    `cd` and calls it work. Leading `cd`/`export`/`source` segments carry no
+    information about intent, so they are dropped and the rest is judged.
+    """
+    parts = re.split(r"&&|\|\||;|\|", command)
+    kept = []
+    for part in parts:
+        stripped = part.strip()
+        if not stripped:
+            continue
+        if re.match(r"^(cd|export|source|\.)\b", stripped):
+            continue
+        kept.append(stripped)
+    return kept
+
+
+def is_orientation_bash(command: str) -> bool:
+    """True if every meaningful segment of the chain only inspects."""
+    segments = _split_chain(command)
+    if not segments:
+        return True  # pure `cd` — navigation, not work
+    return all(READ_ONLY_BASH.match(s) for s in segments)
+
+
+def is_orientation_tool(name: str, bash_commands) -> bool:
+    """True if this tool call reads rather than changes anything."""
+    low = (name or "").lower()
+    if low in READ_ONLY_TOOLS:
+        return True
+    if low.startswith("mcp") or "flywheel" in low:
+        return bool(READ_ONLY_MCP.search(low)) or low in {"mcp"}
+    if low == "bash":
+        return all(is_orientation_bash(c) for c in bash_commands) if bash_commands else True
+    return False
 
 
 @dataclass
@@ -112,14 +159,8 @@ class SessionMetrics:
             if not strict:
                 return turn.timestamp - self.started_at
             for name in turn.tools:
-                low = name.lower()
-                if low in READ_ONLY_TOOLS:
-                    continue
-                if low == "bash":
-                    if any(not READ_ONLY_BASH.match(c) for c in turn.bash_commands):
-                        return turn.timestamp - self.started_at
-                    continue
-                return turn.timestamp - self.started_at
+                if not is_orientation_tool(name, turn.bash_commands):
+                    return turn.timestamp - self.started_at
         return None
 
     def to_dict(self) -> dict:
@@ -269,12 +310,7 @@ def _orientation_calls(session: SessionMetrics) -> Optional[int]:
     count = 0
     for turn in session.turns:
         for name in turn.tools:
-            low = name.lower()
-            productive = not (
-                low in READ_ONLY_TOOLS
-                or (low == "bash"
-                    and all(READ_ONLY_BASH.match(c) for c in turn.bash_commands)))
-            if productive:
+            if not is_orientation_tool(name, turn.bash_commands):
                 return count
             count += 1
     return None

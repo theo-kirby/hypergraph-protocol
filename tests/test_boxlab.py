@@ -430,3 +430,49 @@ def test_by_arm_counts_runs_that_produced_no_vectors():
     summary = by_arm(runs)
     assert summary["git"]["runs"] == 2
     assert summary["git"]["produced_vectors"] == 1
+
+
+def test_verdict_direction_for_lower_is_better_measures():
+    """Cold-start seconds: lower is better. Ranking by highest inverts it.
+
+    An earlier version ranked every measure by highest median and announced the
+    SLOWEST arm as the cold-start leader.
+    """
+    from boxlab.report import verdict
+    summary = {
+        "fast": {"runs": 3, "usable_vectors": 3, "cold_start_s_median": 5.0,
+                 "cold_start_s_range": (4.0, 6.0)},
+        "slow": {"runs": 3, "usable_vectors": 3, "cold_start_s_median": 40.0,
+                 "cold_start_s_range": (35.0, 45.0)},
+    }
+    out = verdict(summary, "cold_start_s")
+    assert out.startswith("cold_start_s: fast leads"), out
+    assert "lowest median" in out
+
+
+def test_navigation_prefix_does_not_count_as_work():
+    """`cd X && git log` is orientation. Prefix-matching `cd` inverted this.
+
+    On the real run this misclassification made the control arm look instantly
+    productive when it was still reading, which would have reversed the
+    cold-start conclusion.
+    """
+    from boxlab.analyze import is_orientation_bash
+    assert is_orientation_bash("cd ~/research && git log --oneline -30")
+    assert is_orientation_bash("cd ~/research")
+    assert not is_orientation_bash("cd ~/research && python3 train.py")
+
+
+def test_chained_commands_need_every_segment_to_be_read_only():
+    from boxlab.analyze import is_orientation_bash
+    assert is_orientation_bash("ls -la && cat README.md")
+    assert not is_orientation_bash("ls -la && rm -rf build")
+
+
+def test_mcp_reads_are_orientation_but_writes_are_not():
+    """Reading your own notes over MCP is orienting, not working."""
+    from boxlab.analyze import is_orientation_tool
+    assert is_orientation_tool("mcp__flywheel__flywheel_get_node", [])
+    assert is_orientation_tool("mcp__flywheel__flywheel_list_nodes", [])
+    assert not is_orientation_tool("mcp__flywheel__flywheel_commit_new_node", [])
+    assert not is_orientation_tool("write", [])

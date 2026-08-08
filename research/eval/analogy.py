@@ -83,9 +83,22 @@ def load_vectors(path: Path) -> Tuple[Dict[str, int], np.ndarray]:
     if not rows:
         raise SystemExit(f"no usable vectors in {path}")
     matrix = np.vstack(rows)
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+
+    # Diverged training writes NaN or inf, and a silent 0.00% would read as
+    # "trained badly" when it means "produced nothing usable" — a different
+    # finding. Count it here so the report can say which happened. (Seen live:
+    # both git-arm runs wrote 71,290 all-NaN vectors.)
+    finite_rows = np.isfinite(matrix).all(axis=1)
+    n_bad = int((~finite_rows).sum())
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[~np.isfinite(norms)] = 1.0
     norms[norms == 0] = 1.0
     matrix /= norms
+    # Non-finite rows can never match; zero them so they cannot win an argmax.
+    matrix[~finite_rows] = 0.0
+    load_vectors.last_nonfinite = n_bad  # read by evaluate(); see report below
     # First spelling wins, so a duplicated word cannot silently shift indices.
     index: Dict[str, int] = {}
     for i, w in enumerate(words):
@@ -152,9 +165,12 @@ def evaluate(index: Dict[str, int], matrix: np.ndarray,
     semantic = [s for s in all_sections if s in SEMANTIC_SECTIONS]
     syntactic = [s for s in all_sections if s not in SEMANTIC_SECTIONS]
 
+    nonfinite = int(getattr(load_vectors, "last_nonfinite", 0))
     return {
         "dim": int(matrix.shape[1]),
         "vocab": int(matrix.shape[0]),
+        "nonfinite_vectors": nonfinite,
+        "diverged": bool(nonfinite and nonfinite >= 0.5 * matrix.shape[0]),
         "total": summarise(all_sections),
         "semantic": summarise(semantic),
         "syntactic": summarise(syntactic),
@@ -173,6 +189,11 @@ def score_bands(report: dict) -> dict:
     """Apply METRICS.md's pre-registered bands. Thresholds live here, once."""
     acc = report["total"]["accuracy"]
     dim_ok = report["dim"] >= 100
+    if report.get("diverged"):
+        # Diverged training is not a low score; it is an absent one.
+        return {"reproduced": False, "matched_literature": False,
+                "diverged": True,
+                "literature_reference_dim100": 0.2416}
     return {
         "reproduced": bool(acc >= 0.20 and dim_ok),
         "matched_literature": bool(acc >= 0.2416 and dim_ok),
@@ -193,6 +214,10 @@ def main(argv=None) -> int:
 
     t, s, y = report["total"], report["semantic"], report["syntactic"]
     print(f"vectors:    {report['vocab']} words, dim {report['dim']}")
+    if report.get("nonfinite_vectors"):
+        print(f"WARNING:    {report['nonfinite_vectors']} of {report['vocab']} "
+              f"vectors are NaN/inf"
+              + ("  -> TRAINING DIVERGED" if report.get("diverged") else ""))
     print(f"answered:   {t['answered']} of {report['questions']} "
           f"({report['skipped']} skipped for OOV)")
     print(f"semantic:   {s['accuracy']:6.2%}  ({s['correct']}/{s['answered']})")

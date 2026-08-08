@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "exported_at": "2026-08-08T22:09:40+00:00",
+  "nodes": [
+    {
+      "node_id": "a740247e-bb24-5511-bc0c-6ec6727c0659",
+      "slug_name": "wandering-rain-8497",
+      "title": "Record root — word2vec skip-gram research",
+      "content": "## What\nRoot node of the record graph for the word2vec skip-gram research project. All work recorded here traces back to this root.\n\n## Why\nThe hypergraph protocol requires a single root per graph as the causal anchor.\n\n## Method\nSet up with `hypergraph new record --root`.\n\n## Result\nRoot node created. No experimental result.\n\n## Repo\nInitial commit — this project implements and evaluates word2vec skip-gram with negative sampling on the text8 benchmark.\n\n## State Impact\n\nnone: root node — causal anchor only\n",
+      "summary": "",
+      "parent_ids": [],
+      "created_at": "2026-08-08T22:02:05+00:00"
+    },
+    {
+      "node_id": "5d6e80ee-4cf5-5b21-8334-3a8f1c642ee0",
+      "slug_name": "dusty-marsh-2661",
+      "title": "Baseline: dim=200 window=5 neg=10 epochs=15 → 32.43% accuracy",
+      "content": "## What\nRan the word2vec skip-gram baseline on text8 using the C implementation (libtrain.so). The pipeline (train.py) was invoked with dim=200, window=5, negative=10, epochs=15, subsample_t=1e-5, lr=0.025, seed=42, 4 threads. The resulting vectors were evaluated on the Google word analogy task (questions-words.txt).\n\n## Why\nEstablish a measured baseline against which all further improvements can be compared. This is the starting point for the research.\n\n## Method\n```\nsource ~/research/venv/bin/activate\ncd ~/research\n# Parameters in train.py main() were edited to: DIM=200, NEG_SAMPLES=10, EPOCHS=15\npython train.py\n```\n\nThe C library was pre-compiled with:\n```\ngcc -O3 -march=native -fopenmp -ffast-math -shared -fPIC -o libtrain.so train.c -lm\n```\n\nCorpus: text8 (100MB, first 100M bytes of English Wikipedia)\nEvaluation: questions-words.txt (Google analogies, 19,544 questions across 14 categories)\nVocabulary: min_count=5, resulting in 71,290 words\n\n## Result\n| Metric | Value |\n|--------|-------|\n| Total accuracy | 32.43% (5,781 / 17,827) |\n| Semantic accuracy | 32.90% (2,440 / 7,416) |\n| Syntactic accuracy | 32.09% (3,341 / 10,411) |\n| Skipped questions | 1,717 (OOV) |\n| Training time | 667.8s (~11.1 min) |\n| Vocabulary size | 71,290 |\n| Effective corpus tokens | ~16.7M (after OOV filtering) |\n\nHyperparameters: dim=200, window=5, neg=10, epochs=15, subsample_t=1e-5, lr=0.025 (linear decay to 0.0001*lr), seed=42, threads=4.\n\n## Repo\n\n- repo: none\n- branch: none\n- commit: none\n\n## State Impact\n\n- target: morning-delta-4057 — baseline established: 32.43% total accuracy (32.90% semantic, 32.09% syntactic) on 17,827 analogy questions with dim=200, window=5, neg=10, epochs=15, training time 667.8s\n",
+      "summary": "",
+      "parent_ids": [
+        "a740247e-bb24-5511-bc0c-6ec6727c0659"
+      ],
+      "created_at": "2026-08-08T22:03:42+00:00"
+    },
+    {
+      "node_id": "4353d677-93dc-5384-989d-79365418d2a1",
+      "slug_name": "copper-delta-3306",
+      "title": "Repository published to GitHub",
+      "content": "## What\nPublished the word2vec research repository to GitHub at https://github.com/boxwheel/word2vec-skipgram-text8. The repo contains the C training implementation, Python pipeline, baseline results (results.json), hypergraph memory graph, and STATE.md.\n\n## Why\nRequired by the operating manual: work must be published continuously so it survives the ephemeral box.\n\n## Method\nUsed git with .gitignore excluding large binaries (vectors.txt, text8, libtrain.so, venv/). Pushed to GitHub via `git push --force`.\n\n## Result\nRepository is live at https://github.com/boxwheel/word2vec-skipgram-text8 with the initial commit containing all source code, hypergraph files, and baseline results.\n\n## Repo\n\n- repo: none\n- branch: main\n- commit: d19403fd9a1a1c68b9c05a1876da37da6f917ce3\n\n## State Impact\n\n- target: quiet-path-5233 — repo published at https://github.com/boxwheel/word2vec-skipgram-text8\n",
+      "summary": "",
+      "parent_ids": [
+        "5d6e80ee-4cf5-5b21-8334-3a8f1c642ee0"
+      ],
+      "created_at": "2026-08-08T22:09:09+00:00"
+    }
+  ]
+}

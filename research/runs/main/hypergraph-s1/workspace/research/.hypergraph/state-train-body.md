@@ -1,0 +1,1 @@
+Training runs on text8 corpus (16.7M tokens, 71,290 word vocab with min_count=5). Baseline: dim=100, epochs=3, window=5, neg=5, subsample=1e-5, lr 0.025→0.0001, seed=42.
