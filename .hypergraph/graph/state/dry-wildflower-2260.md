@@ -5,7 +5,7 @@ title: Skills
 created_at: '2026-08-06T21:41:21.141576+00:00'
 parents:
 - cool-king-8586
-summary: Five skills (init/record/reconcile/orient/adopt) + AGENTS.md onboarding, validated by controlled blind retest and field adoption; discoverability lesson at high confidence.
+summary: Five skills (init/record/reconcile/orient/adopt) + AGENTS.md onboarding, validated by controlled blind retest and field adoption; adopt now mirrors the full imported history.
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
@@ -19,6 +19,7 @@ Status: working
 
 - Five skills landed and installed: hypergraph-init (roots + skeleton + config), hypergraph-record (causally-parented record nodes, always declares State Impact, never writes state), hypergraph-reconcile (single writer: folds impacts, advances HWM, regenerates STATE.md, runs check, refreshes + verifies the mirror), hypergraph-orient (read-only frontier brief, ≤~6 tool calls, STATE.md fallback), and hypergraph-adopt (conversion path for repos with a past) [rec: spring-fog-0600] [rec: late-isle-6483].
 - hypergraph-adopt covers both modes — A: import an existing Flywheel graph verbatim as the fork with mandatory `archive:` config; B: author 1–3 prehistory nodes from the repo itself — plus the epoch marker, distillation into an honest state graph (per-branch subagent mining, id-prefix→slug resolution, user interview for invisible dead ends), the init tail, and onboarding install; `templates/agents-block.md` (idempotent sentinel block with contract reconciliation, symlink-safe) ships with it [rec: late-isle-6483].
+- hypergraph-adopt mode A now imports with `--fork` and pushes the **whole** graph: plain mirror-root titles (`<project> — record`, no parenthetical — the lineage belongs in the body), `push --lineage` as the mirror record root's body, push results recorded **in batches of ~20 rather than once at the end** (a run that dies midway is only safely resumable for batches already recorded; anything created but unrecorded is created twice), and verification against the `mirror_roots:` export alone. Reconcile step 8 refreshes the lineage node beside the legend and carries the same mirror-only verify rule; init's bootstrap note is retitled to the re-home case and says not to pass `--fork` [rec: tender-moss-3792].
 - Field correction from tbinn: the mode-B marker parents on the newest prehistory node, not `--root` — the CLI correctly refuses a second parentless root per graph; skill and SPEC amended [rec: stormy-dew-2969].
 - install.sh symlinks the skill dirs into ~/.claude/skills; relative reference symlinks (references/spec.md → ../../../SPEC.md) survive installation because they resolve against physical location [rec: spring-fog-0600].
 - Orient validated end-to-end by a fresh agent (4/6 calls); skill updated to read component bodies via one flywheel_get_node_children page [rec: steep-cell-5173].
@@ -40,3 +41,4 @@ Status: working
 - little-bar-4131 — blind test #2 validated AGENTS.md; discoverability entry raised to high confidence
 - late-isle-6483 — fifth skill hypergraph-adopt + agents-block template
 - stormy-dew-2969 — mode-B marker parentage corrected from field use
+- tender-moss-3792 — adopt/reconcile/init updated for fork-import: --fork, full-history push, batched result recording, mirror-only verify
