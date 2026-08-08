@@ -5,7 +5,7 @@ title: Publication
 created_at: '2026-08-07T17:25:37.632552+00:00'
 parents:
 - cool-king-8586
-summary: 'Public on GitHub (MIT), named on PyPI + npm, 0.0.2 live and index-verified; last gap: the spec-first announcement.'
+summary: Parked by Operator (no date); v0.1 gate met with four unreleased changes; distribution proven an allow-list — research/ ships nothing.
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
@@ -28,6 +28,8 @@ Licensed MIT [rec: lively-willow-7648]: LICENSE committed, PEP 639 metadata in p
 Repo is PUBLIC [rec: lawful-birch-4414]: main pushed, visibility flipped after a second full-history gitleaks scan (43 commits, no leaks; `.env` confirmed untracked with no history). GitHub auto-detects the MIT license; unauthenticated fetch returns 200 — the PyPI/npm repository links now resolve for outsiders.
 
 Remaining (the gap): spec-first announcement (venue and wording are the Operator's call). The v0.1 package gate for general adoption is the git-native backend (see empty-forest-6305) [rec: damp-mountain-8757].
+- **Parked by Operator directive** (2026-08-08): the 0.1.0 release and the spec-first announcement are both pending Operator decisions with **no date**, and no agent work proceeds on either. Recorded for when it resumes — the v0.1 gate (git-native backend) is met, and four changes are shipped but unreleased: MIT/PEP 639 metadata (absent from the published 0.0.2), fork-import, the `verify` mirror_roots exemption, and the mode-B epoch marker fix. The evidence for the announcement is being built first, as the protocol benchmark (protocol-benchmark-4417) [rec: southern-ridge-1802].
+- The distribution/repo boundary is measured rather than assumed: publishing is an **allow-list**, not the repo. Both artifacts were built — the wheel is 40 files / 415 KB (`hypergraph_protocol.py` + skills + templates + dist-info), the sdist 14 files — so `tests/`, `.hypergraph/`, `STATE.md`, `AGENTS.md` and the new `research/` tree all ship nothing, and `tests/test_packaging.py` fails if any is added to either hatchling include list. Incidentally re-verified: the published 0.0.2 installs on a bare cloud box via `uv tool install hypergraph-protocol` + `hypergraph skills install --user` [rec: twilight-wood-1934].
 
 ## Negative knowledge
 
@@ -42,3 +44,5 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - rough-reef-5869 — 0.0.2 published and index-verified; adopters un-pinned
 - lively-willow-7648 — MIT license + PEP 639 metadata; npm name claimed with a PyPI-pointing placeholder
 - lawful-birch-4414 — main pushed, repo flipped public after gitleaks-clean re-scan; MIT auto-detected
+- southern-ridge-1802 — Operator directive parking the release and the announcement
+- twilight-wood-1934 — packaging boundary measured empirically; published 0.0.2 re-verified on a fresh box

@@ -5,7 +5,7 @@ title: Field dogfooding
 created_at: '2026-08-07T10:57:16.723412+00:00'
 parents:
 - cool-king-8586
-summary: 'Both targets live: a3go (mode A, now re-mirrored in full and verified on its own merits) + tbinn (mode B); acceptance loop held; five protocol defects found and fixed in the field; superseded/parallel-recording still unexercised.'
+summary: a3go (mode A, re-mirrored) + tbinn (mode B) live; acceptance loop held; five field defects fixed; third surface opening — cloud-box adoption with a control group.
 flywheel:
   node_id: 47030781-d078-5801-b4ae-d12ecc5d988f
   slug: bitter-sound-9744
@@ -23,6 +23,7 @@ Status: working
 - a3go's mirror was re-published in full and is the first adopted project whose mirror is verified on its own merits: 108 imported nodes created under roots this account owns, original topology restored, archive lineage at the record root, `push --verify` exit 0 against the two mirror roots **alone**. Its mirror record graph went from 4 nodes to 112; 108 creates ran with zero 429s, results recorded in batches of 20 [rec: northern-willow-0469].
 - A fifth field defect, and the largest: the mode-A mirror had been a stub since adoption — 105 of 108 imported nodes were never pushed, and `push --verify` reported clean because the archive roots were spliced into the export it was given [rec: copper-moss-3669] [rec: northern-willow-0469]. tbinn is unaffected: mode B has no `origin:` and already mirrored in full.
 - Still unexercised by field use: `superseded` status, staleness reporting between long reconcile gaps, and parallel-agent recording [rec: patient-limit-9007].
+- A third dogfooding surface is opening: agents on **fresh cloud boxes** adopting the protocol from PyPI with no prior context, as one arm of a controlled comparison against git and Flywheel (protocol-benchmark-4417). Unlike a3go and tbinn this one has a **control group**, so it can measure whether the protocol helps rather than only whether it holds. First evidence in hand: the published 0.0.2 installs and runs on a bare box via the real adopter route [rec: twilight-wood-1934].
 
 ## Negative knowledge
 
@@ -37,3 +38,4 @@ Status: working
 - fond-tree-4727 — acceptance loop held; thrust decided
 - copper-moss-3669 — stub-mirror defect measured on a3go and diagnosed
 - northern-willow-0469 — a3go re-mirrored in full; first mirror-only verify
+- twilight-wood-1934 — cloud-box adoption arm opened; published CLI proven on a fresh box
