@@ -9,9 +9,9 @@ summary: 'Both targets live: a3go (mode A, now re-mirrored in full and verified 
 flywheel:
   node_id: 47030781-d078-5801-b4ae-d12ecc5d988f
   slug: bitter-sound-9744
-  revision: 2
-  pushed_at: '2026-08-07T21:24:42+00:00'
-  content_sha256: 7e9ac0fe16c2594525877b770b72eed8300fa7adec3cf015d2bcd58ced314b0a
+  revision: 3
+  pushed_at: '2026-08-08T11:35:36+00:00'
+  content_sha256: bb5a85cf45754d890a4ab6f7aa4e8ce211f5da2a71eb91d964f4f60ae235b029
 ---
 Status: working
 
