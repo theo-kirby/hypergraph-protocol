@@ -68,24 +68,45 @@ def key_status(api_key: str) -> Optional[KeyStatus]:
     )
 
 
+def account_usage(api_key: str) -> Optional[float]:
+    """Total credits consumed on the account — the figure that actually moves.
+
+    Measured on a live 27-minute run: the key's own `usage` field rose by $0.02
+    while the account's `total_usage` rose by $0.82. A guard reading the key
+    field would have let a run spend forty times its budget and reported 2% used
+    the whole way. The account total is therefore the spend signal, and the key
+    field is kept only for the per-key cap it reports.
+    """
+    try:
+        data = _get(CREDITS_URL, api_key).get("data") or {}
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    value = data.get("total_usage")
+    return None if value is None else float(value)
+
+
 class SpendGuard:
     """A launch gate over an absolute spend budget for this run."""
 
     def __init__(self, api_key: str, budget_usd: float) -> None:
         self.api_key = api_key
         self.budget_usd = float(budget_usd)
-        start = key_status(api_key)
+        start = account_usage(api_key)
         if start is None:
             raise RuntimeError(
-                "could not read OpenRouter key status — refusing to start a run "
-                "with no budget guard")
-        self.start_usage = start.usage
-        self.start_status = start
+                "could not read OpenRouter account usage — refusing to start a "
+                "run with no budget guard")
+        self.start_usage = start
+        self.start_status = key_status(api_key)
 
     def spent(self) -> Optional[float]:
-        """Spend since the guard was created, or None if the read failed."""
-        now = key_status(self.api_key)
-        return None if now is None else max(0.0, now.usage - self.start_usage)
+        """Spend since the guard was created, or None if the read failed.
+
+        Measured against the **account** total, not the key's own `usage` — see
+        :func:`account_usage` for why the latter cannot be trusted here.
+        """
+        now = account_usage(self.api_key)
+        return None if now is None else max(0.0, now - self.start_usage)
 
     def exceeded(self) -> bool:
         """True when no further launch should happen.

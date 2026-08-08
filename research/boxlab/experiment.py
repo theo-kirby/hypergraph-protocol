@@ -116,7 +116,9 @@ def _harvest(ctl: BoxController, box_id: str, dest: Path,
     credential, and it works on a box with no outbound access of its own.
     """
     dest.mkdir(parents=True, exist_ok=True)
+    start, end = "__BOXLAB_TAR_START__", "__BOXLAB_TAR_END__"
     script = (
+        f"echo {start}\n"
         "cd ~ && tar czf - "
         "--exclude=research/.env "
         "--exclude=research/.provisioned "
@@ -128,16 +130,22 @@ def _harvest(ctl: BoxController, box_id: str, dest: Path,
         "$([ -d .pi/agent/sessions ] && echo .pi/agent/sessions) "
         "$([ -d .claude/projects ] && echo .claude/projects) "
         "2>/dev/null | base64 -w0\n"
+        f"echo\necho {end}\n"
     )
     try:
         rc, out = ctl.ssh_exec(box_id, script, timeout=900.0)
     except Exception as exc:
         result.log(f"harvest failed: {exc}")
         return False
-    blob = "".join(ch for ch in out if ch not in " \t\r\n")
-    # Strip any ssh banner that leaked in front of the payload.
-    while blob and not blob.startswith(("H4sI", "H4sJ")):
-        blob = blob[1:]
+    # Sentinel framing, not prefix-guessing. `ssh_exec` returns stdout followed
+    # by stderr, so an ssh banner lands *after* the payload — stripping only the
+    # front left trailing junk and base64 failed with "Incorrect padding",
+    # discovered on the pilot run. Frame both ends and take what is between.
+    if start not in out or end not in out:
+        result.log(f"harvest framing lost (rc={rc}) — no archive written")
+        return False
+    blob = out.split(start, 1)[1].rsplit(end, 1)[0]
+    blob = "".join(ch for ch in blob if ch not in " \t\r\n")
     if not blob:
         result.log(f"harvest produced nothing (rc={rc})")
         return False
@@ -248,15 +256,28 @@ def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
             encoding="utf-8")
 
         # --- harvest BEFORE teardown: the box is the only copy ---------------
-        got_vectors = _fetch_artifact(
-            ctl, box_id, "~/research/artifacts/vectors.txt",
-            run_dir / "vectors.txt")
+        # `vectors.txt` is ~68 MB of text (measured on the pilot). It travels
+        # inside the tarball, which gzips it, rather than through a second
+        # base64 text transfer of the raw file. Only the small JSON is pulled
+        # separately, so a run's headline settings are readable without
+        # unpacking anything.
+        _, probe = ctl.ssh_exec(
+            box_id,
+            "test -s ~/research/artifacts/vectors.txt && echo HAVE_VECTORS\n",
+            timeout=60.0)
+        got_vectors = "HAVE_VECTORS" in probe
         _fetch_artifact(ctl, box_id, "~/research/artifacts/results.json",
                         run_dir / "results.json")
         result.harvested = _harvest(ctl, box_id, run_dir, result)
-        result.ok = True
-        result.note = ("complete"
-                       + ("" if got_vectors else " (no vectors.txt produced)"))
+        # A run whose evidence did not come home is NOT complete. Saying so is
+        # the difference between noticing at teardown and noticing at analysis,
+        # by which point the box is gone — the pilot reported "complete" over a
+        # failed harvest and that is how the bug nearly slipped through.
+        result.ok = result.harvested
+        notes = [] if result.harvested else ["HARVEST FAILED — evidence not retrieved"]
+        if not got_vectors:
+            notes.append("no vectors.txt produced")
+        result.note = "complete" if not notes else "; ".join(notes)
         result.log(result.note)
         return result
 

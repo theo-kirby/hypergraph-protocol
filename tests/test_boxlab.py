@@ -325,3 +325,17 @@ def test_read_only_bash_matcher_is_anchored():
     assert not READ_ONLY_BASH.match("catalogue.py")
     assert not READ_ONLY_BASH.match("python3 train.py")
     assert not READ_ONLY_BASH.match("git commit -m x")
+
+
+def test_spend_guard_measures_account_usage_not_key_usage():
+    """The key's own `usage` field does not track real spend.
+
+    Measured live: a 27-minute run moved the key field by $0.02 and the account
+    total by $0.82. A guard on the key field would report 2% of budget used while
+    spending forty times that, and would never trip.
+    """
+    import inspect
+    from boxlab import spend as spend_mod
+    src = inspect.getsource(spend_mod.SpendGuard)
+    assert "account_usage" in src
+    assert "key_status(api_key).usage" not in src

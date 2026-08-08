@@ -1,0 +1,21 @@
+{
+  "total_accuracy": 0.21471535982814177,
+  "semantic_accuracy": 0.4380952380952381,
+  "syntactic_accuracy": 0.20416197975253092,
+  "total_questions": 9310,
+  "skipped": 10234,
+  "semantic_total": 420,
+  "syntactic_total": 8890,
+  "hyperparameters": {
+    "dimension": 100,
+    "window": 5,
+    "negative_samples": 5,
+    "epochs": 3,
+    "subsampling_threshold": 0.0001,
+    "learning_rate_start": 0.025,
+    "learning_rate_end": 0.00025,
+    "min_count": 5,
+    "seed": 1
+  },
+  "training_time_seconds": 539.0999364852905
+}

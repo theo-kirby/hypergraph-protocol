@@ -264,8 +264,10 @@ def cmd_analyze(args) -> int:
             import tarfile
             unpacked.mkdir(parents=True, exist_ok=True)
             with tarfile.open(tarball) as tf:
-                tf.extractall(unpacked)
+                tf.extractall(unpacked, filter="data")
         report = analyze.analyse_run(unpacked if unpacked.exists() else run_dir)
+        # Label by the run, not by the unpacked directory's name.
+        report["run"] = run_dir.name
         report["arm"] = json.loads((run_dir / "run.json").read_text()).get("arm")
         reports.append(report)
 
