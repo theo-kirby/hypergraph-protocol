@@ -6,6 +6,8 @@ name = "hypergraph-protocol"
 version = "0.0.2"
 description = "Hypergraph: a two-graph protocol (append-only record graph + distilled state graph) for keeping research projects legible to fresh agents. Checker, STATE.md renderer, and interactive visualizer."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["pyyaml>=6"]
 
@@ -31,7 +33,7 @@ build-backend = "hatchling.build"
 "templates" = "hypergraph_protocol_data/templates"
 
 [tool.hatch.build.targets.sdist]
-include = ["tools/hypergraph.py", "README.md", "SPEC.md", "pyproject.toml",
+include = ["tools/hypergraph.py", "README.md", "SPEC.md", "LICENSE", "pyproject.toml",
            "skills", "templates", "backend"]
 
 [tool.uv]
