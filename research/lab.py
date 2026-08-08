@@ -31,7 +31,7 @@ print = functools.partial(print, flush=True)  # noqa: A001
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from boxlab import experiment, provision, runner, spend  # noqa: E402
+from boxlab import analyze, experiment, provision, runner, spend  # noqa: E402
 from boxlab.arms import ARM_ORDER, compose_primer, get_arm  # noqa: E402
 from boxlab.box_ctl import BoxController  # noqa: E402
 from boxlab.config import LabConfig  # noqa: E402
@@ -246,6 +246,45 @@ def cmd_run(args) -> int:
     return 0 if all(r.ok for r in results.values()) else 1
 
 
+def cmd_analyze(args) -> int:
+    """Turn harvested run directories into the numbers METRICS.md asks for."""
+    root = Path(args.outdir)
+    run_dirs = sorted(d for d in root.iterdir()
+                      if d.is_dir() and (d / "run.json").exists())
+    if not run_dirs:
+        print(f"no harvested runs under {root}")
+        return 1
+
+    reports = []
+    for run_dir in run_dirs:
+        # The workspace arrives as a tarball; unpack once, next to it.
+        tarball = run_dir / "workspace.tar.gz"
+        unpacked = run_dir / "workspace"
+        if tarball.exists() and not unpacked.exists():
+            import tarfile
+            unpacked.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(tarball) as tf:
+                tf.extractall(unpacked)
+        report = analyze.analyse_run(unpacked if unpacked.exists() else run_dir)
+        report["arm"] = json.loads((run_dir / "run.json").read_text()).get("arm")
+        reports.append(report)
+
+    print(f"{'run':<18} {'arm':<11} {'turns':>6} {'tools':>6} {'cost$':>8} "
+          f"{'cold-start s':>13}")
+    for r in reports:
+        cs = (r.get("cold_start") or {}).get("time_to_first_productive_s")
+        print(f"{r['run']:<18} {str(r.get('arm')):<11} "
+              f"{r['totals']['assistant_turns']:>6} "
+              f"{r['totals']['tool_calls']:>6} "
+              f"{r['totals']['cost_usd']:>8.3f} "
+              f"{(f'{cs:.0f}' if cs is not None else '-'):>13}")
+
+    out = root / "analysis.json"
+    out.write_text(json.dumps(reports, indent=2), encoding="utf-8")
+    print(f"\nwrote {out}")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="lab", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -282,6 +321,10 @@ def main(argv=None) -> int:
     pr.add_argument("--outdir", default="research/runs")
     pr.add_argument("--yes", action="store_true")
     pr.set_defaults(func=cmd_run)
+
+    pa = sub.add_parser("analyze", help="score harvested runs")
+    pa.add_argument("--outdir", default="research/runs")
+    pa.set_defaults(func=cmd_analyze)
 
     args = p.parse_args(argv)
     return args.func(args)
