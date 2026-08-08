@@ -18,7 +18,11 @@ Repository = "https://github.com/theo-kirby/hypergraph-protocol"
 hypergraph = "hypergraph_protocol:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pyyaml>=6"]
+# numpy is for the benchmark lab's fidelity evaluator only. It is a *dev* group
+# member, so it never reaches the distribution — the wheel and sdist ship from
+# the explicit allow-lists below, and tests/test_packaging.py enforces that.
+# Without it here, `uv run pytest tests/` would silently skip those tests.
+dev = ["pytest>=8", "pyyaml>=6", "numpy>=1.24"]
 
 [build-system]
 requires = ["hatchling"]

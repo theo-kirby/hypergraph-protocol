@@ -223,3 +223,11 @@ __marimo__/
 .hypergraph/viz.html
 # NOT ignored, deliberately: .hypergraph/config.yml and .hypergraph/graph/ (the local
 # backend's node files) are the project's memory and must travel with the repo.
+
+# Benchmark lab run data (research/). The small structured outputs — run.json,
+# results.json, and the analysis reports — are committed as evidence; the bulk
+# is not. A 71k-word vectors.txt is ~100 MB and the workspace tarballs are the
+# agents' whole checkouts, neither of which belongs in the project's history.
+research/runs/**/workspace.tar.gz
+research/runs/**/vectors.txt
+research/runs/**/*.log
