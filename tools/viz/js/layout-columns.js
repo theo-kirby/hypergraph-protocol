@@ -2,6 +2,32 @@
 // anchors the column header texts.
 function comboStateX() { return show.style === "cards" ? NW + 430 : 300; }
 
+// Order for the state column: the mean chronological position of the record
+// work each claim rests on. This is the barycentre sweep `layered_layout` runs
+// within one graph, applied *across* the two — a claim built from early work
+// sits beside early work, which is the cheapest way to cut crossings without
+// hiding a single link.
+//
+// Claims with no provenance keep their architecture order, pinned to the top so
+// the state root stays where a reader expects it.
+function stateColumnOrder() {
+  const chrono = {};
+  DATA.record.nodes.forEach(n => chrono[n.slug] = n.chrono);
+  const acc = {};
+  DATA.links.forEach(l => {
+    if (chrono[l.record] == null) return;
+    (acc[l.state] = acc[l.state] || []).push(chrono[l.record]);
+  });
+  const bary = n => {
+    if (n.is_root) return -2;           // the root is an anchor, not a claim
+    const xs = acc[n.slug];
+    if (!xs || !xs.length) return -1;   // unlinked: keep it above the rest
+    return xs.reduce((a, b) => a + b, 0) / xs.length;
+  };
+  return DATA.state.nodes.slice()
+    .sort((a, b) => bary(a) - bary(b) || a.seq - b.seq);
+}
+
 function computeLayout() {
   const pos = {};
   const cards = show.style === "cards";
@@ -13,8 +39,11 @@ function computeLayout() {
     if (show.graphs === "both") {  // two chronological columns
       const sx = comboStateX();
       const rStep = cards ? NH + 30 : 44, sStep = cards ? NH + 46 : 44;
-      DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.seq * rStep });
-      DATA.state.nodes.forEach(n => pos[n.slug] = { x: sx, y: n.seq * sStep });
+      // The record column runs in real time order, so "further down" means
+      // "later" and the state column's barycentre is measured against something
+      // a reader can actually see.
+      DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.chrono * rStep });
+      stateColumnOrder().forEach((n, i) => pos[n.slug] = { x: sx, y: i * sStep });
     } else {                       // single graph: centered layer grid
       const g = show.graphs;
       const dx = cards ? NW + 70 : 76, dy = cards ? NH + 78 : 84;

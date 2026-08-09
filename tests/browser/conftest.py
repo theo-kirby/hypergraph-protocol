@@ -96,6 +96,7 @@ METRICS_JS = """() => {
   return {
     nodes: document.querySelectorAll("#nodes g.node").length,
     edges: document.querySelectorAll("#edges path").length,
+    crosslinks: document.querySelectorAll("#crosslinks path").length,
     blobs: document.querySelectorAll("#blobs path").length,
     labels: labels.length,
     scale: Math.round((m ? +m[1] : 1) * 1000) / 1000,

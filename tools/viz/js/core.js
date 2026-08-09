@@ -43,9 +43,10 @@ const show = {
   layout: "force",    // "timeline" | "board" | "layered" | "force"
   xaxis:  "rank",     // timeline only: "rank" (even) | "time" (real dates)
   board:  "status",   // board only: "status" columns | "tree" architecture
+  links:  "focus",    // cross-graph links: "focus" | "all" | "none"
   tree:   true,       // intra-graph parent edges
-  impact: false,      // cross-graph impact links (needs graphs === "both")
-  prov:   false,      // cross-graph provenance links (ditto)
+  impact: false,      // include impact links among the cross-graph ones
+  prov:   false,      // include provenance links among them (needs graphs both)
   blobs:  true,       // hyperedge blobs (needs the record graph visible)
 };
 const recVis = () => show.graphs !== "state";
@@ -56,6 +57,11 @@ const LAYOUT_GRAPH = { timeline: "record", board: "state" };
 // Which segmented controls apply to the current layout; the rest stay hidden
 // rather than dimmed, so the panel only ever offers real choices.
 const SEG_FOR_LAYOUT = { xaxis: ["timeline"], board: ["board"] };
+function segHidden(key) {
+  if (key === "links") return show.graphs !== "both";
+  const only = SEG_FOR_LAYOUT[key];
+  return !!only && only.indexOf(show.layout) < 0;
+}
 // Pan/zoom + node positions are cached per layout signature; edge/blob toggles
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
 const layoutKey = () => [show.layout, show.graphs, show.style,
@@ -66,16 +72,16 @@ const layoutKey = () => [show.layout, show.graphs, show.style,
 // each state claim rests on. Clusters = which work belongs to the same claim.
 const PRESETS = {
   timeline:   { graphs:"record", style:"cards",   layout:"timeline",
-                xaxis:"rank", board:"status",
+                xaxis:"rank", board:"status", links:"focus",
                 tree:true, impact:false, prov:false, blobs:false },
   frontier:   { graphs:"state",  style:"cards",   layout:"board",
-                xaxis:"rank", board:"status",
+                xaxis:"rank", board:"status", links:"focus",
                 tree:false, impact:false, prov:false, blobs:false },
   provenance: { graphs:"both",   style:"cards",   layout:"layered",
-                xaxis:"rank", board:"status",
+                xaxis:"rank", board:"status", links:"focus",
                 tree:true, impact:true,  prov:true,  blobs:false },
   clusters:   { graphs:"record", style:"circles", layout:"force",
-                xaxis:"rank", board:"status",
+                xaxis:"rank", board:"status", links:"focus",
                 tree:true, impact:false, prov:false, blobs:true },
 };
 // Pre-rename deep links keep working: #record #state #combo #combination #hyper.

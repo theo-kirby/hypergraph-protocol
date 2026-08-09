@@ -2,6 +2,7 @@
   "clusters": {
     "aspect": 0.8,
     "blobs": 12,
+    "crosslinks": 0,
     "edges": 46,
     "height": 953,
     "labels": 39,
@@ -12,6 +13,7 @@
   "frontier": {
     "aspect": 0.76,
     "blobs": 0,
+    "crosslinks": 0,
     "edges": 0,
     "height": 946,
     "labels": 47,
@@ -22,7 +24,8 @@
   "provenance": {
     "aspect": 0.29,
     "blobs": 0,
-    "edges": 234,
+    "crosslinks": 0,
+    "edges": 57,
     "height": 3602,
     "labels": 200,
     "nodes": 51,
@@ -32,6 +35,7 @@
   "timeline": {
     "aspect": 34.84,
     "blobs": 0,
+    "crosslinks": 0,
     "edges": 46,
     "height": 197,
     "labels": 39,

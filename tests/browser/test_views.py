@@ -19,7 +19,7 @@ from conftest import (VIEWS, load_baseline, measure, open_view, save_baseline,
 # Counts must match exactly; geometry is allowed to wobble by this fraction,
 # because text metrics differ slightly between chromium builds.
 GEOM_TOLERANCE = 0.02
-EXACT = ("nodes", "edges", "blobs", "labels")
+EXACT = ("nodes", "edges", "crosslinks", "blobs", "labels")
 GEOM = ("scale", "width", "height")
 
 
@@ -38,10 +38,13 @@ def test_every_view_matches_its_baseline(page):
         want = baseline.get(view)
         if want is None:
             continue
+        # A key the baseline predates is not a failure — it is measured from now on.
         for key in EXACT:
-            if m[key] != want[key]:
+            if key in want and m[key] != want[key]:
                 failures.append(f"{view}.{key}: {want[key]} -> {m[key]}")
         for key in GEOM:
+            if key not in want:
+                continue
             lo, hi = want[key] * (1 - GEOM_TOLERANCE), want[key] * (1 + GEOM_TOLERANCE)
             if not (lo <= m[key] <= hi):
                 failures.append(f"{view}.{key}: {want[key]} -> {m[key]}")
@@ -138,3 +141,39 @@ def test_views_are_deterministic_across_reloads(page, viz_html):
     for view in VIEWS:
         open_view(page, view)
         assert measure(page) == first[view], f"{view} is not reproducible"
+
+
+def test_provenance_draws_no_cross_links_until_a_node_is_chosen(page):
+    """Phase 3's acceptance. 177 cross-links over 51 nodes is a hairball however
+    it is drawn, so `focus` draws none of them until you ask about one node."""
+    open_view(page, "provenance")
+    assert page.is_visible('.seg[data-key="links"]')
+    assert measure(page)["crosslinks"] == 0
+
+    page.click('#nodes g.node[data-slug="wandering-rice-9747"]')
+    page.wait_for_timeout(120)
+    focused = measure(page)["crosslinks"]
+    assert focused == 10, "only the selected node's own links"
+
+    page.click('.seg[data-key="links"] button[data-val="all"]')
+    page.wait_for_timeout(200)
+    every = page.evaluate('() => [...document.querySelectorAll("#crosslinks path")]')
+    assert len(every) == 177
+    # bundled ribbons drop their arrowheads and route through two curves
+    marked = page.evaluate("""() => [...document.querySelectorAll("#crosslinks path")]
+        .filter(p => p.getAttribute("marker-end")).length""")
+    assert marked == 0, "bundled ribbons must not carry 177 arrowheads"
+    two_curve = page.evaluate("""() => [...document.querySelectorAll("#crosslinks path")]
+        .filter(p => (p.getAttribute("d").match(/C/g) || []).length === 2).length""")
+    assert two_curve == 177, "every ribbon routes through the spine"
+
+    page.click('.seg[data-key="links"] button[data-val="none"]')
+    page.wait_for_timeout(120)
+    assert measure(page)["crosslinks"] == 0
+
+
+def test_links_control_is_hidden_without_both_graphs(page):
+    open_view(page, "timeline")
+    assert page.is_hidden('.seg[data-key="links"]')
+    open_view(page, "provenance")
+    assert page.is_visible('.seg[data-key="links"]')

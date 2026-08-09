@@ -35,6 +35,12 @@ svg.addEventListener("pointermove", e => {
       if (eg.from === drag.slug || eg.to === drag.slug)
         edgeEls[i].setAttribute("d", edgePath(eg, pos));
     });
+    crossEdges.forEach((eg, i) => {
+      if (!crossEls[i]) return;
+      // A bundled ribbon moves when its *claim* moves, not only its own ends.
+      if (eg.from === drag.slug || eg.to === drag.slug || eg.state === drag.slug)
+        crossEls[i].setAttribute("d", crossPath(eg, pos));
+    });
     // The distance field is too costly per frame; drag on the cheap hull and
     // put the real outline back on pointerup.
     if (show.blobs && recVis()) { blobDragging = true; updateBlobs(drag.slug); }
@@ -66,6 +72,15 @@ svg.addEventListener("wheel", e => {
   // Crossing the field threshold swaps hull for outline (and back).
   if (show.blobs && recVis() && blobFieldMode() !== before) redrawBlobs();
 }, { passive: false });
+// Hover reveals a node's cross-graph links without committing the panel to it.
+svg.addEventListener("pointerover", e => {
+  const g = e.target.closest ? e.target.closest(".node") : null;
+  setHovered(g ? g.dataset.slug : null);
+});
+svg.addEventListener("pointerout", e => {
+  const g = e.target.closest ? e.target.closest(".node") : null;
+  if (g && !g.contains(e.relatedTarget)) setHovered(null);
+});
 document.addEventListener("keydown", e => { if (e.key === "Escape") deselect(); });
 
 document.getElementById("search").addEventListener("input", e => {
@@ -159,10 +174,9 @@ function syncControls() {
     const key = seg.dataset.key;
     seg.querySelectorAll("button").forEach(b =>
       b.classList.toggle("active", b.dataset.val === show[key]));
-    // Layout-specific controls are hidden, not dimmed: the panel should only
+    // Context-specific controls are hidden, not dimmed: the panel should only
     // ever offer choices that mean something for what is on screen.
-    const only = SEG_FOR_LAYOUT[key];
-    seg.hidden = !!only && only.indexOf(show.layout) < 0;
+    seg.hidden = segHidden(key);
   });
   const both = show.graphs === "both";
   document.querySelectorAll("#toggles .checks input").forEach(cb => {

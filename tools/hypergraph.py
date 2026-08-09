@@ -1992,6 +1992,14 @@ VIZ_TEMPLATE = r"""<!doctype html>
             <button data-val="tree" title="Architecture tree, as in STATE.md">Tree</button>
           </div>
         </div>
+        <div class="seg" data-key="links" hidden>
+          <span class="lbl">Links</span>
+          <div class="opts">
+            <button data-val="focus" title="Only the selected or hovered node's links">Focus</button>
+            <button data-val="all" title="All of them, bundled into ribbons per claim">All</button>
+            <button data-val="none" title="None">None</button>
+          </div>
+        </div>
         <div class="checks">
           <label><input type="checkbox" data-key="tree">Parent edges</label>
           <label><input type="checkbox" data-key="impact">Impact links</label>
@@ -2052,9 +2060,10 @@ const show = {
   layout: "force",    // "timeline" | "board" | "layered" | "force"
   xaxis:  "rank",     // timeline only: "rank" (even) | "time" (real dates)
   board:  "status",   // board only: "status" columns | "tree" architecture
+  links:  "focus",    // cross-graph links: "focus" | "all" | "none"
   tree:   true,       // intra-graph parent edges
-  impact: false,      // cross-graph impact links (needs graphs === "both")
-  prov:   false,      // cross-graph provenance links (ditto)
+  impact: false,      // include impact links among the cross-graph ones
+  prov:   false,      // include provenance links among them (needs graphs both)
   blobs:  true,       // hyperedge blobs (needs the record graph visible)
 };
 const recVis = () => show.graphs !== "state";
@@ -2065,6 +2074,11 @@ const LAYOUT_GRAPH = { timeline: "record", board: "state" };
 // Which segmented controls apply to the current layout; the rest stay hidden
 // rather than dimmed, so the panel only ever offers real choices.
 const SEG_FOR_LAYOUT = { xaxis: ["timeline"], board: ["board"] };
+function segHidden(key) {
+  if (key === "links") return show.graphs !== "both";
+  const only = SEG_FOR_LAYOUT[key];
+  return !!only && only.indexOf(show.layout) < 0;
+}
 // Pan/zoom + node positions are cached per layout signature; edge/blob toggles
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
 const layoutKey = () => [show.layout, show.graphs, show.style,
@@ -2075,16 +2089,16 @@ const layoutKey = () => [show.layout, show.graphs, show.style,
 // each state claim rests on. Clusters = which work belongs to the same claim.
 const PRESETS = {
   timeline:   { graphs:"record", style:"cards",   layout:"timeline",
-                xaxis:"rank", board:"status",
+                xaxis:"rank", board:"status", links:"focus",
                 tree:true, impact:false, prov:false, blobs:false },
   frontier:   { graphs:"state",  style:"cards",   layout:"board",
-                xaxis:"rank", board:"status",
+                xaxis:"rank", board:"status", links:"focus",
                 tree:false, impact:false, prov:false, blobs:false },
   provenance: { graphs:"both",   style:"cards",   layout:"layered",
-                xaxis:"rank", board:"status",
+                xaxis:"rank", board:"status", links:"focus",
                 tree:true, impact:true,  prov:true,  blobs:false },
   clusters:   { graphs:"record", style:"circles", layout:"force",
-                xaxis:"rank", board:"status",
+                xaxis:"rank", board:"status", links:"focus",
                 tree:true, impact:false, prov:false, blobs:true },
 };
 // Pre-rename deep links keep working: #record #state #combo #combination #hyper.
@@ -2354,6 +2368,32 @@ function boardFurniture() {
 // anchors the column header texts.
 function comboStateX() { return show.style === "cards" ? NW + 430 : 300; }
 
+// Order for the state column: the mean chronological position of the record
+// work each claim rests on. This is the barycentre sweep `layered_layout` runs
+// within one graph, applied *across* the two — a claim built from early work
+// sits beside early work, which is the cheapest way to cut crossings without
+// hiding a single link.
+//
+// Claims with no provenance keep their architecture order, pinned to the top so
+// the state root stays where a reader expects it.
+function stateColumnOrder() {
+  const chrono = {};
+  DATA.record.nodes.forEach(n => chrono[n.slug] = n.chrono);
+  const acc = {};
+  DATA.links.forEach(l => {
+    if (chrono[l.record] == null) return;
+    (acc[l.state] = acc[l.state] || []).push(chrono[l.record]);
+  });
+  const bary = n => {
+    if (n.is_root) return -2;           // the root is an anchor, not a claim
+    const xs = acc[n.slug];
+    if (!xs || !xs.length) return -1;   // unlinked: keep it above the rest
+    return xs.reduce((a, b) => a + b, 0) / xs.length;
+  };
+  return DATA.state.nodes.slice()
+    .sort((a, b) => bary(a) - bary(b) || a.seq - b.seq);
+}
+
 function computeLayout() {
   const pos = {};
   const cards = show.style === "cards";
@@ -2365,8 +2405,11 @@ function computeLayout() {
     if (show.graphs === "both") {  // two chronological columns
       const sx = comboStateX();
       const rStep = cards ? NH + 30 : 44, sStep = cards ? NH + 46 : 44;
-      DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.seq * rStep });
-      DATA.state.nodes.forEach(n => pos[n.slug] = { x: sx, y: n.seq * sStep });
+      // The record column runs in real time order, so "further down" means
+      // "later" and the state column's barycentre is measured against something
+      // a reader can actually see.
+      DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.chrono * rStep });
+      stateColumnOrder().forEach((n, i) => pos[n.slug] = { x: sx, y: i * sStep });
     } else {                       // single graph: centered layer grid
       const g = show.graphs;
       const dx = cards ? NW + 70 : 76, dy = cards ? NH + 78 : 84;
@@ -3204,25 +3247,35 @@ function blobLabelPositions(pos) {
 
 // Which edges exist is decided by the display toggles; how they are drawn is
 // decided separately by node style + layout in edgePath.
+//
+// Cross-graph links are kept in their own layer, rebuilt on demand, because
+// there are 176 of them over 51 nodes on this repo alone and drawing them all
+// at once is the hairball the Provenance view used to be. `show.links` decides
+// how many exist at all; the impact/prov checkboxes decide which kinds.
 function edgesFor() {
   const out = [];
-  const both = show.graphs === "both";
-  const sided = both && show.layout === "layered";  // two-column arrangement
+  const sided = show.graphs === "both" && show.layout === "layered";
   const tree = (g, side) => DATA[g].nodes.forEach(n =>
     n.parents.forEach(p => out.push({ kind:"tree", from:p, to:n.slug, side })));
   if (show.tree) {
     if (recVis()) tree("record", sided ? "left" : null);
     if (stVis()) tree("state", sided ? "right" : null);
   }
-  if (both) DATA.links.forEach(l => {
-    if (l.kind === "impact" ? !show.impact : !show.prov) return;
-    out.push({
-      kind: l.kind, label: l.label,
-      from: l.kind === "impact" ? l.record : l.state,
-      to:   l.kind === "impact" ? l.state : l.record,
-    });
-  });
   return out;
+}
+
+function crossLinksFor() {
+  if (show.graphs !== "both" || show.links === "none") return [];
+  const focus = show.links === "focus" ? (hovered || selected) : null;
+  if (show.links === "focus" && !focus) return [];
+  return DATA.links.filter(l => {
+    if (l.kind === "impact" ? !show.impact : !show.prov) return false;
+    return !focus || l.record === focus || l.state === focus;
+  }).map(l => ({
+    kind: l.kind, label: l.label, state: l.state,
+    from: l.kind === "impact" ? l.record : l.state,
+    to:   l.kind === "impact" ? l.state : l.record,
+  }));
 }
 
 // Point on the border of the w x h box centered at a, along a -> b.
@@ -3280,6 +3333,51 @@ function edgePath(e, pos) {
   const x2 = b.x + (bySlug[e.to].graph === "state" ? -db.w / 2 : db.w / 2);
   const cx = (x1 + x2) / 2;
   return `M ${x1} ${a.y} C ${cx} ${a.y}, ${cx} ${b.y}, ${x2} ${b.y}`;
+}
+
+const SPINE_SPREAD = 96;   // width of the staggered spine, in world px
+
+// Seat each claim on the spine, ordered by its position in the state column, so
+// neighbouring claims get neighbouring seats and their ribbons do not cross.
+let _spineRank = null;
+function stateSpineRank() {
+  if (_spineRank) return _spineRank;
+  const order = DATA.state.nodes.slice().sort((a, b) => {
+    const pa = posFor()[a.slug], pb = posFor()[b.slug];
+    return (pa ? pa.y : 0) - (pb ? pb.y : 0);
+  });
+  _spineRank = { count: order.length };
+  order.forEach((n, i) => _spineRank[n.slug] = i);
+  return _spineRank;
+}
+
+// In `all` mode every cross-link belonging to one state node is routed through a
+// shared waist on a vertical spine at mid-x, so 176 separate lines read as a
+// dozen ribbons — you can see *which claim* a bundle serves, which is the thing
+// the hairball hid. Straight-through beziers are kept for the focused view,
+// where there are only a few lines and precision beats grouping.
+function bundledCrossPath(e, pos) {
+  const a = pos[e.from], b = pos[e.to];
+  if (!a || !b) return null;
+  const da = dimsOf(e.from), db = dimsOf(e.to);
+  const fromState = bySlug[e.from].graph === "state";
+  const x1 = a.x + (fromState ? -da.w / 2 : da.w / 2);
+  const x2 = b.x + (bySlug[e.to].graph === "state" ? -db.w / 2 : db.w / 2);
+  const st = pos[e.state];
+  if (!st) return edgePath(e, pos);
+  // Stagger each claim's waist along the spine, or every bundle would pinch at
+  // the same x and the ribbons would be indistinguishable exactly where they
+  // are densest.
+  const rank = stateSpineRank();
+  const seat = rank[e.state] || 0, seats = Math.max(1, rank.count - 1);
+  const wx = (x1 + x2) / 2 + (seat / seats - 0.5) * SPINE_SPREAD;
+  const wy = st.y;                                 // the waist, shared per claim
+  return `M ${x1} ${a.y} C ${(x1 + wx) / 2} ${a.y}, ${wx} ${(a.y + wy) / 2}, ${wx} ${wy}` +
+         ` C ${wx} ${(wy + b.y) / 2}, ${(wx + x2) / 2} ${b.y}, ${x2} ${b.y}`;
+}
+
+function crossPath(e, pos) {
+  return show.links === "all" ? bundledCrossPath(e, pos) : edgePath(e, pos);
 }
 
 // ------------------------------------------------------------------ render
@@ -3585,6 +3683,7 @@ function renderAll() {
   const edgeLayer = el("g", { id: "edges" });
   const nodeLayer = el("g", { id: "nodes" });
   world.appendChild(edgeLayer);
+  world.appendChild(el("g", { id: "crosslinks" }));
   world.appendChild(nodeLayer);
 
   if (show.layout === "layered" && show.graphs === "both") {
@@ -3632,8 +3731,45 @@ function renderAll() {
   if (recVis()) draw("record");
   if (stVis()) draw("state");
 
+  renderCrossLinks();
   applyTf();
   updateDim();
+}
+
+// The cross-link layer is rebuilt rather than dimmed, because in `focus` mode
+// the answer is usually "draw nothing at all" and the cheapest way to draw
+// nothing is to build nothing.
+let crossEdges = [], crossEls = [];
+function renderCrossLinks() {
+  const layer = document.getElementById("crosslinks");
+  if (!layer) return;
+  layer.textContent = "";
+  _spineRank = null;          // positions may have changed; reseat the spine
+  const pos = posFor();
+  crossEdges = crossLinksFor();
+  crossEls = [];
+  const bundled = show.links === "all";
+  crossEdges.forEach(e => {
+    const d = crossPath(e, pos);
+    if (!d) { crossEls.push(null); return; }
+    const style = e.kind === "impact"
+      ? { stroke: T().impact, marker: "arrow-imp", dash: "6 4", op: bundled ? 0.5 : 0.85 }
+      : { stroke: T().prov, marker: "arrow-prov", dash: null, op: bundled ? 0.4 : 0.75 };
+    const path = el("path", { d, fill: "none", stroke: style.stroke,
+      "stroke-width": bundled ? 1.1 : 1.8, opacity: style.op });
+    // Bundled ribbons carry no arrowheads: 176 of them turn into visual noise,
+    // and the direction is already given by which column each end sits in.
+    if (!bundled) path.setAttribute("marker-end", `url(#${style.marker})`);
+    if (style.dash) path.setAttribute("stroke-dasharray", style.dash);
+    path.dataset.op = style.op;
+    if (e.label) {
+      const tip = el("title");
+      tip.textContent = e.kind + ": " + e.label;
+      path.appendChild(tip);
+    }
+    layer.appendChild(path);
+    crossEls.push(path);
+  });
 }
 
 // Below this zoom a 10.5px label is under 7px on screen — noise, not text.
@@ -3653,6 +3789,13 @@ function neighborhood(slug) {
   edges.forEach(e => {
     if (e.from === slug) rel.add(e.to);
     if (e.to === slug) rel.add(e.from);
+  });
+  // Cross-graph neighbours come from the data, not from what is currently
+  // drawn: in `focus` mode nothing is drawn until something is selected, and
+  // the selection is what decides the neighbourhood in the first place.
+  if (show.graphs === "both") DATA.links.forEach(l => {
+    if (l.record === slug) rel.add(l.state);
+    if (l.state === slug) rel.add(l.record);
   });
   if (show.blobs && recVis()) {  // union in hyperedge co-members / members
     const H = hyperedges();
@@ -3706,17 +3849,36 @@ function updateDim() {
     blobEls[st].path.setAttribute("opacity", on ? 1 : 0.12);
     blobEls[st].label.setAttribute("opacity", on ? 1 : 0.12);
   }
-  edges.forEach((e, i) => {
-    const pathEl = edgeEls[i];
+  const dimEdges = (list, els) => list.forEach((e, i) => {
+    const pathEl = els[i];
     if (!pathEl) return;
-    const on = vis[e.from] && vis[e.to] &&
+    const on = vis[e.from] !== false && vis[e.to] !== false &&
       (!rel || e.from === selected || e.to === selected);
     pathEl.setAttribute("opacity", on ? pathEl.dataset.op : 0.08);
   });
+  dimEdges(edges, edgeEls);
+  dimEdges(crossEdges, crossEls);
 }
 
-function select(slug) { selected = slug; updateDim(); renderPanel(); }
-function deselect() { selected = null; updateDim(); renderPanel(); }
+// Hovering a node is enough to reveal its cross-graph links in `focus` mode —
+// selecting is for reading the panel, hovering is for "what does this touch?".
+let hovered = null;
+function setHovered(slug) {
+  if (hovered === slug) return;
+  hovered = slug;
+  if (show.links === "focus" && show.graphs === "both") {
+    renderCrossLinks();
+    updateDim();
+  }
+}
+
+function select(slug) {
+  selected = slug;
+  renderCrossLinks();
+  updateDim();
+  renderPanel();
+}
+function deselect() { selected = null; renderCrossLinks(); updateDim(); renderPanel(); }
 
 function jumpTo(slug) {
   const entry = bySlug[slug];
@@ -3912,6 +4074,12 @@ svg.addEventListener("pointermove", e => {
       if (eg.from === drag.slug || eg.to === drag.slug)
         edgeEls[i].setAttribute("d", edgePath(eg, pos));
     });
+    crossEdges.forEach((eg, i) => {
+      if (!crossEls[i]) return;
+      // A bundled ribbon moves when its *claim* moves, not only its own ends.
+      if (eg.from === drag.slug || eg.to === drag.slug || eg.state === drag.slug)
+        crossEls[i].setAttribute("d", crossPath(eg, pos));
+    });
     // The distance field is too costly per frame; drag on the cheap hull and
     // put the real outline back on pointerup.
     if (show.blobs && recVis()) { blobDragging = true; updateBlobs(drag.slug); }
@@ -3943,6 +4111,15 @@ svg.addEventListener("wheel", e => {
   // Crossing the field threshold swaps hull for outline (and back).
   if (show.blobs && recVis() && blobFieldMode() !== before) redrawBlobs();
 }, { passive: false });
+// Hover reveals a node's cross-graph links without committing the panel to it.
+svg.addEventListener("pointerover", e => {
+  const g = e.target.closest ? e.target.closest(".node") : null;
+  setHovered(g ? g.dataset.slug : null);
+});
+svg.addEventListener("pointerout", e => {
+  const g = e.target.closest ? e.target.closest(".node") : null;
+  if (g && !g.contains(e.relatedTarget)) setHovered(null);
+});
 document.addEventListener("keydown", e => { if (e.key === "Escape") deselect(); });
 
 document.getElementById("search").addEventListener("input", e => {
@@ -4036,10 +4213,9 @@ function syncControls() {
     const key = seg.dataset.key;
     seg.querySelectorAll("button").forEach(b =>
       b.classList.toggle("active", b.dataset.val === show[key]));
-    // Layout-specific controls are hidden, not dimmed: the panel should only
+    // Context-specific controls are hidden, not dimmed: the panel should only
     // ever offer choices that mean something for what is on screen.
-    const only = SEG_FOR_LAYOUT[key];
-    seg.hidden = !!only && only.indexOf(show.layout) < 0;
+    seg.hidden = segHidden(key);
   });
   const both = show.graphs === "both";
   document.querySelectorAll("#toggles .checks input").forEach(cb => {
