@@ -853,6 +853,134 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
     }
 
 
+# The page's light-theme palette, restated here so exported figures and the
+# interactive page agree on what "broken" looks like. tests/test_viz.py asserts
+# every value below still appears in the bundled template — a palette that drifts
+# is worse than no palette, because the two pictures then quietly disagree.
+PALETTE = {
+    "working": "#0ca30c", "open": "#2a78d6", "broken": "#d03b3b",
+    "blocked": "#fab219", "superseded": "#898781",
+    "prov": "#2a78d6", "impact": "#eb6834", "hwm": "#4a3aa7", "unrec": "#fab219",
+    "ink": "#0b0b0b", "muted": "#898781", "axis": "#c3c2b7",
+    "cat": ["#2a78d6", "#eb6834", "#0ca30c", "#4a3aa7", "#c22f7a", "#0b8f8f",
+            "#a8790a", "#5f7a2a"],
+}
+
+
+def excaligraph_spec(record: Graph, state: Graph, config: dict | None = None,
+                     links: str = "none") -> dict:
+    """The graph spec `excaligraph build` consumes (its src/cli/spec.ts schema).
+
+    Two-step by design — `viz --format excaligraph -o g.yaml`, then
+    `excaligraph build g.yaml`. Node stays optional and nothing here shells out,
+    so the core path keeps working on a machine that has never seen npm.
+
+    `links` is the page's own focus/all idea applied to a static figure, and for
+    the same reason: 177 cross-graph edges over 51 nodes is a hairball however it
+    is drawn. The default figure is nodes + parent edges + one blob per claim,
+    which already tells the whole story — the impact relation *is* the blob
+    membership, so drawing it again as edges says nothing new.
+    """
+    config = config or {}
+    data = build_viz_data(record, state, config)
+    graph_dir = str(config.get("graph_dir") or DEFAULT_GRAPH_DIR).rstrip("/")
+
+    nodes: dict[str, dict] = {}
+    for kind, key in (("record", "record"), ("state", "state")):
+        for node in data[key]["nodes"]:
+            if key == "state":
+                accent = (PALETTE["ink"] if node["is_root"]
+                          else PALETTE.get(node["status"] or "", PALETTE["muted"]))
+            elif node["is_hwm"]:
+                accent = PALETTE["hwm"]
+            elif node["unreconciled"]:
+                accent = PALETTE["unrec"]
+            else:
+                accent = PALETTE["ink"] if node["is_root"] else PALETTE["axis"]
+            nodes[node["slug"]] = {
+                "label": f"{node['title']}\n{node['slug']}",
+                "shape": "ellipse" if key == "state" and node["is_root"] else "rectangle",
+                "strokeColor": accent,
+                "link": f"{graph_dir}/{kind}/{node['slug']}.md",
+            }
+
+    edges: list[dict] = []
+    for key in ("record", "state"):
+        for node in data[key]["nodes"]:
+            for parent in node["parents"]:
+                edges.append({"from": parent, "to": node["slug"],
+                              "strokeColor": PALETTE["axis"]})
+    for link in data["links"]:
+        impact = link["kind"] == "impact"
+        if links != "all" and links != link["kind"]:
+            continue
+        edge = {
+            "from": link["record"] if impact else link["state"],
+            "to": link["state"] if impact else link["record"],
+            "strokeColor": PALETTE["impact"] if impact else PALETTE["prov"],
+            "opacity": 60,
+        }
+        if impact:
+            edge["strokeStyle"] = "dashed"
+        # An impact delta is a paragraph. On an edge in a figure it is noise, so
+        # labels are cut to a phrase — the full text is in the node file the
+        # `link:` on each node points at.
+        label = " ".join((link["label"] or "").split())
+        if label:
+            edge["label"] = label if len(label) <= 60 else label[:59] + "…"
+        edges.append(edge)
+
+    # One hyperedge per state node with a declared impact set — the same grouping
+    # the page's Clusters view blobs, and the same colour order.
+    by_state: dict[str, list[str]] = {}
+    for link in data["links"]:
+        if link["kind"] == "impact":
+            by_state.setdefault(link["state"], []).append(link["record"])
+    hyperedges = []
+    for node in data["state"]["nodes"]:
+        members = by_state.get(node["slug"])
+        if not members:
+            continue
+        color = PALETTE["cat"][len(hyperedges) % len(PALETTE["cat"])]
+        hyperedges.append({
+            "nodes": members, "label": node["title"], "labelPosition": "top",
+            "strokeColor": color, "backgroundColor": color,
+        })
+
+    return {
+        # Derived from the project name, so a figure regenerated tomorrow has the
+        # same hand-drawn jitter as the one in yesterday's paper.
+        "seed": int(hashlib.sha256(data["project"].encode()).hexdigest()[:8], 16),
+        "layout": {"engine": "dagre", "rankdir": "LR"},
+        "defaults": {
+            "node": {"shape": "rectangle", "width": 230, "height": 66,
+                     "roundness": "round", "fontSize": 16},
+            "edge": {"routing": "curved"},
+            "hyperedge": {"padding": 16, "corridor": 12, "smoothing": 18,
+                          "avoid": True, "clearance": 12, "opacity": 22},
+        },
+        "nodes": nodes,
+        "edges": edges,
+        "hyperedges": hyperedges,
+    }
+
+
+def render_excaligraph(record_path: Path, state_path: Path,
+                       config: dict | None = None, links: str = "none") -> str:
+    import yaml  # deferred: PEP 723 dep, only needed for this one output format
+    spec = excaligraph_spec(load_graph(record_path), load_graph(state_path),
+                            config, links)
+    header = ("# Generated by `hypergraph viz --format excaligraph`.\n"
+              "# Build it with:  excaligraph build THIS.yaml -o graph.excalidraw\n"
+              "#\n"
+              "# Each blob is one state node wrapping the record work that declares\n"
+              "# impact on it. Cross-graph edges are off by default (--links); every\n"
+              "# node carries a `link:` to its markdown source, so the full text of a\n"
+              "# claim is one click away in the built scene.\n")
+    return header + yaml.safe_dump(spec, sort_keys=False, allow_unicode=True,
+                                   default_flow_style=False, width=100)
+
+
 def _esc_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -902,6 +1030,15 @@ def render_viz(record_path: Path, state_path: Path, config: dict | None = None,
 
 def cmd_viz(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    if getattr(args, "format", "html") == "excaligraph":
+        output = render_excaligraph(args.record, args.state, config, args.links)
+        if args.output:
+            Path(args.output).write_text(output)
+            print(f"wrote {args.output} — build it with "
+                  f"`excaligraph build {args.output} -o graph.excalidraw`")
+        else:
+            print(output)
+        return 0
     template = None
     if getattr(args, "dev", False):
         if not (VIZ_SRC_DIR / "manifest.json").exists():
@@ -4388,6 +4525,17 @@ def main(argv: list[str] | None = None) -> int:
     p_viz.add_argument("--state", type=Path, required=True, help="state-graph export JSON")
     p_viz.add_argument("--config", type=Path, help=".hypergraph/config.yml")
     p_viz.add_argument("-o", "--output", type=Path, help="output path (default: stdout)")
+    p_viz.add_argument("--format", choices=["html", "excaligraph"], default="html",
+                       help="html: the self-contained interactive page (default). "
+                            "excaligraph: a YAML graph spec for `excaligraph build`, "
+                            "for hand-editable excalidraw figures (needs node, "
+                            "separately installed; this tool never shells out)")
+    p_viz.add_argument("--links", choices=["none", "provenance", "impact", "all"],
+                       default="none",
+                       help="excaligraph only: which cross-graph edges to draw. "
+                            "Default none — the impact relation is already the blob "
+                            "membership, and 177 edges over 51 nodes is a hairball "
+                            "in a figure just as it is on the page")
     p_viz.add_argument("--dev", action="store_true",
                        help="assemble the page from tools/viz/ instead of the bundled "
                             "constant (repo checkout only; no rebundle needed to iterate)")
