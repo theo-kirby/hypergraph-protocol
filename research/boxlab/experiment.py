@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from . import provision, runner
+from . import provision, redact, runner
 from .arms import Arm, get_arm
 from .box_ctl import BoxController
 from .config import LabConfig
@@ -97,8 +97,8 @@ def load_continuation() -> str:
     return CONTINUATION_PATH.read_text(encoding="utf-8").strip()
 
 
-def _harvest(ctl: BoxController, box_id: str, dest: Path,
-             result: RunResult) -> bool:
+def _harvest(ctl: BoxController, box_id: str, dest: Path, result: RunResult,
+             secrets: Optional[Dict[str, str]] = None) -> bool:
     """Pull the workspace **and the harness session transcripts** home.
 
     `~/.pi/agent/sessions/` is not optional extra: pi's `-p` log holds only the
@@ -111,6 +111,13 @@ def _harvest(ctl: BoxController, box_id: str, dest: Path,
     and `.pi/agent/mcp.json` holds the Flywheel bearer. They are dropped **at the
     source** rather than filtered later — an archive that briefly contains live
     credentials on a laptop is a leak that already happened.
+
+    Excluding those files is necessary and was never sufficient. On the nine-run
+    benchmark, agents ran `cat ~/research/.env` thirty times, so the keys reached
+    the archive anyway — through the transcripts, which are the one thing the
+    harvest cannot drop. The archive is therefore **redacted in memory**, between
+    the base64 decode and the first `write_bytes`. Redacting a file already on
+    disk would be closing the door after the leak.
 
     Transport is base64 over ssh stdout: no second channel, no temporary
     credential, and it works on a box with no outbound access of its own.
@@ -158,15 +165,30 @@ def _harvest(ctl: BoxController, box_id: str, dest: Path,
         result.log(f"harvest produced nothing (rc={rc})")
         return False
     try:
-        (dest / "workspace.tar.gz").write_bytes(base64.b64decode(blob))
+        raw = base64.b64decode(blob)
     except Exception as exc:
         result.log(f"harvest decode failed: {exc}")
+        return False
+
+    cleaned, changed = redact.redact_archive(raw, secrets or {})
+    if changed < 0:
+        # The archive would not re-pack. Keeping it unredacted is the one thing
+        # that must not happen silently, so it is dropped and said out loud —
+        # the run is unmeasurable, which is recoverable; a leaked key is not.
+        result.log("harvest UNREDACTABLE (archive would not re-pack) — discarded")
+        return False
+    if changed:
+        result.log(f"redacted credentials in {changed} archived file(s)")
+    try:
+        (dest / "workspace.tar.gz").write_bytes(cleaned)
+    except Exception as exc:
+        result.log(f"harvest write failed: {exc}")
         return False
     return True
 
 
-def _fetch_artifact(ctl: BoxController, box_id: str, remote: str,
-                    dest: Path) -> bool:
+def _fetch_artifact(ctl: BoxController, box_id: str, remote: str, dest: Path,
+                    secrets: Optional[Dict[str, str]] = None) -> bool:
     """Pull one small text artifact, sentinel-framed against ssh noise."""
     start, end = "__ART_START__", "__ART_END__"
     try:
@@ -180,8 +202,20 @@ def _fetch_artifact(ctl: BoxController, box_id: str, remote: str,
     body = out.split(start, 1)[1].rsplit(end, 1)[0].lstrip("\n")
     if not body.strip():
         return False
-    dest.write_text(body, encoding="utf-8")
+    dest.write_text(redact.redact(body, secrets or {}), encoding="utf-8")
     return True
+
+
+def _write_redacted(path: Path, text: str,
+                    secrets: Optional[Dict[str, str]] = None) -> None:
+    """Write a harness/provisioning log with credentials stripped.
+
+    These logs are ssh stdout. Provisioning echoes progress, and an agent's own
+    output lands in the phase logs — either can carry a key the run was handed.
+    Every file this driver writes goes through here for the same reason the
+    archive does: the disk write is the point of no return.
+    """
+    path.write_text(redact.redact(text or "", secrets or {}), encoding="utf-8")
 
 
 def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
@@ -193,6 +227,9 @@ def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
     run_dir = outdir / spec.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     box_id = ""
+    # Resolved once per run and threaded through every write. Includes this
+    # run's own Flywheel key, which no other run holds.
+    secrets = redact.secret_values(config.values)
 
     try:
         if guard is not None and guard.exceeded():
@@ -210,7 +247,7 @@ def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
 
         result.log(f"provisioning arm={arm.name} harness={harness.name}")
         pr = provision.apply(box_id, config, arm, harness, box=ctl)
-        (run_dir / "provision.log").write_text(pr.log, encoding="utf-8")
+        _write_redacted(run_dir / "provision.log", pr.log, secrets)
         if not pr.ok:
             result.note = "provisioning failed"
             result.log(result.note + " (see provision.log)")
@@ -241,9 +278,9 @@ def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
         runner.kill_mission(box_id, harness, box=ctl)
         result.coldstart_at = time.time()
         runner.fetch_log(box_id, f"{spec.run_id}-p1", box=ctl)
-        (run_dir / "phase1.log").write_text(
-            runner.fetch_log(box_id, f"{spec.run_id}-p1", box=ctl),
-            encoding="utf-8")
+        _write_redacted(run_dir / "phase1.log",
+                        runner.fetch_log(box_id, f"{spec.run_id}-p1", box=ctl),
+                        secrets)
 
         # --- phase 2: a fresh session, same box, same disk -------------------
         ok, note = runner.launch(box_id, f"{spec.run_id}-p2", load_continuation(),
@@ -259,9 +296,9 @@ def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
         result.log("budget reached: stopping the session")
         runner.kill_mission(box_id, harness, box=ctl)
         result.ended_at = time.time()
-        (run_dir / "phase2.log").write_text(
-            runner.fetch_log(box_id, f"{spec.run_id}-p2", box=ctl),
-            encoding="utf-8")
+        _write_redacted(run_dir / "phase2.log",
+                        runner.fetch_log(box_id, f"{spec.run_id}-p2", box=ctl),
+                        secrets)
 
         # --- harvest BEFORE teardown: the box is the only copy ---------------
         # `vectors.txt` is ~68 MB of text (measured on the pilot). It travels
@@ -275,8 +312,8 @@ def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
             timeout=60.0)
         got_vectors = "HAVE_VECTORS" in probe
         _fetch_artifact(ctl, box_id, "~/research/artifacts/results.json",
-                        run_dir / "results.json")
-        result.harvested = _harvest(ctl, box_id, run_dir, result)
+                        run_dir / "results.json", secrets)
+        result.harvested = _harvest(ctl, box_id, run_dir, result, secrets)
         # A run whose evidence did not come home is NOT complete. Saying so is
         # the difference between noticing at teardown and noticing at analysis,
         # by which point the box is gone — the pilot reported "complete" over a

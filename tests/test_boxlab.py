@@ -261,6 +261,119 @@ def test_harvest_excludes_live_credentials():
     assert "--exclude='.pi/agent/mcp.json'" in src
 
 
+# ---- redaction ----------------------------------------------------------------
+
+def test_redaction_removes_every_known_secret_value():
+    """Exact values first — the layer that cannot miss what it was told about."""
+    from boxlab.redact import redact, secret_values
+    values = {
+        "OPENROUTER_API_KEY": "sk-or-v1-" + "a" * 40,
+        "GITHUB_TOKEN": "ghp_" + "B" * 36,
+        "FLYWHEEL_API_KEY": "fw_live_" + "9" * 32,
+        "GITHUB_OWNER": "boxwheel",
+    }
+    secrets = secret_values(values)
+    # An account name is not a credential: redacting it would mangle every URL
+    # in every transcript and protect nothing.
+    assert "GITHUB_OWNER" not in secrets
+    out = redact("\n".join(f"{k}={v}" for k, v in values.items()), secrets)
+    for name, value in values.items():
+        if name == "GITHUB_OWNER":
+            assert "boxwheel" in out
+        else:
+            assert value not in out
+            assert f"<REDACTED:{name}>" in out
+
+
+def test_redaction_catches_secret_shapes_it_was_never_told_about():
+    """The layer that matters after a rotation: a key nobody registered.
+
+    `secret_values` only knows the keys this process holds. A token an agent
+    minted itself, or one rotated last week and still sitting in an old
+    transcript, is caught by shape or not at all.
+    """
+    from boxlab.redact import redact, scan_text
+    text = ("token=ghp_" + "C" * 36 + "\n"
+            "export OPENROUTER_API_KEY=sk-or-v1-" + "d" * 44 + "\n"
+            "Authorization: Bearer " + "e" * 40 + "\n"
+            "github_pat_" + "F" * 30 + "\n")
+    assert scan_text(text), "the scanner must see these before redaction"
+    out = redact(text, {})  # no known values at all
+    assert not scan_text(out), out
+
+
+def test_redaction_leaves_ordinary_prose_alone():
+    """A redactor that mangles transcripts protects nothing anyone will read."""
+    from boxlab.redact import redact, secret_values
+    prose = ("The tokenization step ran in 4s. GITHUB_OWNER=boxwheel pushed to "
+             "https://github.com/boxwheel/word2vec. Password rotation is a "
+             "separate task.\n")
+    assert redact(prose, secret_values({"GITHUB_OWNER": "boxwheel"})) == prose
+
+
+def test_short_values_are_never_treated_as_secrets():
+    """Replacing a 3-character 'secret' corrupts every file it appears in."""
+    from boxlab.redact import secret_values
+    assert secret_values({"GITHUB_TOKEN": "abc"}) == {}
+
+
+def test_redact_archive_rewrites_members_and_reports_the_count(tmp_path):
+    """Nothing unredacted may reach disk, so the rewrite happens in memory."""
+    import io
+    import tarfile
+    from boxlab.redact import redact_archive
+
+    key = "sk-or-v1-" + "z" * 40
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, body in (("session.jsonl", f'{{"cmd":"cat .env","out":"{key}"}}'),
+                           ("vectors.txt", "the 0.1 0.2 0.3")):
+            data = body.encode()
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+    cleaned, changed = redact_archive(buf.getvalue(),
+                                      {"OPENROUTER_API_KEY": key})
+    assert changed == 1
+    with tarfile.open(fileobj=io.BytesIO(cleaned)) as tf:
+        members = {m.name: tf.extractfile(m).read().decode() for m in tf}
+    assert key not in members["session.jsonl"]
+    assert "<REDACTED:OPENROUTER_API_KEY>" in members["session.jsonl"]
+    # A member's recorded size must follow its rewritten body, or every
+    # subsequent member reads at the wrong offset and the archive is scrap.
+    assert members["vectors.txt"] == "the 0.1 0.2 0.3"
+
+
+def test_an_unredactable_archive_is_discarded_not_written():
+    """A harvest that cannot be cleaned must not fall back to writing it raw."""
+    import inspect
+    from boxlab import experiment
+    src = inspect.getsource(experiment._harvest)
+    assert "redact_archive" in src
+    assert "changed < 0" in src
+    # The redaction must sit between the decode and the write, not after it.
+    # Compared over the body only: the docstring names `write_bytes` too, and
+    # matching that instead would make this assertion pass on any ordering.
+    body = src.split('"""')[-1]
+    assert body.index("redact_archive") < body.index("write_bytes")
+
+
+def test_no_harvested_file_under_research_runs_contains_a_secret():
+    """The standing guarantee: nothing secret-shaped is on disk under runs/.
+
+    This is the test the nine-run benchmark did not have. Twenty transcripts
+    carrying live `OPENROUTER_API_KEY` and `GITHUB_TOKEN` values were committed
+    across sixteen commits, and nothing failed.
+    """
+    from boxlab.redact import scan_tree
+    runs = ROOT / "research" / "runs"
+    findings = scan_tree(runs)
+    assert not findings, (
+        f"{len(findings)} secret-shaped value(s) under {runs}: "
+        + "; ".join(f"{p}:{ln} ({label})" for p, ln, label in findings[:10]))
+
+
 def test_spend_guard_treats_an_unreadable_status_as_exceeded():
     """Launching blind is how a budget cap becomes decorative."""
     from boxlab.spend import SpendGuard
