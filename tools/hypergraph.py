@@ -2880,13 +2880,24 @@ def pending_push_drift(side: GraphSide) -> list[Drift]:
 
 # -------------------------------------------------------------- flywheel mirror
 
-def push_plan(graph_dir: Path) -> dict:
+def tags_sha256(names: list[str]) -> str:
+    """A stamp for a node's tag set, deliberately **separate** from `content_sha256`.
+
+    Folding tags into the body hash would be cheaper by one field and wrong twice
+    over: `verify_mirror` and `push_legend` both rest on body byte-identity, and every
+    existing adopter's entire graph would re-push the first time this shipped. A
+    sibling stamp in the same `flywheel:` block costs one line and breaks nothing."""
+    return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
+
+
+def push_plan(graph_dir: Path, *, do_tags: bool = True) -> dict:
     """Diff local files against their `flywheel:` frontmatter → an ordered op list.
 
     This tool never calls MCP; the skill layer executes the plan and feeds the
     returned ids back via `push --record-result` (backend/local-adapter.md)."""
     ops: list[dict] = []
     violations: list[str] = []
+    tag_ops: list[dict] = []
     for kind in GRAPH_KINDS:
         nodes = load_local_nodes(graph_dir, kind, missing_ok=True)
         local_graph(nodes, kind)  # validates parent references before planning writes
@@ -2900,6 +2911,18 @@ def push_plan(graph_dir: Path) -> dict:
                 "summary": str(node.meta.get("summary") or ""),
                 "content_sha256": node.sha256,
             }
+            if do_tags:
+                stamp = flywheel.get("tags_sha256")
+                want = tags_sha256(node.tags)
+                # The `or` clause is what makes *clearing* tags possible: with no
+                # stamp and no tags there is nothing to do, but a stamp with an empty
+                # list is a node whose tags were removed locally, and without this it
+                # would stay tagged on the mirror forever.
+                if (node.tags and stamp != want) or (stamp and not node.tags):
+                    tag_ops.append({"graph": kind, "slug": node.slug, "op": "tags",
+                                    "tags": list(node.tags), "tags_sha256": want,
+                                    "flywheel_node_id": flywheel.get("node_id"),
+                                    "base_revision": flywheel.get("revision")})
             if not flywheel.get("node_id"):
                 parent_fw = []
                 for parent in node.parents:
@@ -2917,8 +2940,11 @@ def push_plan(graph_dir: Path) -> dict:
                             "flywheel_node_id": flywheel.get("node_id"),
                             "flywheel_slug": flywheel.get("slug"),
                             "base_revision": flywheel.get("revision")})
+    # A second pass, appended after every node op: a tag assignment needs the node to
+    # exist, and a node created in this same run only gets its mirror id from
+    # `minted` partway through the loop above.
     return {"version": EXPORT_VERSION, "graph_dir": str(graph_dir),
-            "generated_at": utc_now(), "ops": ops, "violations": violations}
+            "generated_at": utc_now(), "ops": ops + tag_ops, "violations": violations}
 
 
 def _load_export_nodes(path: Path) -> dict[str, dict]:
@@ -3142,6 +3168,11 @@ def apply_push_results(graph_dir: Path, results: object, *,
             raise LocalGraphError(f"result for `{slug}` carries no Flywheel node_id")
         fw["pushed_at"] = str(entry.get("pushed_at") or utc_now())
         fw["content_sha256"] = str(entry.get("content_sha256") or node.sha256)
+        # A sibling of content_sha256, never folded into it: the body hash is what
+        # `verify_mirror` and `push_legend` rest on, and moving it would re-push every
+        # existing adopter's whole graph the first time this shipped.
+        if entry.get("tags_sha256") is not None:
+            fw["tags_sha256"] = str(entry["tags_sha256"])
         meta = dict(node.meta)
         meta["flywheel"] = fw
         node.path.write_text(render_node_file(meta, node.content))
@@ -3866,6 +3897,75 @@ class FlywheelCliTransport:
     def delete_node(self, node_id: str, *, mode: str = "detach_shared") -> None:
         self._run("nodes:delete", node_id=node_id, delete_mode=mode, extra=["--yes"])
 
+    # --- op 10: tags -----------------------------------------------------------
+    def graph_tags(self, root_node_id: str) -> tuple[list[dict], int]:
+        """The vocabulary on one graph root, plus that root's current revision.
+
+        There is **no `tags:list`**. The vocabulary comes back on any node under
+        `--projection full`, as `graph_tags`. An absent key **raises**: reading it as
+        "this graph has no tags" would make the next push re-create all 22 of them,
+        which is the duplicate-definition failure this whole feature guards against."""
+        raw = self._run("nodes:get", node_id=root_node_id, projection="full")
+        return _parse_graph_tags(raw, context=f"nodes:get {root_node_id} (full)")
+
+    def create_tag(self, *, root_node_id: str, name: str, expected_revision: int,
+                   bg_color: str, text_color: str, one_only: bool = False,
+                   track_history: bool = False) -> dict:
+        """One `tags:create`. **Never blind-retried** — creates cannot be de-duplicated.
+
+        `expected_revision` must be re-read before every call: each create bumps the
+        root revision, so a revision computed once and reused across a 22-tag loop is
+        stale after the first."""
+        # argv trap: `_run` renders `--{k}={v}` for anything non-None, so a Python
+        # False would become the *truthy string* `--one_only=False`. These are
+        # store-true flags — omit them, or pass them bare.
+        extra = ([f"--one_only"] if one_only else []) + \
+                (["--track_history"] if track_history else [])
+        raw = self._run("tags:create", root_node_id=root_node_id, name=name,
+                        expected_revision=int(expected_revision), bg_color=bg_color,
+                        text_color=text_color, extra=extra)
+        return _parse_tag(raw, context=f"tags:create {name}")
+
+    def assign_tags(self, *, node_id: str, tag_ids: list[str],
+                    expected_revision: int) -> None:
+        """Atomic replace of a node's whole tag set. Bumps the *node* revision."""
+        self._run("tags:assign", node_id=node_id, tag_ids=",".join(tag_ids),
+                  expected_revision=int(expected_revision))
+
+
+def _parse_graph_tags(raw: object, *, context: str) -> tuple[list[dict], int]:
+    """A full-projection node response → (its graph's tag definitions, root revision)."""
+    if isinstance(raw, dict) and isinstance(raw.get("node"), dict):
+        raw = raw["node"]
+    if not isinstance(raw, dict):
+        raise MirrorError(f"{context}: expected a node object, got {type(raw).__name__}")
+    if "graph_tags" not in raw:
+        raise MirrorError(
+            f"{context}: the response carries no `graph_tags` key (keys: "
+            f"{sorted(raw)[:10]}). Refusing to read that as \"this graph has no "
+            "tags\" — that would re-create the whole vocabulary on the next push, "
+            "and a duplicate tag definition cannot be cleanly merged.")
+    tags = [t for t in (raw.get("graph_tags") or []) if isinstance(t, dict)]
+    revision = raw.get("revision", raw.get("committed_revision"))
+    if revision is None:
+        raise MirrorError(
+            f"{context}: no revision on the root. `tags:create` locks against it and "
+            "refusing to assume 0 is the same rule as everywhere else here.")
+    return tags, int(revision)
+
+
+def _parse_tag(raw: object, *, context: str) -> dict:
+    """A `tags:create` response → the tag definition, or a loud failure."""
+    if isinstance(raw, dict) and isinstance(raw.get("tag"), dict):
+        raw = raw["tag"]
+    if not isinstance(raw, dict) or not raw.get("tag_id"):
+        raise MirrorError(
+            f"{context}: response carries no tag_id "
+            f"(keys: {sorted(raw)[:8] if isinstance(raw, dict) else type(raw).__name__}) "
+            "— refusing to guess what was created, because a second create of the same "
+            "name is unrecoverable.")
+    return raw
+
 
 class FlywheelRestTransport(FlywheelCliTransport):
     """Explicit fallback for machines without the npm binary.
@@ -4011,6 +4111,26 @@ class FlywheelRestTransport(FlywheelCliTransport):
 
     def delete_node(self, node_id: str, *, mode: str = "detach_shared") -> None:
         self._request("DELETE", f"/nodes/{node_id}", query={"delete_mode": mode})
+
+    # --- op 10: tags -----------------------------------------------------------
+    def graph_tags(self, root_node_id: str) -> tuple[list[dict], int]:
+        raw = self._request("GET", f"/nodes/{root_node_id}",
+                            query={"projection": "full"})
+        return _parse_graph_tags(raw, context=f"GET /nodes/{root_node_id} (full)")
+
+    def create_tag(self, *, root_node_id: str, name: str, expected_revision: int,
+                   bg_color: str, text_color: str, one_only: bool = False,
+                   track_history: bool = False) -> dict:
+        raw = self._request("POST", f"/nodes/{root_node_id}/tags", body={
+            "name": name, "expected_revision": int(expected_revision),
+            "bg_color": bg_color, "text_color": text_color,
+            "one_only": bool(one_only), "track_history": bool(track_history)})
+        return _parse_tag(raw, context=f"POST /nodes/{root_node_id}/tags ({name})")
+
+    def assign_tags(self, *, node_id: str, tag_ids: list[str],
+                    expected_revision: int) -> None:
+        self._request("PUT", f"/nodes/{node_id}/tags", body={
+            "tag_ids": list(tag_ids), "expected_revision": int(expected_revision)})
 
 
 def make_transport(config: dict, *, run_dir: Path, prefer: str = "auto"):
@@ -4279,7 +4399,8 @@ def _repo_context_for(node: LocalNode) -> dict:
 
 def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJournal,
                  pacer: Pacer, batch: int = 20, limit: int | None = None,
-                 dry_run: bool = False, do_legend: bool = True, out=print) -> dict:
+                 dry_run: bool = False, do_legend: bool = True, do_tags: bool = True,
+                 out=print) -> dict:
     """Plan → execute → fold, resumable at every point.
 
     `push_plan()` is a pure diff against each file's `flywheel:` frontmatter, so it
@@ -4293,7 +4414,7 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
         out(f"push: folded {applied} recovered write(s) into the node files")
 
     # 2. plan *after* the fold — the fold changed what the plan is a diff against
-    plan = push_plan(graph_dir)
+    plan = push_plan(graph_dir, do_tags=do_tags)
     if plan["violations"]:
         for violation in plan["violations"]:
             out(f"VIOLATION {violation}")
@@ -4303,20 +4424,26 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
             "node(s). Fix the local edit — a correction is a new child node, not an "
             "edit (SPEC: record nodes are immutable).")
 
-    ops = plan["ops"]
+    # Tag ops are executed by `push_tags` after the node loop and the result fold, so
+    # a node created in this same run already carries its mirror id by then.
+    all_ops = plan["ops"]
+    ops = [o for o in all_ops if o["op"] != "tags"]
+    tag_ops = [o for o in all_ops if o["op"] == "tags"]
     if limit is not None:
         ops = ops[:limit]
     creates = sum(1 for o in ops if o["op"] == "create")
-    out(f"push: {creates} create(s), {len(ops) - creates} update(s)")
-    if not ops:
+    out(f"push: {creates} create(s), {len(ops) - creates} update(s)"
+        + (f", {len(tag_ops)} tag assignment(s)" if tag_ops else ""))
+    if not ops and not tag_ops:
         out("push: mirror already matches the node files — nothing to do")
-        return {"created": 0, "updated": 0, "ops": 0}
+        return {"created": 0, "updated": 0, "ops": 0, "tagged": 0}
 
     if dry_run:
-        for op in ops:
-            out(f"  would {op['op']:6} {op['graph']:6} {op['slug']}")
+        for op in all_ops:
+            out(f"  would {op['op']:6} {op['graph']:6} {op['slug']}"
+                + (f"   [{', '.join(op['tags'])}]" if op["op"] == "tags" else ""))
         return {"created": creates, "updated": len(ops) - creates, "ops": len(ops),
-                "dry_run": True}
+                "tagged": len(tag_ops), "dry_run": True}
 
     nodes = {}
     for kind in GRAPH_KINDS:
@@ -4408,9 +4535,12 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
             flush()
     flush()
 
+    tagged = 0
+    if tag_ops:
+        tagged = push_tags(graph_dir, config, roots, transport, pacer=pacer, out=out)
     if do_legend:
         push_legend(graph_dir, roots["record"], transport, pacer=pacer, out=out)
-    return {"created": created, "updated": updated, "ops": len(ops)}
+    return {"created": created, "updated": updated, "ops": len(ops), "tagged": tagged}
 
 
 def push_legend(graph_dir: Path, record_root_id: str, transport, *, pacer: Pacer,
@@ -4445,6 +4575,148 @@ def push_legend(graph_dir: Path, record_root_id: str, transport, *, pacer: Pacer
         pacer=pacer, what="update legend", out=out)
     out("  legend: updated")
     return "updated"
+
+
+def reconcile_tag_vocabulary(kind: str, root_id: str, wanted: list[dict], transport, *,
+                             pacer: Pacer, vocab: dict, tags_path: Path,
+                             out=print) -> tuple[dict[str, str], list[str]]:
+    """Make the mirror root's vocabulary hold every wanted name. → ({name: tag_id}, notes)
+
+    **Resolve by name first, always.** A duplicate tag definition is the one
+    unrecoverable failure here, exactly as a duplicate node is: `tags:delete` un-tags
+    every node that used the tag, so there is no clean retraction. Every guard in this
+    function — the committed `tags.yml`, the name lookup, the re-read below — exists
+    for that one reason.
+
+    Idempotent by inspection, with no journal. That is the whole reason to resolve by
+    name: a crashed run leaves a tag that the next run *finds* rather than repeats."""
+    live, root_revision = transport.graph_tags(root_id)
+    by_name = {str(t.get("name") or ""): t for t in live}
+    notes: list[str] = []
+    ids: dict[str, str] = {}
+
+    for entry in wanted:
+        name = str(entry["name"])
+        found = by_name.get(name)
+        if found is not None:
+            ids[name] = str(found.get("tag_id") or "")
+            # Reported, never repaired. `tags:update` would rewrite a definition
+            # someone may have deliberately restyled on the host, and no invariant
+            # reads a colour or a flag.
+            for key in ("bg_color", "text_color"):
+                mine, theirs = entry.get(key), found.get(key)
+                if mine and theirs and str(mine).upper() != str(theirs).upper():
+                    notes.append(f"{name}: {key} differs (local {mine}, mirror {theirs})")
+            for key in ("one_only", "track_history"):
+                mine, theirs = entry.get(key), found.get(key)
+                if mine is not None and theirs is not None and bool(mine) != bool(theirs):
+                    notes.append(f"{name}: {key} differs (local {bool(mine)}, "
+                                 f"mirror {bool(theirs)})")
+            continue
+        tag = mirror_call(
+            lambda entry=entry, rev=root_revision: transport.create_tag(
+                root_node_id=root_id, name=str(entry["name"]),
+                expected_revision=int(rev),
+                bg_color=str(entry.get("bg_color") or synth_tag(str(entry["name"]))["bg_color"]),
+                text_color=str(entry.get("text_color") or synth_tag(str(entry["name"]))["text_color"]),
+                one_only=bool(entry.get("one_only")),
+                track_history=bool(entry.get("track_history"))),
+            pacer=pacer, what=f"create tag {name}", out=out)
+        ids[name] = str(tag.get("tag_id") or "")
+        # **Never compute the next root revision.** Each create bumps it, and a
+        # guessed `+1` is the same class of bug as defaulting a missing revision to 0.
+        live, root_revision = transport.graph_tags(root_id)
+        by_name = {str(t.get("name") or ""): t for t in live}
+        # Written after *each* create, not at the end: a crash between two creates
+        # must leave the first one recorded, or the next run creates it twice.
+        merge_tag_def(vocab, kind, {"name": name, "flywheel": {
+            "tag_id": ids[name], "root_node_id": root_id, "pushed_at": utc_now()}})
+        write_tag_vocab(tags_path, vocab)
+        out(f"  tag: created `{name}` ({ids[name]})")
+    return ids, notes
+
+
+def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: Pacer,
+              out=print) -> int:
+    """Create the vocabulary on the mirror roots, then assign it per node.
+
+    Runs after the node loop and its result fold, so a node created in the same run
+    already carries the `flywheel.node_id` an assignment needs."""
+    tags_path = tags_file_for(config, graph_dir)
+    vocab = load_tag_vocab(tags_path)
+    assigned = 0
+
+    for kind in GRAPH_KINDS:
+        nodes = load_local_nodes(graph_dir, kind, missing_ok=True)
+        used = sorted({name for node in nodes.values() for name in node.tags})
+        declared = [dict(e) for e in tag_vocab_entries(vocab, kind)]
+        known = {str(e["name"]) for e in declared}
+        # An undeclared name in use still travels: the vocabulary is optional, and a
+        # name with no declaration gets its colour from its own digest.
+        wanted = declared + [{"name": n, **synth_tag(n)} for n in used if n not in known]
+        pending = [node for node in nodes.values()
+                   if node.tags or (node.meta.get("flywheel") or {}).get("tags_sha256")]
+        if not wanted or not pending:
+            continue
+
+        ids, notes = reconcile_tag_vocabulary(
+            kind, roots[kind], wanted, transport, pacer=pacer, vocab=vocab,
+            tags_path=tags_path, out=out)
+        for note in notes:
+            out(f"  tag drift (reported, not repaired) {note}")
+
+        results: list[dict] = []
+        for node in pending:
+            fw = node.meta.get("flywheel") or {}
+            node_id = str(fw.get("node_id") or "")
+            if not node_id:
+                out(f"  tag: skipping `{node.slug}` — not on the mirror yet")
+                continue
+            want = tags_sha256(node.tags)
+            if fw.get("tags_sha256") == want:
+                continue
+            tag_ids = [ids[name] for name in sorted(node.tags) if ids.get(name)]
+            revision = fw.get("revision")
+            if revision is None:
+                revision = transport.get_node(node_id).revision
+
+            def _reissue(_exc, _node_id=node_id, _tag_ids=tag_ids):
+                """The one place the no-blind-retry rule inverts, on purpose.
+
+                `tags:assign` is an **atomic replace**, so re-issuing it cannot
+                duplicate anything — the worst case is writing the same set twice.
+                A create has no such property and keeps the rule."""
+                live = transport.get_node(_node_id)
+                if live.revision is None:
+                    return None
+                transport.assign_tags(node_id=_node_id, tag_ids=_tag_ids,
+                                      expected_revision=int(live.revision))
+                return True
+
+            mirror_call(
+                lambda nid=node_id, tids=tag_ids, rev=revision: transport.assign_tags(
+                    node_id=nid, tag_ids=tids, expected_revision=int(rev)),
+                pacer=pacer, what=f"assign tags {node.slug}", retry_conflict=_reissue,
+                out=out)
+            # **The revision fold is not optional.** `tags:assign` bumps the node
+            # revision, and `verify_mirror` treats revision skew as a violation — so
+            # skipping this leaves one permanent false drift finding per tagged node.
+            # Read it back; the mutating response schema is `{}`, so never assume +1.
+            live = transport.get_node(node_id)
+            if live.revision is None:
+                raise MirrorError(
+                    f"assign tags {node.slug}: the mirror reported no revision after "
+                    "the assignment. Refusing to stamp a guess — an unstamped tag push "
+                    "reads as drift on every later verify.")
+            results.append({"slug": node.slug,
+                            "flywheel": {"node_id": node_id, "slug_name": live.slug,
+                                         "revision": live.revision},
+                            "content_sha256": node.sha256, "tags_sha256": want})
+            assigned += 1
+        if results:
+            apply_push_results(graph_dir, results, nodes=nodes)
+            out(f"  tags: assigned on {len(results)} {kind} node(s)")
+    return assigned
 
 
 def push_lineage(graph_dir: Path, config: dict, record_root_id: str, transport, *,
@@ -4679,13 +4951,14 @@ def cmd_push(args: argparse.Namespace) -> int:
 
     summary = execute_push(graph_dir, config, transport, journal=journal, pacer=pacer,
                            batch=args.batch, limit=args.limit, dry_run=args.dry_run,
-                           do_legend=not args.no_legend)
+                           do_legend=not args.no_legend, do_tags=not args.no_tags)
     if summary.get("dry_run"):
         return 0
     if config.get("archive"):
         push_lineage(graph_dir, config, mirror_root_ids(config)["record"], transport,
                      pacer=pacer)
-    print(f"push: {summary['created']} created, {summary['updated']} updated")
+    print(f"push: {summary['created']} created, {summary['updated']} updated"
+          + (f", {summary['tagged']} tagged" if summary.get("tagged") else ""))
     if not args.no_verify:
         report = verify_against_mirror(graph_dir, config, transport, cache_dir=cache_dir)
         if report.violations():
@@ -4722,7 +4995,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         verify=False, against=None, strict=False, legend=False, lineage=False,
         output=None,
         dry_run=args.dry_run, batch=args.batch, limit=None, yes=args.yes,
-        no_legend=False, no_verify=args.no_verify, skip_preflight=args.skip_preflight,
+        no_legend=False, no_tags=args.no_tags, no_verify=args.no_verify,
+        skip_preflight=args.skip_preflight,
         transport=args.transport, rate=args.rate, journal=args.journal,
         allow_any_branch=args.allow_any_branch, require_mirror=args.require_mirror)
     return cmd_push(push_args)
@@ -9304,6 +9578,8 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"proceed without confirming a plan above {PUSH_CREATE_WARN} creates")
     p_push.add_argument("--no-legend", action="store_true",
                         help="skip refreshing the mirror-only slug legend")
+    p_push.add_argument("--no-tags", action="store_true",
+                        help="skip the tag vocabulary and per-node assignments")
     p_push.add_argument("--no-verify", action="store_true",
                         help="skip the drift check after publishing")
     p_push.add_argument("--skip-preflight", action="store_true",
@@ -9340,6 +9616,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="stop after export/render/check")
     p_sync.add_argument("--no-verify", action="store_true",
                         help="skip the drift check after publishing")
+    p_sync.add_argument("--no-tags", action="store_true",
+                        help="skip the tag vocabulary and per-node assignments")
     p_sync.add_argument("--skip-preflight", action="store_true")
     p_sync.add_argument("--dry-run", action="store_true")
     p_sync.add_argument("--batch", type=int, default=20, metavar="N")

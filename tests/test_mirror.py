@@ -49,6 +49,7 @@ class FakeTransport:
         self.kids: dict[str, list[str]] = {}
         self.calls: list[tuple[str, str]] = []
         self.faults: dict[str, list] = {}      # what → exceptions to raise, in order
+        self.tags: dict[str, list[dict]] = {}  # root node_id → tag definitions
         self.user_id = user_id
         self._slug_by_sha: dict[str, str] = {}
         if graph_dir is not None:
@@ -138,13 +139,63 @@ class FakeTransport:
             queue.extend(self.kids.get(nid, []))
         out = Path(out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps({"version": 1,
-                                   "nodes": [self.nodes[n] for n in sorted(reach)]}))
+        exported = []
+        for nid in sorted(reach):
+            raw = dict(self.nodes[nid])
+            if nid in self.tags:      # the host echoes the vocabulary on graph roots
+                raw["graph_tags"] = [dict(t) for t in self.tags[nid]]
+            exported.append(raw)
+        out.write_text(json.dumps({"version": 1, "nodes": exported}))
         return out
 
     def delete_node(self, node_id, *, mode="detach_shared"):
         self.calls.append(("delete", node_id))
         self.nodes.pop(node_id, None)
+
+    # --- op 10: tags ---------------------------------------------------------
+    # Models the two properties the real host has and a naive fake would not:
+    # `tags:create` bumps the *root* revision every time, and `tags:assign` is an
+    # atomic replace that bumps the *node* revision.
+    def graph_tags(self, root_node_id):
+        self.calls.append(("graph_tags", root_node_id))
+        self._maybe_fail("graph_tags")
+        raw = self.nodes.get(root_node_id)
+        if raw is None:
+            raise hg.MirrorError(f"nodes:get {root_node_id}: not found")
+        return list(self.tags.get(root_node_id, [])), int(raw["revision"])
+
+    def create_tag(self, *, root_node_id, name, expected_revision, bg_color,
+                   text_color, one_only=False, track_history=False):
+        self.calls.append(("create_tag", name))
+        self._maybe_fail(f"create_tag {name}")
+        self._maybe_fail("create_tag")
+        root = self.nodes[root_node_id]
+        if int(expected_revision) != int(root["revision"]):
+            raise hg.MirrorConflict(
+                f"tags:create {name}: stale root revision "
+                f"({expected_revision} vs {root['revision']})")
+        existing = self.tags.setdefault(root_node_id, [])
+        if any(t["name"] == name for t in existing):
+            raise AssertionError(
+                f"duplicate tag definition for {name!r} — resolve-by-name failed")
+        tag = {"tag_id": f"tag-{name}", "name": name, "bg_color": bg_color,
+               "text_color": text_color, "one_only": bool(one_only),
+               "track_history": bool(track_history)}
+        existing.append(tag)
+        root["revision"] += 1          # every create moves the root
+        return dict(tag)
+
+    def assign_tags(self, *, node_id, tag_ids, expected_revision):
+        self.calls.append(("assign_tags", node_id))
+        self._maybe_fail(f"assign_tags {node_id}")
+        self._maybe_fail("assign_tags")
+        raw = self.nodes.get(node_id)
+        if raw is None:
+            raise hg.MirrorError(f"tags:assign {node_id}: not found")
+        if int(expected_revision) != int(raw["revision"]):
+            raise hg.MirrorConflict(f"tags:assign {node_id}: stale revision")
+        raw["tag_ids"] = list(tag_ids)     # atomic replace, never an add
+        raw["revision"] += 1               # and it moves the node
 
     # --- assertions ----------------------------------------------------------
     def creates(self):
@@ -228,9 +279,103 @@ def test_second_push_is_a_no_op(tmp_path):
     push(graph_dir, config, fake)
     before = len(fake.calls)
     summary = push(graph_dir, config, fake)
-    assert summary == {"created": 0, "updated": 0, "ops": 0}
+    assert summary == {"created": 0, "updated": 0, "ops": 0, "tagged": 0}
     assert len(fake.creates()) == 5                       # nothing new was minted
     assert len(fake.calls) == before                      # and nothing was even asked
+
+
+# --------------------------------------------------------------------- tags
+
+def tagged_graph(tmp_path, **by_slug):
+    """local_graph_copy with `tags:` written onto the named nodes."""
+    graph_dir = local_graph_copy(tmp_path)
+    for slug, names in by_slug.items():
+        path = next(graph_dir.glob(f"*/{slug}.md"))
+        meta, body = hg.split_frontmatter(path.read_text())
+        meta["tags"] = list(names)
+        path.write_text(hg.render_node_file(meta, body))
+    return graph_dir
+
+
+def test_push_creates_the_vocabulary_then_assigns_it(tmp_path):
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["kind:method"],
+                                          "brave-otter-1002": ["kind:method", "outcome:GREEN"],
+                                          "quiet-summit-2002": ["cluster:x"]})
+    fake = FakeTransport(graph_dir)
+    summary = push(graph_dir, config_for(graph_dir), fake)
+
+    assert summary["tagged"] == 3
+    # record-graph names land on the record root, state-graph names on the state root
+    assert sorted(t["name"] for t in fake.tags[RECORD_ROOT]) == ["kind:method", "outcome:GREEN"]
+    assert [t["name"] for t in fake.tags[STATE_ROOT]] == ["cluster:x"]
+    assert sorted(fake.nodes["fw-brave-otter-1002"]["tag_ids"]) == \
+        ["tag-kind:method", "tag-outcome:GREEN"]
+
+
+def test_push_tags_folds_the_bumped_revision_so_verify_stays_clean(tmp_path):
+    """The trap: `tags:assign` bumps the node revision, and `verify_mirror` calls
+    revision skew a violation. Not folding it back is 188 false findings a week on."""
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["kind:method"]})
+    fake = FakeTransport(graph_dir)
+    config = config_for(graph_dir)
+    push(graph_dir, config, fake)
+
+    meta, _body = hg.split_frontmatter((graph_dir / "record" / "wise-anchor-1001.md").read_text())
+    assert meta["flywheel"]["revision"] == fake.nodes["fw-wise-anchor-1001"]["revision"]
+    assert meta["flywheel"]["tags_sha256"] == hg.tags_sha256(["kind:method"])
+    report = hg.verify_against_mirror(graph_dir, config, fake,
+                                      cache_dir=Path(config["cache_dir"]),
+                                      out=lambda *_a: None)
+    assert report.violations() == []
+
+
+def test_push_tags_is_idempotent_and_resolves_by_name(tmp_path):
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["kind:method"]})
+    fake = FakeTransport(graph_dir)
+    config = config_for(graph_dir)
+    push(graph_dir, config, fake)
+    before = len(fake.calls)
+    assert push(graph_dir, config, fake)["tagged"] == 0
+    assert len(fake.calls) == before                 # nothing was even asked
+
+    # a fresh repo pushing the same name to the same root must *find* the tag, not
+    # mint a second one — FakeTransport raises on a duplicate definition
+    path = graph_dir / "record" / "wise-anchor-1001.md"
+    stripped = path.read_text().replace(
+        f"  tags_sha256: {hg.tags_sha256(['kind:method'])}\n", "")
+    assert stripped != path.read_text()          # the stamp really was there
+    path.write_text(stripped)
+    assert push(graph_dir, config, fake)["tagged"] == 1
+    assert [t["name"] for t in fake.tags[RECORD_ROOT]] == ["kind:method"]
+
+
+def test_clearing_tags_locally_is_pushed_rather_than_silently_ignored(tmp_path):
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["kind:method"]})
+    fake = FakeTransport(graph_dir)
+    config = config_for(graph_dir)
+    push(graph_dir, config, fake)
+    path = graph_dir / "record" / "wise-anchor-1001.md"
+    meta, body = hg.split_frontmatter(path.read_text())
+    meta.pop("tags")
+    path.write_text(hg.render_node_file(meta, body))
+    assert push(graph_dir, config, fake)["tagged"] == 1
+    assert fake.nodes["fw-wise-anchor-1001"]["tag_ids"] == []
+
+
+def test_push_no_tags_leaves_the_mirror_untagged(tmp_path):
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["kind:method"]})
+    fake = FakeTransport(graph_dir)
+    push(graph_dir, config_for(graph_dir), fake, do_tags=False)
+    assert fake.tags == {}
+    assert not [c for c in fake.calls if c[0] in ("create_tag", "assign_tags")]
+
+
+def test_a_missing_graph_tags_key_raises_rather_than_reading_as_no_tags(tmp_path):
+    """Reading an absent key as "no tags" re-creates the whole vocabulary next push."""
+    with pytest.raises(hg.MirrorError, match="graph_tags"):
+        hg._parse_graph_tags({"node_id": "r-1", "revision": 3}, context="probe")
+    assert hg._parse_graph_tags({"node_id": "r", "revision": 3, "graph_tags": []},
+                                context="probe") == ([], 3)
 
 
 def test_update_reads_the_live_revision_when_frontmatter_has_none(tmp_path):
