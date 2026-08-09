@@ -23,6 +23,7 @@ Status: working
 - Flywheel is now optional rather than load-bearing, and the two compose: `backend: local` + `mirror: flywheel` keeps files canonical and Flywheel a regenerable projection, refreshed by `push --plan` → skill executes → `push --record-result`; first live push applied 7 ops with no revision conflicts [rec: old-dawn-8747] [rec: kind-valley-8040].
 - The projection-trust gap is closed: `push --verify --against <fresh export>` detects drift the plan cannot see (missing nodes, body-hash and summary mismatches, revision skew), and a mirror-only slug legend node — regenerated on every push, excluded from import and verify — makes local slugs readable on the mirror; the first live verify caught and fixed three real byte deviations on this repo's own mirror [rec: careful-harbor-3902].
 - The sequencing bet in patient-limit-9007 — build-vs-defer decided only after field dogfooding — was overtaken: the adapter shipped first, so the interface was proven by a second implementation rather than by field use [rec: patient-limit-9007] [rec: old-dawn-8747].
+- **The mirror is currently UNREACHABLE and could not be refreshed** (2026-08-09). A 17-op plan failed on every op; nothing was written, the account is back to exactly its 458 starting nodes, and `push --record-result` was never run — so no `flywheel:` frontmatter changed and the local graph is untouched. `get_node` on the mirror state root (`cool-king-8586`) returns 404, `resolve_node_slug` returns `not_found`, and 0 of the 458 visible nodes belong to this project: the mirror is not on the account the current `FLYWHEEL_API_KEY` belongs to. Nothing is lost — local files are canonical and the mirror is a regenerable projection, so `push --plan` rebuilds it once the right account is identified. Needs the Operator [rec: sweet-aspen-3667].
 
 ## Negative knowledge
 
@@ -39,3 +40,4 @@ Status: working
 - kind-valley-8040 — first live mirror push; measured mirror-consistency limits
 - careful-harbor-3902 — verify + legend close the projection-trust gap; manual-push drift lesson
 - northern-tree-5868 — ssh stream-ordering lesson from the benchmark's harvest path
+- sweet-aspen-3667 — mirror unreachable from the rotated key; no partial writes; local graph canonical
