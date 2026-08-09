@@ -58,7 +58,7 @@ from __future__ import annotations
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.0.5"
+__version__ = "0.0.6"
 
 import argparse
 import hashlib
@@ -3724,13 +3724,45 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout if proc.returncode == 0 else ""
 
 
-def survey_git(repo: Path) -> dict:
-    """Repo shape from git alone: age, contributors, candidate eras, churn."""
+def survey_tags(repo: Path) -> list[dict]:
+    """Release tags, oldest first. The author's own boundary markers when they exist.
+
+    Most repos have none — degrade to an empty list silently, never a warning."""
+    out = _git(repo, "tag", "--sort=creatordate",
+               "--format=%(refname:short)\t%(creatordate:short)")
+    tags = []
+    for line in out.splitlines():
+        if "\t" in line:
+            name, date = line.split("\t", 1)
+            tags.append({"tag": name.strip(), "date": date.strip()})
+    return tags
+
+
+def survey_dir_births(repo: Path, source_dirs: list[str]) -> list[dict]:
+    """First commit date touching each top-level source dir, oldest first.
+
+    The signal that actually fires: quiet gaps found one era spanning all 347
+    commits of a real repo, while directory births found four real boundaries on
+    the same history. Bounded to top-level dirs — `git log -- <path>` is the
+    slowest call in the survey."""
+    births = []
+    for name in source_dirs:
+        out = _git(repo, "log", "--reverse", "--date=short", "--format=%ad",
+                   "--", name)
+        first = next((line.strip() for line in out.splitlines() if line.strip()), "")
+        if first:
+            births.append({"path": name, "date": first})
+    return sorted(births, key=lambda entry: (entry["date"], entry["path"]))
+
+
+def survey_git(repo: Path, source_dirs: list[str] | None = None) -> dict:
+    """Repo shape from git alone: age, contributors, timeline signals, churn."""
     log = _git(repo, "log", "--reverse", "--date=short",
                "--pretty=format:%H\t%ad\t%an\t%s")
     rows = [line.split("\t", 3) for line in log.splitlines() if "\t" in line]
     if not rows:
-        return {"is_repo": bool(_git(repo, "rev-parse", "--git-dir")), "commits": 0}
+        return {"is_repo": bool(_git(repo, "rev-parse", "--git-dir")), "commits": 0,
+                "tags": [], "dir_births": []}
 
     contributors: dict[str, int] = {}
     for row in rows:
@@ -3770,6 +3802,8 @@ def survey_git(repo: Path) -> dict:
         "contributors": sorted(({"name": n, "commits": c} for n, c in contributors.items()),
                                key=lambda e: -e["commits"]),
         "eras": eras,
+        "tags": survey_tags(repo),
+        "dir_births": survey_dir_births(repo, source_dirs or []),
         "churn": [{"path": p, "changes": c} for p, c in
                   sorted(churn.items(), key=lambda kv: -kv[1])[:15]],
     }
@@ -3825,8 +3859,38 @@ def survey_layout(repo: Path) -> dict:
 
 
 def adopt_survey(repo: Path) -> dict:
+    # Layout first: its top-level source dirs are the input to the directory-birth
+    # signal, which is the timeline evidence that actually fires on a real repo.
+    layout = survey_layout(repo)
     return {"repo": str(repo), "surveyed_at": utc_now(),
-            "git": survey_git(repo), "layout": survey_layout(repo)}
+            "git": survey_git(repo, [d["path"] for d in layout["source_dirs"]]),
+            "layout": layout}
+
+
+def print_timeline_signals(git: dict) -> None:
+    """Three independent signals about where an era boundary might fall.
+
+    Each is printed as *evidence*, never as a decided era: the author knows which
+    of them meant something and the CLI does not. A signal with nothing to say
+    prints nothing at all rather than an empty heading."""
+    tags, births = git.get("tags") or [], git.get("dir_births") or []
+    gaps = git.get("eras") or []
+    if not (tags or births or len(gaps) > 1):
+        return
+    print("\n## Timeline signals (evidence for an epoch boundary — *suggestions*, "
+          "not epochs)\n")
+    if tags:
+        print("  tags — the author's own markers")
+        for tag in tags:
+            print(f"    {tag['date']}  {tag['tag']}")
+    if births:
+        print("  directory births — first commit touching each top-level source dir")
+        for birth in births:
+            print(f"    {birth['date']}  {birth['path']}/")
+    if len(gaps) > 1:
+        print(f"  quiet gaps — runs separated by more than {ERA_GAP_DAYS} idle days")
+        for era in gaps:
+            print(f"    {era['start']} → {era['end']}  {era['commits']:>5} commits")
 
 
 def print_survey(survey: dict) -> None:
@@ -3845,9 +3909,7 @@ def print_survey(survey: dict) -> None:
         print(f"  head:  {last['sha']} {last['subject'][:60]}")
         top = ", ".join(f"{c['name']} ({c['commits']})" for c in git["contributors"][:5])
         print(f"  top:   {top}")
-        print(f"\n## Candidate eras (gaps > {ERA_GAP_DAYS} days — *suggestions*, not epochs)\n")
-        for era in git["eras"]:
-            print(f"  {era['start']} → {era['end']}  {era['commits']:>5} commits")
+        print_timeline_signals(git)
         print("\n## Highest-churn paths\n")
         for row in git["churn"][:10]:
             print(f"  {row['changes']:>5}  {row['path']}")
@@ -3947,6 +4009,28 @@ def create_root_node(graph_dir: Path, kind: str, title: str, body: str) -> str:
     return slug
 
 
+def ensure_root_node(graph_dir: Path, kind: str, title: str,
+                     body: str) -> tuple[str, bool]:
+    """Adopt the graph's existing root, or mint one — returns `(slug, minted)`.
+
+    Adoption arrives from both directions and `--init` has to land either way:
+    mode A imports the legacy graph first and inits *over* the imported root
+    (minting a rival would be wrong), and mode B may already have hand-authored
+    prehistory that needed a root to parent on. `create_root_node` stays strict —
+    it is the primitive; this is the policy. Two parentless roots is genuinely
+    ambiguous, so it raises rather than picking."""
+    existing = load_local_nodes(graph_dir, kind, missing_ok=True)
+    roots = sorted(slug for slug, node in existing.items() if not node.parents)
+    if len(roots) == 1:
+        return roots[0], False
+    if roots:
+        raise LocalGraphError(
+            f"the {kind} graph has {len(roots)} parentless roots: "
+            f"{', '.join(roots)} — adopt --init will not choose between them. "
+            "Re-parent all but one by hand, then re-run.")
+    return create_root_node(graph_dir, kind, title, body), True
+
+
 def cmd_adopt(args: argparse.Namespace) -> int:
     repo = Path(args.repo or ".").resolve()
 
@@ -3998,10 +4082,13 @@ def cmd_adopt(args: argparse.Namespace) -> int:
 
 
 def adopt_init(repo: Path, args: argparse.Namespace) -> int:
-    """Mint both roots and write a *valid* config.
+    """Mint (or adopt) both roots and write a *valid* config.
 
     Hand-written YAML is a proven failure mode: a stub config with no roots once made
-    `check` report 0 violations while silently guessing them (see `load_config`)."""
+    `check` report 0 violations while silently guessing them (see `load_config`). So
+    `--init` must never be the step an agent has to route around: when a root already
+    exists — imported in mode A, hand-authored in mode B — it adopts that root instead
+    of refusing."""
     config_path = Path(args.config) if args.config else repo / ".hypergraph" / "config.yml"
     if config_path.exists() and not args.force:
         raise LocalGraphError(
@@ -4022,8 +4109,10 @@ def adopt_init(repo: Path, args: argparse.Namespace) -> int:
                       "What is true now: architecture, what works, what is broken or "
                       "open. Rewritten only by reconcile (SPEC I3).\n")
 
-    record_slug = create_root_node(graph_dir, "record", f"{project} — record", record_body)
-    state_slug = create_root_node(graph_dir, "state", f"{project} — state", state_body)
+    record_slug, record_minted = ensure_root_node(
+        graph_dir, "record", f"{project} — record", record_body)
+    state_slug, state_minted = ensure_root_node(
+        graph_dir, "state", f"{project} — state", state_body)
     try:
         declared_graph_dir = Path(graph_dir).resolve().relative_to(repo)
     except ValueError:
@@ -4038,8 +4127,8 @@ def adopt_init(repo: Path, args: argparse.Namespace) -> int:
         f"cache_dir: .hypergraph/cache\n"
         f"state_md: STATE.md\n"
         f"graph_dir: {declared_graph_dir}\n")
-    print(f"record root: {record_slug}")
-    print(f"state root:  {state_slug}")
+    print(f"record root: {record_slug} ({'minted' if record_minted else 'adopted existing'})")
+    print(f"state root:  {state_slug} ({'minted' if state_minted else 'adopted existing'})")
     print(f"wrote {config_path}")
     print("\nNext: import or author the history, then `hypergraph adopt --marker "
           "<slug>` once the epoch marker node exists.")
@@ -7458,12 +7547,12 @@ def main(argv: list[str] | None = None) -> int:
     p_adopt.add_argument("--repo", type=Path, help="repo root (default: cwd)")
     p_adopt.add_argument("--json", action="store_true", help="machine-readable output")
     p_adopt.add_argument("--survey", action="store_true",
-                         help="git shape, candidate eras, churn, docs, tests, and "
+                         help="git shape, timeline signals, churn, docs, tests, and "
                               "AGENTS.md/CLAUDE.md symlink status")
     p_adopt.add_argument("--pull", action="store_true",
                          help="export a legacy hosted graph (same as `mirror pull`)")
     p_adopt.add_argument("--init", action="store_true",
-                         help="mint both graph roots and write a valid config")
+                         help="mint (or adopt) both graph roots and write a valid config")
     p_adopt.add_argument("--marker", metavar="SLUG",
                          help="record the adoption epoch, after checking it resolves")
     p_adopt.add_argument("--resolve-prefixes", action="store_true",

@@ -83,17 +83,43 @@ files without recording anything, and a publish job refreshes the mirror on merg
   `push`/`sync`/`mirror` the optional mirror.
 - **[templates/](templates/)** — the exact markdown shapes the checker parses.
 
-## Quickstart
+## Install
 
 ```bash
-./install.sh                       # symlink the skills into ~/.claude/skills
+uv tool install hypergraph-protocol
+hypergraph skills install          # → ./.claude/skills (project scope)
+```
 
-# in a Claude session inside your project repo:
-#   run hypergraph-init            → roots + state skeleton + .hypergraph/config.yml + STATE.md
+That is the whole install: the CLI from PyPI, and the five skills into the repo you
+are working in (`--user` puts them in `~/.claude/skills` instead). Nothing to clone,
+nothing to fork.
+
+## Quickstart
+
+Two routes in, depending on whether the project has a past. Both are Claude skills —
+run them in a session inside your project repo.
+
+**New project → `hypergraph-init`**: creates both roots, a state skeleton mirroring
+your architecture, `.hypergraph/config.yml`, and `STATE.md`.
+
+```bash
+#   run hypergraph-init            → roots + state skeleton + config + STATE.md
 #   ... do work; run hypergraph-record after each unit of work
 #   run hypergraph-reconcile       → fold impacts into state, regenerate STATE.md
 #   (fresh session) hypergraph-orient → frontier brief in ≤ ~6 tool calls
 ```
+
+**Existing project → `hypergraph-adopt`**: a repo with real history, an existing
+hosted graph, or both. It surveys the repo (git shape, timeline signals, docs,
+churn), interviews you for what only you know, then either imports the legacy graph
+verbatim (`hypergraph import --fork` preserves node_ids and slugs, so provenance and
+the high-water mark stay valid) or authors honest prehistory from the repo itself. It
+draws an adoption epoch so legacy nodes are exempt from template compliance, distills
+a state graph from what the project actually knows, and installs the AGENTS.md
+onboarding. The import is a **fork**: the source graph stays frozen as the archive,
+and the repo becomes the continuing graph, owning its whole history with the original
+topology. Artifacts do not travel — they stay on the archive, and the adopted project
+says so. After either route, the loop is the same.
 
 The whole loop, in the repo — no account, no network:
 
@@ -101,29 +127,19 @@ The whole loop, in the repo — no account, no network:
 hypergraph new record --title "Fixed the streaming parser" --body body.md \
     --parent <causal-slug> --impact "<state-slug> — status broken → working" --repo-auto
 hypergraph export --config .hypergraph/config.yml     # node files → cache JSON
-uv run tools/hypergraph.py check --record .hypergraph/cache/record.json \
+hypergraph check --record .hypergraph/cache/record.json \
     --state .hypergraph/cache/state.json --config .hypergraph/config.yml
 git add .hypergraph/graph                             # the memory travels with the repo
 ```
 
-Adopting a repo with real history — or an existing hosted graph? Run the
-`hypergraph-adopt` skill: it imports the legacy graph verbatim (`hypergraph import
---fork` preserves node_ids and slugs, so provenance and the high-water mark stay
-valid), draws an adoption epoch so legacy nodes are exempt from template compliance,
-and distills an honest state graph from what the project actually knows. The import
-is a **fork**: the source graph stays frozen as the archive, and the repo becomes the
-continuing graph, owning its whole history with the original topology. Artifacts do
-not travel — they stay on the archive, and the adopted project says so.
-
 Checker/renderer/visualizer, standalone:
 
 ```bash
-uv run tools/hypergraph.py check  --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json
-uv run tools/hypergraph.py render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
-uv run tools/hypergraph.py viz    --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json \
-                                  --config .hypergraph/config.yml -o .hypergraph/viz.html
+hypergraph check  --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json
+hypergraph render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
+hypergraph viz    --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json \
+                  --config .hypergraph/config.yml -o .hypergraph/viz.html
 open .hypergraph/viz.html          # interactive: pan/zoom, click nodes, search; SVG/PDF export
-uv run pytest tests/               # checker + viz test suite over committed fixtures
 ```
 
 The page has four views, each named after the question it answers, and each with a
@@ -164,7 +180,7 @@ For a figure you can hand-edit, `viz` also emits a graph spec for **excaligraph*
 `hypergraph.py` never shells out, and node stays optional.
 
 ```bash
-uv run tools/hypergraph.py viz --format excaligraph \
+hypergraph viz --format excaligraph \
     --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json \
     --config .hypergraph/config.yml -o graph.yaml
 excaligraph build graph.yaml -o graph.excalidraw     # then open it in excalidraw.com
@@ -179,7 +195,7 @@ board for a run in progress. It is the one output that is deliberately **not**
 self-contained, which is why it is a flag and not the default:
 
 ```bash
-uv run tools/hypergraph.py viz --live --record .hypergraph/cache/record.json \
+hypergraph viz --live --record .hypergraph/cache/record.json \
     --state .hypergraph/cache/state.json --config .hypergraph/config.yml \
     -o .hypergraph/viz.html
 python3 -m http.server -d .hypergraph      # browsers block fetch from file://
@@ -211,9 +227,22 @@ tools/hypergraph.py         checker + renderer + visualizer + storage + mirror (
 tools/bundle_viz.py         dev tool: bundles tools/viz/* into the page constant
 tools/viz/                  the viz page's sources (html + css + js parts)
 tools/fixtures/             test fixtures (clean, violations, local-graph, self)
-tests/                      pytest suites (checker, viz, storage, mirror, collaboration)
+tests/                      pytest suites (checker, viz, storage, mirror, collaboration, adoption)
 tests/browser/              playwright layout baselines (dev group; self-skipping)
 ```
 
 This repo dogfoods itself: see [.hypergraph/config.yml](.hypergraph/config.yml) and
 [STATE.md](STATE.md).
+
+### Developing the protocol itself
+
+Only if you are working on *this* repo — adopters never clone it. In a dev checkout
+the CLI is `uv run tools/hypergraph.py …` (`[tool.uv] package = false`, so the bare
+`hypergraph` does not resolve here), and `./install.sh` symlinks `skills/` into
+`~/.claude/skills` so an edit to a skill is live in the next session.
+
+```bash
+./install.sh                       # symlink the skills into ~/.claude/skills
+uv run pytest tests/               # checker + viz + storage + mirror suites
+uv run tools/hypergraph.py sync --config .hypergraph/config.yml
+```
