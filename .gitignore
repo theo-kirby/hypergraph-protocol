@@ -240,3 +240,9 @@ research/runs/**/*.log
 # tarball; a leaked key is not reconstructible into being un-leaked.
 research/runs/**/*.jsonl
 research/runs/**/.env
+
+# Git worktrees created inside the repo (EnterWorktree / `git worktree add`).
+# They carry their own .git file and a full checkout, so a `git add -A` from the
+# main working tree tries to commit an entire second copy of the repo.
+/hg-viz/
+/.claude/worktrees/
