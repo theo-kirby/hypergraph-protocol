@@ -6,6 +6,12 @@ created_at: '2026-08-08T17:21:41+00:00'
 parents:
 - cool-king-8586
 summary: ''
+flywheel:
+  node_id: 756924b4-8adc-5bac-91a0-89158110daef
+  slug: solitary-boat-7937
+  revision: 1
+  pushed_at: '2026-08-09T10:17:45+00:00'
+  content_sha256: 01dcbffc0e43197526376df2a7a73331149afca66789783744ba655a0608e5bf
 ---
 Status: open
 
@@ -54,6 +60,7 @@ Fixed **before** the second launch and with no access to its data, because the f
 - **Three Flywheel accounts could not be created, so arm B runs on one — a DECLARED, ASYMMETRIC confound.** Arm B's seeds can list, read and overwrite each other's nodes; arms A and C keep full isolation, so a reader who discounts arm B entirely still has a valid A-vs-C comparison. Attribution survives where isolation did not: preflight captures the account's full node-id set before launch (verified live: 458 ids) and `had_prior_state` reads only nodes created after it. Opt-in via `--shared-flywheel`; without the flag a multi-seed arm-B launch still hard-fails. Declared in METRICS.md rev-1 [rec: sweet-wave-7885].
 - **Preflight is 21/21** with `--shared-flywheel` against live GitHub and Flywheel, and 19/20 without it — failing only on the three per-run keys that do not exist [rec: sweet-wave-7885].
 - **Preflight had a gap of exactly the kind it exists to close**, found and fixed while syncing: it verified the Flywheel account was *readable* — reachable, countable — and reported 21/21 for a key whose **write** capability was never exercised. Arm B's whole job is writing nodes, so a read-only key would have produced three runs that recorded nothing, blessed by the gate. `flywheel_can_write` now creates a labelled probe node and deletes it, on every arm-B key in both paths, verified live [rec: sweet-aspen-3667].
+- **STANDING RISK — `.env`'s `FLYWHEEL_API_KEY` points at the wrong account.** It resolves to `80eed260…`, which has no relation to this project; the project's Flywheel identity is the CLI's `be9833b0…`. `research/boxlab` reads that variable for preflight's account checks **and writes it onto every arm-B box**, so a relaunch as configured today would provision arm B against an unrelated account — and the 458-node baseline captured earlier belongs to that wrong account. Parked, so nothing is broken now; the variable must be corrected and the baseline recaptured before any launch [rec: solemn-dawn-6752].
 - **Named and not implemented**, for whoever resumes: a harness-seeded per-run root node in Flywheel and a per-run tag on every node the run creates. Both narrow attribution; neither restores isolation. Only separate accounts do that [rec: sweet-wave-7885].
 - **OpenRouter's `usage` field** appeared not to move immediately after a live run, so the spend guard may be partially blind *during* a run and reliable only between runs [rec: scarlet-orchard-8774].
 - **Under pi, both protocol arms run without their skills layer** — a narrower test than either packaged product offers, biasing against both [rec: scarlet-orchard-8774] [rec: staid-field-2723].
@@ -77,3 +84,4 @@ Fixed **before** the second launch and with no access to its data, because the f
 - staid-field-2723 — the first run reclassified as uncontrolled; harness hardened across isolation, provisioning, credentials and publishing; preflight gate added; METRICS.md re-pre-registered as rev-1
 - sweet-wave-7885 — Operator decision: one Flywheel account for arm B declared as an asymmetric confound; keys rotated; relaunch parked
 - sweet-aspen-3667 — preflight proved readable but not writable; write probe added
+- solemn-dawn-6752 — mirror correction; FLYWHEEL_API_KEY points at the wrong account

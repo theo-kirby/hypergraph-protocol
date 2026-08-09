@@ -6,6 +6,12 @@ created_at: '2026-08-09T09:57:16+00:00'
 parents:
 - sweet-wave-7885
 summary: ''
+flywheel:
+  node_id: a5a73589-6761-5e93-96fa-109719deeda4
+  slug: ancient-math-5027
+  revision: 0
+  pushed_at: '2026-08-09T10:16:22+00:00'
+  content_sha256: 452bf4260839d51820340a164fbcd217a91bca6b4170e5592bc6e4dfde7e589a
 ---
 ## What
 

@@ -9,9 +9,9 @@ summary: Unified toggle-driven interactive viz (presets Record/State/Columns/For
 flywheel:
   node_id: f4d676d8-a180-55fc-ae3f-54c1e4d3bcab
   slug: polished-pond-2718
-  revision: 2
-  pushed_at: '2026-08-07T18:12:06.426139+00:00'
-  content_sha256: a22c1dd604fdf9f740074c81670873773792530ace33a8b0c0809c0f8cba220f
+  revision: 3
+  pushed_at: '2026-08-09T10:15:16+00:00'
+  content_sha256: 79b42c3cb03589863b6a3a68378d8332a6bec3a5ded1aae9ae2f823c6533b129
 ---
 Status: working
 

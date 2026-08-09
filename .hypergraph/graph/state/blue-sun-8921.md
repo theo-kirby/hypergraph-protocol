@@ -9,9 +9,9 @@ summary: '10 abstract ops + Flywheel and local adapters; origin:/flywheel: ident
 flywheel:
   node_id: d82f019d-c029-5999-ad8c-332abcfaa3ee
   slug: blue-sun-8921
-  revision: 4
-  pushed_at: '2026-08-08T11:35:36+00:00'
-  content_sha256: 3d1432a797bb1d65e932e3e66b720e0db0c480eec1a40a99c7989239ab73fc95
+  revision: 5
+  pushed_at: '2026-08-09T10:15:16+00:00'
+  content_sha256: 373c9ff7c5b98f0d480efd92bc3a2b1bc8e96fbc3906efeaa4c5edbed120b6c6
 ---
 Status: working
 

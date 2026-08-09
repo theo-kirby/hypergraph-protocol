@@ -6,6 +6,12 @@ created_at: '2026-08-09T09:41:07+00:00'
 parents:
 - cool-king-8586
 summary: ''
+flywheel:
+  node_id: 82565677-379a-5ee8-8f8d-948eec159b67
+  slug: broad-hill-2841
+  revision: 1
+  pushed_at: '2026-08-09T10:17:45+00:00'
+  content_sha256: f777b8177701a95a298a22acbb76322f2ca918144eef5904eb1495ec705c49b3
 ---
 Status: working
 
@@ -23,9 +29,11 @@ Status: working
 - [scope: running an experiment when the isolation you designed for is unavailable | confidence: high | evidence: sweet-wave-7885] isolation and attribution are separable, and only one of them needs an account per arm. With a single shared account the arms can still read and overwrite each other — that is unrecoverable — but capturing the account's full node-id set immediately before launch keeps every node created in the run window identifiable. Capture the baseline, declare the loss in the pre-registration, and gate the degraded mode behind an explicit flag so it cannot become the default. Absorbing the weakness quietly is how the first run's defects survived to publication.
 - [scope: credentials a tool resolves but never uses | confidence: medium | evidence: sweet-wave-7885] `BOX_API_KEY` was resolved, displayed in `creds`, listed as a lab requirement and never used for anything: `box_ctl` shells out to the `box` CLI, which carries its own auth. It read as load-bearing for months. A credential a codebase reads but never authenticates with is a false dependency and an unnecessary square of leak surface.
 - [scope: gating any automated run on a precondition | confidence: high | evidence: sweet-aspen-3667, staid-field-2723] a check that exercises a different capability than the run needs is not a check. `BOXLAB_PROVISION_OK` proved a script reached its last line, not that the memory system worked; a node count proves an account can be read, not that it can be written. Both reported success while the thing they stood for was broken. A gate must perform the capability under test — and where a service offers no scope introspection, that means doing the real operation and undoing it.
+- [scope: believing a surprising negative result from automated probes | confidence: high | evidence: solemn-dawn-6752] four independent checks agreed the project's Flywheel mirror had been deleted — `get_node` 404, `resolve_slug` not_found, 0 of 44 ids reachable, and 0 project nodes among all 2,561 visible without an owner filter — and all four were wrong. Each asked the same question with the same wrongly-authenticated credential. Corroboration between checks that share an assumption is not corroboration; when several probes agree on a surprising absence, vary the identity or the transport before believing them.
 
 ## Provenance
 
 - sweet-wave-7885 — the attribution-when-isolation-is-unavailable lesson; dead-credential tidiness
 - staid-field-2723 — four lessons from nine autonomous agents on shared accounts, and the preflight gate that enforces them
 - sweet-aspen-3667 — the read-vs-write gate lesson, generalized from three incidents
+- solemn-dawn-6752 — shared-assumption corroboration is not corroboration

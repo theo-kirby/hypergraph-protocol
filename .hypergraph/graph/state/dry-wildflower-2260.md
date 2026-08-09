@@ -9,9 +9,9 @@ summary: Five skills (init/record/reconcile/orient/adopt) + AGENTS.md onboarding
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 7
-  pushed_at: '2026-08-08T11:35:36+00:00'
-  content_sha256: 88deef2c39fa7a04acbbc55781b45aae5b6aca9265498b3b339ce30fdaa3e1c1
+  revision: 8
+  pushed_at: '2026-08-09T10:15:16+00:00'
+  content_sha256: 49417f71d698512a4701931d4935765f9fb5fd0afdedaf954d5c5d34302dc6c6
 ---
 Status: working
 
