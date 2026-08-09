@@ -9,9 +9,9 @@ summary: 'Parallel and multi-contributor work: contributors record, the maintain
 flywheel:
   node_id: c70be6f8-ea12-5dd8-9a36-230e248fbb2a
   slug: restless-butterfly-5749
-  revision: 1
-  pushed_at: '2026-08-09T12:28:31+00:00'
-  content_sha256: 94c3ea79a6be7489d3b2f5b0724565436425f682d86171a060bea851b5c4520e
+  revision: 2
+  pushed_at: '2026-08-09T12:46:25+00:00'
+  content_sha256: e2f387c54157b5c09d9708ca1e22f2600e269290b7301d6cfa72448c2dcd1d3a
 ---
 Status: working
 
@@ -26,7 +26,8 @@ Status: working
 - **Verified on this repo's own two-tip DAG.** The hg-viz merge had already left nine nodes on `wise-river-3571` that are not ancestors of the mark; they were folded correctly at the time only because the reconcile ordering happened to be favourable. Under the new rule all nine surface, the migration hint fires, and `hwm --suggest` prints the exact frontier, adopted in this pass [rec: placid-ridge-4035].
 - **What git already provides, verified rather than assumed** [rec: vast-rain-4873]: record-node merges never conflict; a slug collision across branches surfaces as a loud git add/add conflict, which matters because `node_id = uuid5(slug)` makes a silent collision an identity collision; the merged record DAG shows the fork truthfully; `--repo-auto` already stamps branch and commit into every node; and a record node arrives in the PR diff as a file, so the claim gets code review beside the code that justifies it.
 - Both naming hazards are settled: SPEC distinguishes a repo fork (same graph, same slugs, same ids — a PR merges back into it) from `import --fork` (a new project from someone else's graph), and the reconcile skill's guardrails say to start from `sync` after a merge, never a bare `check` [rec: placid-ridge-4035].
-- **Still open, and narrower than the gap that opened this node** [rec: placid-ridge-4035]: no multi-machine workflow has yet been *run* end to end — the model is proven by construction and by tests, not by two humans and a fork; `.gitattributes` for STATE.md was scoped and not built, since regeneration already resolves it and a merge driver would be a second mechanism for the same problem; and the publish workflow is shipped but unexercised, because this project still publishes from the maintainer's machine.
+- **The CI half is live, not just designed** [rec: long-peak-1620]. Both workflows are installed in this repo and were green on their first run: the PR check runs tests, invariants, `check --since` and a STATE.md freshness gate; the publish job authenticated over REST and reported 0 drift. The mirror is now a build artifact of the default branch in fact, written by CI rather than by a laptop.
+- **Still open, and narrower than the gap that opened this node** [rec: placid-ridge-4035] [rec: long-peak-1620]: no multi-machine workflow has yet been *run* end to end — the model is proven by construction, by tests, and now by this repo's own CI, but not by two humans and a fork; `check --since` has never rejected a real outside contribution, only a synthetic one; and `.gitattributes` for STATE.md was scoped and not built, since regeneration already resolves it and the CI freshness gate now catches a stale one.
 
 ## Negative knowledge
 
@@ -40,3 +41,4 @@ Status: working
 
 - vast-rain-4873 — the investigation that opened this gap: three reproduced defects and three Operator bets
 - placid-ridge-4035 — v0.0.5 closes it: ancestry frontier, conflict markers, publish guards, doctrine and CI
+- long-peak-1620 — both workflows installed and green; the publish job reaches the mirror over REST

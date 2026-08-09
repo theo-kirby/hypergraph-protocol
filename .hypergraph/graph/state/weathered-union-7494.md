@@ -9,9 +9,9 @@ summary: Parked by Operator (no date); v0.1 gate met with four unreleased change
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
-  revision: 6
-  pushed_at: '2026-08-09T10:15:16+00:00'
-  content_sha256: e25a3e69fd6a8e81c455d63e3bebbef3531669f168ef04ae9fa41aee2e4c329b
+  revision: 7
+  pushed_at: '2026-08-09T12:46:25+00:00'
+  content_sha256: 8b8262f75d89b75e44203ffc0355bb253037b3bed60e9ab81c4b2973db91c769
 ---
 Status: open
 
@@ -32,6 +32,10 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - The distribution/repo boundary is measured rather than assumed: publishing is an **allow-list**, not the repo. Both artifacts were built — the wheel is 40 files / 415 KB (`hypergraph_protocol.py` + skills + templates + dist-info), the sdist 14 files — so `tests/`, `.hypergraph/`, `STATE.md`, `AGENTS.md` and the new `research/` tree all ship nothing, and `tests/test_packaging.py` fails if any is added to either hatchling include list. Incidentally re-verified: the published 0.0.2 installs on a bare cloud box via `uv tool install hypergraph-protocol` + `hypergraph skills install --user` [rec: twilight-wood-1934].
 
 - Version **0.0.3** in the tree, unreleased: the two `check` fixes (missing-config error, root-inference warning) and `--version` [rec: staid-field-2723]. `tests/test_packaging.py` now holds `tools/hypergraph.py`'s `__version__` in step with pyproject, because the benchmark's arm-C boxes install `hypergraph-protocol==0.0.3` pinned and assert the reported version on the box — `uv tool install` reuses a cached tool, and would otherwise leave a box silently running an older build while the write-up named this one [rec: staid-field-2723].
+- **Release 0.0.5 is live on PyPI and verified from the public index** [rec: long-peak-1620]. It clears everything that had accumulated unreleased — the MIT/PEP 639 metadata absent from the published 0.0.2, fork-import, the `verify` mirror_roots exemption, the mode-B epoch marker fix, the two `check` fixes and `--version` from 0.0.3, the whole mirror-opacity change in 0.0.4, and the merge-safety work in 0.0.5. A clean venv installing from PyPI reports 0.0.5, resolves `hwm` and `check --since`, and lays down all five skills.
+- The release had a dependency running the other way: the shipped adopter CI template calls `check --since`, which does not exist before 0.0.5, so until this release anyone copying it got a workflow that could not run [rec: long-peak-1620].
+- The repository's main branch now matches the release — 14 local commits pushed, closing a window where a published artifact's source was not public [rec: long-peak-1620].
+- Still parked on an Operator decision with no date: the spec-first announcement, and the npm placeholder still pointing at PyPI 0.0.2 [rec: southern-ridge-1802] [rec: long-peak-1620].
 
 ## Negative knowledge
 
@@ -49,3 +53,4 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - southern-ridge-1802 — Operator directive parking the release and the announcement
 - twilight-wood-1934 — packaging boundary measured empirically; published 0.0.2 re-verified on a fresh box
 - staid-field-2723 — 0.0.3 in tree (checker fixes + `--version`); version parity pinned by test
+- long-peak-1620 — 0.0.5 released to PyPI and verified from the public index

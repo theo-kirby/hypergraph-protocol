@@ -9,9 +9,9 @@ summary: 'check/render/viz + local backend + epoch support + push --verify/--leg
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 12
-  pushed_at: '2026-08-09T12:28:31+00:00'
-  content_sha256: 041e5716f37df1fdae8dda00def006695e5d6e1bc5678ab6a7ab396e2bcbb370
+  revision: 13
+  pushed_at: '2026-08-09T12:46:25+00:00'
+  content_sha256: 8098af0b600a2c2b3bea64666e216c17f9ab00e0b5f59896f4899f2862b98c62
 ---
 Status: working
 
@@ -31,6 +31,7 @@ Status: working
 - A bare `=======` is deliberately **not** sufficient evidence: it is also a setext H1 underline, so it is reported only inside a node that already shows an unambiguous marker. Flagging it alone would fail honest documents [rec: placid-ridge-4035].
 - New verbs: **`hypergraph hwm`** (frontier plus outstanding nodes) and **`hwm --suggest`**, the one-time migration aid that expresses the pre-0.0.5 timestamp rule as ancestry; and **`check --since <ref>`**, which fails a branch that changed files without adding a record node — the first mechanism that reaches a contributor who never read AGENTS.md [rec: placid-ridge-4035].
 - Suite at **282 tests**, up from 250, with `tests/test_collaboration.py` carrying 32 of them including the literal two-branch reproduction from the investigation. Two older tests changed contract rather than breaking: `read_hwm` returns `[]` for `none`, and the no-transport degradation case now asserts exit 0 with the remedy still named, plus exit 2 under `--require-mirror` [rec: placid-ridge-4035].
+- **A packaging defect made the sdist unbuildable, and every declaration in `pyproject.toml` was correct** [rec: long-peak-1620]. hatchling walks with `followlinks=True` and skips any directory whose `(st_dev, st_ino)` it has already seen; `.claude/skills/hypergraph-*` are the committed dogfooding symlinks into `skills/` and sort first, so it materialized the skills under `.claude/` and dropped the real tree as a duplicate. `skip-excluded-dirs = true` plus `exclude` fixes it — `exclude` alone made it worse. Suite to 283, the new test building an sdist and asserting it carries every path the wheel force-includes.
 
 ## Negative knowledge
 
@@ -65,3 +66,4 @@ Status: working
 - northern-willow-0469 — mirror-only verify proven live on a3go
 - vast-rain-4873 — two reproduced checker defects: timestamp-based HWM enumeration and undetected conflict markers
 - placid-ridge-4035 — ancestry enumeration, conflict-marker detection, hwm and check --since; suite to 282
+- long-peak-1620 — sdist packaging defect from the dogfooding symlinks; build-and-inspect test added
