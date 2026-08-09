@@ -111,6 +111,10 @@
   .content code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
                   font-size:11.5px; background:var(--code); padding:1px 4px;
                   border-radius:4px; }
+  button.act { font:inherit; font-size:12px; margin-top:8px; padding:4px 12px;
+               border-radius:8px; border:1px solid var(--grid); cursor:pointer;
+               background:var(--page); color:var(--ink2); }
+  button.act:hover { color:var(--ink); border-color:var(--muted); }
   .legend-swatch { display:inline-block; width:22px; height:0; border-top-width:2px;
                    border-top-style:solid; vertical-align:middle; margin-right:8px; }
   .hint { color:var(--muted); font-size:11.5px; margin-top:16px; }

@@ -4,6 +4,7 @@
 // see VIEW_ALIASES); #<slug> jumps to a node.
 document.body.dataset.theme = theme;
 applySide();
+registerPucks();   // synthetic entries for collapsed hyperedges
 const boot = decodeURIComponent(location.hash.slice(1));
 const bootView = VIEW_ALIASES[boot] || boot;
 applyPreset(PRESETS[bootView] ? bootView : "clusters");

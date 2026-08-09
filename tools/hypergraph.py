@@ -724,7 +724,12 @@ def lane_layout(record: Graph) -> tuple[list[str], dict[str, int]]:
     pending: list[int] = []          # nodes in this lane that still owe an edge
     lane: dict[str, int] = {}
     for nid in chrono:
-        take = next((lane[p] for p in parents[nid] if tips[lane[p]] == p), None)
+        # `p in lane` is not paranoia: a child may carry an earlier timestamp than
+        # its parent (a backdated import, a skewed clock), and then the parent has
+        # no lane yet. Such an edge simply cannot continue a lane, so it opens a
+        # new one — the drawing stays honest and nothing raises.
+        take = next((lane[p] for p in parents[nid]
+                     if p in lane and tips[lane[p]] == p), None)
         if take is None:
             take = next((i for i, owed in enumerate(pending) if owed == 0), len(pending))
             if take == len(pending):
@@ -736,7 +741,9 @@ def lane_layout(record: Graph) -> tuple[list[str], dict[str, int]]:
             pending[take] += 1
         for pid in parents[nid]:
             remaining[pid] -= 1
-            if remaining[pid] == 0:
+            # An unplaced parent never incremented `pending`, because that happens
+            # at placement using the count of children still to come.
+            if remaining[pid] == 0 and pid in lane:
                 pending[lane[pid]] -= 1
     return chrono, lane
 
@@ -2089,6 +2096,10 @@ VIZ_TEMPLATE = r"""<!doctype html>
   .content code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
                   font-size:11.5px; background:var(--code); padding:1px 4px;
                   border-radius:4px; }
+  button.act { font:inherit; font-size:12px; margin-top:8px; padding:4px 12px;
+               border-radius:8px; border:1px solid var(--grid); cursor:pointer;
+               background:var(--page); color:var(--ink2); }
+  button.act:hover { color:var(--ink); border-color:var(--muted); }
   .legend-swatch { display:inline-block; width:22px; height:0; border-top-width:2px;
                    border-top-style:solid; vertical-align:middle; margin-right:8px; }
   .hint { color:var(--muted); font-size:11.5px; margin-top:16px; }
@@ -2175,6 +2186,15 @@ VIZ_TEMPLATE = r"""<!doctype html>
             <button data-val="tree" title="Architecture tree, as in STATE.md">Tree</button>
           </div>
         </div>
+        <div class="seg" data-key="window" hidden>
+          <span class="lbl">Window</span>
+          <div class="opts">
+            <button data-val="all">All</button>
+            <button data-val="250">250</button>
+            <button data-val="100">100</button>
+            <button data-val="50">50</button>
+          </div>
+        </div>
         <div class="seg" data-key="links" hidden>
           <span class="lbl">Links</span>
           <div class="opts">
@@ -2227,6 +2247,12 @@ const BW = 232, BH = 78, BCOL = BW + 26, BROW = BH + 12;  // frontier board card
 // Nothing may fit below this. Shrinking past it trades "you can see everything"
 // for "you can read nothing" — the view scrolls instead.
 const MIN_FIT = 0.45, MAX_FIT = 1.25;
+const PUCK_R = 30;  // a collapsed hyperedge, drawn as one body
+// Level of detail. Secondary lines go first, then all node text: below these a
+// card is a coloured box, which is still a useful shape at a glance.
+const DETAIL_MIN_ZOOM = 0.58, TEXT_MIN_ZOOM = 0.34;
+// How many of the most recent record nodes each time window keeps.
+const WINDOWS = { all: Infinity, "250": 250, "100": 100, "50": 50 };
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 const SLUG_JS = /\b[a-z][a-z0-9]*-[a-z][a-z0-9]*-[0-9]{4}\b/g;
@@ -2243,6 +2269,7 @@ const show = {
   layout: "force",    // "timeline" | "board" | "layered" | "force"
   xaxis:  "rank",     // timeline only: "rank" (even) | "time" (real dates)
   board:  "status",   // board only: "status" columns | "tree" architecture
+  window: "all",      // record graph: "all" or the most recent N by chrono
   links:  "focus",    // cross-graph links: "focus" | "all" | "none"
   tree:   true,       // intra-graph parent edges
   impact: false,      // include impact links among the cross-graph ones
@@ -2259,29 +2286,53 @@ const LAYOUT_GRAPH = { timeline: "record", board: "state" };
 const SEG_FOR_LAYOUT = { xaxis: ["timeline"], board: ["board"] };
 function segHidden(key) {
   if (key === "links") return show.graphs !== "both";
+  // A time window only means something when there is enough history to hide.
+  if (key === "window") return !recVis() || DATA.record.nodes.length <= 60;
   const only = SEG_FOR_LAYOUT[key];
   return !!only && only.indexOf(show.layout) < 0;
 }
 // Pan/zoom + node positions are cached per layout signature; edge/blob toggles
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
-const layoutKey = () => [show.layout, show.graphs, show.style,
-                         show.xaxis, show.board].join(":");
+const layoutKey = () => [show.layout, show.graphs, show.style, show.xaxis,
+                         show.board, show.window,
+                         [...collapsed].sort().join(",")].join(":");
+
+// Hyperedges collapsed to a single puck. Held here rather than in `show` because
+// it is a set of slugs, and because it belongs to the graph rather than to the
+// display mode — collapsing survives a change of view.
+const collapsed = new Set();
+const PUCK = "puck:";
+const puckKey = state => PUCK + state;
+const isPuck = slug => slug.startsWith(PUCK);
+const puckState = slug => slug.slice(PUCK.length);
+
+// A puck stands in for its whole hyperedge, so it answers to the state node's
+// text: search finds it, and the panel opens the claim itself.
+function registerPucks() {
+  hyperedges().list.forEach(h => {
+    const st = bySlug[h.state];
+    if (!st) return;
+    bySlug[puckKey(h.state)] = { graph: "puck", state: h.state, node: {
+      slug: puckKey(h.state), title: st.node.title, content: st.node.content,
+      parents: [], members: h.members.length } };
+  });
+}
 
 // Four views, each named after its job. Timeline = what happened, in order.
 // Frontier = what is true now, and what is open. Provenance = which record work
 // each state claim rests on. Clusters = which work belongs to the same claim.
 const PRESETS = {
   timeline:   { graphs:"record", style:"cards",   layout:"timeline",
-                xaxis:"rank", board:"status", links:"focus",
+                xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:true, impact:false, prov:false, blobs:false },
   frontier:   { graphs:"state",  style:"cards",   layout:"board",
-                xaxis:"rank", board:"status", links:"focus",
+                xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:false, impact:false, prov:false, blobs:false },
   provenance: { graphs:"both",   style:"cards",   layout:"layered",
-                xaxis:"rank", board:"status", links:"focus",
+                xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:true, impact:true,  prov:true,  blobs:false },
   clusters:   { graphs:"record", style:"circles", layout:"force",
-                xaxis:"rank", board:"status", links:"focus",
+                xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:true, impact:false, prov:false, blobs:true },
 };
 // Pre-rename deep links keep working: #record #state #combo #combination #hyper.
@@ -2291,12 +2342,14 @@ const VIEW_ALIASES = { record:"timeline", state:"frontier", combo:"provenance",
 // compact chips and the board draws status cards, because those two layouts exist
 // precisely to show what a generic card cannot.
 function styleFor(entry) {
+  if (entry.graph === "puck") return "puck";
   if (show.layout === "timeline" && entry.graph === "record") return "chip";
   if (show.layout === "board" && entry.graph === "state") return "board";
   return show.style === "circles" ? "circle" : "card";
 }
 function dimsFor(entry) {
   switch (styleFor(entry)) {
+    case "puck":   return { w: PUCK_R * 2, h: PUCK_R * 2 };
     case "chip":   return { w: CW, h: CH };
     case "board":  return { w: BW, h: BH };
     case "circle": return { w: 2 * R, h: 2 * R };
@@ -2377,6 +2430,120 @@ function hashSlug(s) {
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return h / 4294967296;
+}
+
+// ---------------------------------------------------------------- quadtree
+// Barnes-Hut. The pairwise repulsion loop is the only thing on this page that
+// scales badly: at 500 nodes it is 240 ticks x 125,000 pairs = 30 million
+// distance computations before the first paint. A quadtree collapses every
+// distant clump of nodes into one body, which turns the tick from O(n^2) into
+// O(n log n) and leaves the near field — the part that actually shapes the
+// drawing — computed exactly.
+//
+// Deterministic, like everything else here: the tree is built in a fixed order
+// and walked with an explicit stack, so the same input gives the same forces.
+
+const QT_THETA = 0.9;      // cell size / distance below this: treat as one body
+const QT_MAX_DEPTH = 20;   // coincident points would subdivide forever otherwise
+
+function qtCell(x, y, size) {
+  return { x, y, size, mass: 0, sx: 0, sy: 0, cx: 0, cy: 0,
+           slug: null, px: 0, py: 0, kids: null };
+}
+
+function qtPlace(c, slug, x, y, depth) {
+  const h = c.size / 2;
+  const i = (x >= c.x + h ? 1 : 0) + (y >= c.y + h ? 2 : 0);
+  const kid = c.kids[i] ||
+    (c.kids[i] = qtCell(c.x + ((i & 1) ? h : 0), c.y + ((i & 2) ? h : 0), h));
+  qtInsert(kid, slug, x, y, depth + 1);
+}
+
+function qtInsert(c, slug, x, y, depth) {
+  c.mass += 1; c.sx += x; c.sy += y;
+  c.cx = c.sx / c.mass; c.cy = c.sy / c.mass;
+  if (c.mass === 1) { c.slug = slug; c.px = x; c.py = y; return; }
+  if (depth >= QT_MAX_DEPTH) return;   // give up subdividing; the cell lumps them
+  if (!c.kids) {
+    c.kids = [null, null, null, null];
+    if (c.slug !== null) { qtPlace(c, c.slug, c.px, c.py, depth); c.slug = null; }
+  }
+  qtPlace(c, slug, x, y, depth);
+}
+
+function quadtree(slugs, pos) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of slugs) {
+    const p = pos[s];
+    if (!p) continue;
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  if (!isFinite(minX)) return null;
+  const size = Math.max(maxX - minX, maxY - minY, 1) * 1.05;
+  const root = qtCell(minX, minY, size);
+  for (const s of slugs) if (pos[s]) qtInsert(root, s, pos[s].x, pos[s].y, 0);
+  return root;
+}
+
+// Repulsion on one node, accumulated into `f`. Same law as the exact loop —
+// min(cap, strength / d^2) — so tuning carries over unchanged; a lumped cell
+// simply contributes its own mass times that.
+function qtRepulsion(root, slug, x, y, strength, cap, f) {
+  if (!root) return;
+  const stack = [root];
+  while (stack.length) {
+    const c = stack.pop();
+    if (!c || !c.mass) continue;
+    const single = c.kids === null && c.mass === 1;
+    if (single && c.slug === slug) continue;
+    let dx = x - c.cx, dy = y - c.cy, d2 = dx * dx + dy * dy;
+    if (d2 < 1e-4) {  // coincident: deterministic symmetry break, as before
+      const ang = hashSlug(slug + (c.slug || "cell")) * 6.283185307;
+      dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1;
+    }
+    if (!single && c.kids && c.size * c.size >= QT_THETA * QT_THETA * d2) {
+      for (let i = 0; i < 4; i++) if (c.kids[i]) stack.push(c.kids[i]);
+      continue;
+    }
+    const d = Math.sqrt(d2);
+    const rep = Math.min(cap, strength / d2) * (single ? 1 : c.mass);
+    f.x += (dx / d) * rep;
+    f.y += (dy / d) * rep;
+  }
+}
+
+// ------------------------------------------------------------ spatial hash
+// A uniform grid over the same points. Cheaper than a tree when the query is
+// "what is near this box?" rather than "what is the aggregate force here?" —
+// which is what card de-overlap and blob avoidance both ask.
+function gridHash(items, cellSize) {
+  const buckets = new Map();
+  const key = (i, j) => i + "," + j;
+  items.forEach(it => {
+    const i0 = Math.floor(it.minX / cellSize), i1 = Math.floor(it.maxX / cellSize);
+    const j0 = Math.floor(it.minY / cellSize), j1 = Math.floor(it.maxY / cellSize);
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+      const k = key(i, j);
+      const bucket = buckets.get(k);
+      if (bucket) bucket.push(it); else buckets.set(k, [it]);
+    }
+  });
+  return {
+    cellSize,
+    near(minX, minY, maxX, maxY) {
+      const out = new Set();
+      const i0 = Math.floor(minX / cellSize), i1 = Math.floor(maxX / cellSize);
+      const j0 = Math.floor(minY / cellSize), j1 = Math.floor(maxY / cellSize);
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+        const bucket = buckets.get(key(i, j));
+        if (bucket) bucket.forEach(it => out.add(it));
+      }
+      return out;
+    },
+  };
 }
 
 // ---------------------------------------------------------------- timeline
@@ -2577,7 +2744,54 @@ function stateColumnOrder() {
     .sort((a, b) => bary(a) - bary(b) || a.seq - b.seq);
 }
 
+// The record graph outgrows the screen long before it outgrows the format: at 500
+// nodes the timeline is 87,000px wide. A window keeps the most recent N by
+// chronological rank and drops the rest from the layout entirely, so the world
+// shrinks rather than merely being scrolled past.
+function windowedOut(pos) {
+  const keep = WINDOWS[show.window];
+  if (!isFinite(keep)) return;
+  const cutoff = DATA.record.nodes.length - keep;
+  if (cutoff <= 0) return;
+  DATA.record.nodes.forEach(n => { if (n.chrono < cutoff) delete pos[n.slug]; });
+}
+
+// A collapsed hyperedge is replaced by one puck at the centre of its members.
+// A member cited by another, still-expanded claim stays visible — it belongs to
+// that one too, and hiding it would misreport the other blob.
+function collapseOut(pos) {
+  if (!collapsed.size) return;
+  const H = hyperedges();
+  collapsed.forEach(state => {
+    const h = H.index[state];
+    if (!h) return;
+    let x = 0, y = 0, n = 0;
+    h.members.forEach(m => { const p = pos[m]; if (p) { x += p.x; y += p.y; n++; } });
+    if (!n) return;
+    pos[puckKey(state)] = { x: x / n, y: y / n };
+  });
+  collapsed.forEach(state => {
+    const h = H.index[state];
+    if (!h) return;
+    h.members.forEach(m => {
+      const owners = H.memberOf[m] || [];
+      if (owners.every(st => collapsed.has(st))) delete pos[m];
+    });
+  });
+}
+
 function computeLayout() {
+  const pos = finishLayout(rawLayout());
+  return pos;
+}
+
+function finishLayout(pos) {
+  windowedOut(pos);
+  collapseOut(pos);
+  return pos;
+}
+
+function rawLayout() {
   const pos = {};
   const cards = show.style === "cards";
   if (show.layout === "timeline") {
@@ -2607,30 +2821,46 @@ function computeLayout() {
     layoutForce(pos);
     if (cards) {  // sim runs in circle metric; stretch, then separate any
       for (const s in pos) { pos[s].x *= 3.2; pos[s].y *= 1.8; }
-      const slugs = Object.keys(pos);  // insertion order: deterministic
-      const mw = NW + 24, mh = NH + 24;
-      for (let pass = 0; pass < 40; pass++) {
-        let any = false;
-        for (let i = 0; i < slugs.length; i++) {
-          for (let j = i + 1; j < slugs.length; j++) {
-            const a = pos[slugs[i]], b = pos[slugs[j]];
-            const ox = mw - Math.abs(a.x - b.x), oy = mh - Math.abs(a.y - b.y);
-            if (ox <= 0 || oy <= 0) continue;  // cards clear of each other
-            any = true;
-            if (ox * mh < oy * mw) {  // push apart along the cheaper axis
-              const s = (a.x <= b.x ? -1 : 1) * ox / 2;
-              a.x += s; b.x -= s;
-            } else {
-              const s = (a.y <= b.y ? -1 : 1) * oy / 2;
-              a.y += s; b.y -= s;
-            }
-          }
-        }
-        if (!any) break;
-      }
+      separateCards(pos);
     }
   }
   return pos;
+}
+
+// Push overlapping cards apart. This used to be 40 passes over every pair, which
+// at 500 nodes is 5 million comparisons per pass. A card can only overlap another
+// within one card's distance, so a uniform grid keyed on card size answers "which
+// cards are near this one?" directly and the pass becomes linear in practice.
+// Slug order stays the iteration order, so the result is unchanged in kind and
+// still deterministic.
+function separateCards(pos) {
+  const slugs = Object.keys(pos);   // insertion order: deterministic
+  const mw = NW + 24, mh = NH + 24;
+  for (let pass = 0; pass < 40; pass++) {
+    const grid = gridHash(slugs.map(s => ({
+      slug: s, minX: pos[s].x - mw / 2, maxX: pos[s].x + mw / 2,
+      minY: pos[s].y - mh / 2, maxY: pos[s].y + mh / 2,
+    })), Math.max(mw, mh));
+    let any = false;
+    for (const slug of slugs) {
+      const a = pos[slug];
+      for (const other of grid.near(a.x - mw, a.y - mh, a.x + mw, a.y + mh)) {
+        if (other.slug <= slug) continue;   // each pair once, in slug order
+        const b = pos[other.slug];
+        const ox = mw - Math.abs(a.x - b.x), oy = mh - Math.abs(a.y - b.y);
+        if (ox <= 0 || oy <= 0) continue;   // cards clear of each other
+        any = true;
+        if (ox * mh < oy * mw) {            // push apart along the cheaper axis
+          const s = (a.x <= b.x ? -1 : 1) * ox / 2;
+          a.x += s; b.x -= s;
+        } else {
+          const s = (a.y <= b.y ? -1 : 1) * oy / 2;
+          a.y += s; b.y -= s;
+        }
+      }
+    }
+    if (!any) break;
+  }
 }
 
 // ------------------------------------------------------------------- force
@@ -2648,6 +2878,9 @@ function computeLayout() {
 
 const CLUSTER_GAP = 34;        // clear space demanded between two hyperedges
 const CLUSTER_TICKS = 260, NODE_TICKS = 240;
+// Below this the exact pairwise loop is cheaper than building a tree per tick,
+// and it stays as the reference the approximation is tested against.
+const BH_MIN_NODES = 120;
 
 // FNV-1a -> [0,1): the page's only source of jitter, and it is a pure
 // function of the slug — so every load lays out identically.
@@ -2744,21 +2977,32 @@ function nodeHomes(centres) {
   return homes;
 }
 
+const REPULSION = 20000, REPULSION_CAP = 30;
+
 function simTick(pos, nodes, springs, homes, alpha) {
   const f = {};
   nodes.forEach(s => f[s] = { x: 0, y: 0 });
-  for (let i = 0; i < nodes.length; i++) {          // pairwise repulsion
-    for (let j = i + 1; j < nodes.length; j++) {
-      const a = pos[nodes[i]], b = pos[nodes[j]];
-      let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
-      if (d2 < 1e-4) {  // coincident: deterministic symmetry break
-        const ang = hashSlug(nodes[i] + nodes[j]) * 6.283185307;
-        dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1;
+  // Repulsion through a Barnes-Hut tree: exact near, lumped far. Below the
+  // crossover the tree costs more than it saves, so small graphs keep the plain
+  // pairwise loop — which is also the reference the tree is checked against.
+  if (nodes.length >= BH_MIN_NODES) {
+    const tree = quadtree(nodes, pos);
+    nodes.forEach(s => qtRepulsion(tree, s, pos[s].x, pos[s].y,
+                                   REPULSION, REPULSION_CAP, f[s]));
+  } else {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = pos[nodes[i]], b = pos[nodes[j]];
+        let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+        if (d2 < 1e-4) {  // coincident: deterministic symmetry break
+          const ang = hashSlug(nodes[i] + nodes[j]) * 6.283185307;
+          dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1;
+        }
+        const d = Math.sqrt(d2), rep = Math.min(REPULSION_CAP, REPULSION / d2);
+        const ux = dx / d, uy = dy / d;
+        f[nodes[i]].x += ux * rep; f[nodes[i]].y += uy * rep;
+        f[nodes[j]].x -= ux * rep; f[nodes[j]].y -= uy * rep;
       }
-      const d = Math.sqrt(d2), rep = Math.min(30, 20000 / d2);
-      const ux = dx / d, uy = dy / d;
-      f[nodes[i]].x += ux * rep; f[nodes[i]].y += uy * rep;
-      f[nodes[j]].x -= ux * rep; f[nodes[j]].y -= uy * rep;
     }
   }
   springs.forEach(sp => {                           // [from, to, k, rest]
@@ -2894,6 +3138,14 @@ function layoutForce(pos) {
 const BLOB = { padding: 15, corridor: 10, smoothing: 18, clearance: 11,
                resolution: 5, tolerance: 1.4, maxPoints: 220 };
 const BLOB_MAX_SAMPLES = 60000;   // per blob; coarsen rather than stall
+// Total grid samples one render may spend across *all* blobs. 12 blobs still get
+// the full 60k each; 59 blobs get 12k each and coarsen instead of taking seven
+// seconds. Sampling was 98% of the first paint at 500 nodes.
+const BLOB_SAMPLE_BUDGET = 720000;
+// A tile of the sampling grid. Everything further than its own influence radius
+// from a tile cannot change the field inside it, so each tile samples a pruned
+// set — see traceContour.
+const BLOB_TILE = 24;
 // Below this zoom the field's detail is invisible anyway, so the cheap hull is
 // the honest choice; it is also what a drag uses, to keep the frame rate.
 const BLOB_FIELD_MIN_ZOOM = 0.3;
@@ -3103,8 +3355,40 @@ function corridorSegments(members, obstacles, margin) {
   return out;
 }
 
+// Distance from a point to a box, 0 inside.
+function boxGap(b, x0, y0, x1, y1) {
+  const dx = Math.max(b.x - x1, x0 - (b.x + b.width), 0);
+  const dy = Math.max(b.y - y1, y0 - (b.y + b.height), 0);
+  return Math.hypot(dx, dy);
+}
+
+// The subset of members, corridors and obstacles that can affect a tile.
+function prunePieces(pieces, x0, y0, x1, y1) {
+  const memberReach = BLOB.padding + BLOB.smoothing;
+  const linkReach = BLOB.corridor + BLOB.smoothing;
+  const avoidReach = BLOB.clearance + BLOB.smoothing;
+  let members = pieces.members.filter(m => boxGap(m.box, x0, y0, x1, y1) <= memberReach);
+  if (!members.length) {
+    // Every member is far: the field is positive here whichever one we seed
+    // with, but the smooth minimum needs one, so take the nearest.
+    let best = pieces.members[0], bestGap = Infinity;
+    pieces.members.forEach(m => {
+      const g = boxGap(m.box, x0, y0, x1, y1);
+      if (g < bestGap) { bestGap = g; best = m; }
+    });
+    members = [best];
+  }
+  const links = pieces.links.filter(([a, b]) => {
+    const box = { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]),
+                  width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) };
+    return boxGap(box, x0, y0, x1, y1) <= linkReach;
+  });
+  const avoid = pieces.avoid.filter(s => boxGap(s.box, x0, y0, x1, y1) <= avoidReach);
+  return [members, links, avoid];
+}
+
 // The scalar field whose zero contour is the blob boundary.
-function makeField(members, avoid, links) {
+function makeField(members, links, avoid) {
   // Subtraction uses a tighter blend than the union: too soft and an avoided
   // node dents the boundary from much further away than its clearance.
   const cut = BLOB.smoothing / 2;
@@ -3127,14 +3411,28 @@ function makeField(members, avoid, links) {
 // Each contour point sits on one grid edge and is named by that edge ("h3,7"),
 // not by its coordinates, so two neighbouring cells agree on it exactly and
 // joining segments into loops is bookkeeping rather than guesswork.
-function traceContour(field, bounds, resolution) {
+function traceContour(pieces, bounds, resolution) {
   const cols = Math.max(2, Math.ceil((bounds.maxX - bounds.minX) / resolution) + 1);
   const rows = Math.max(2, Math.ceil((bounds.maxY - bounds.minY) / resolution) + 1);
   const values = new Float64Array(cols * rows);
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++)
-      values[j * cols + i] = field(bounds.minX + i * resolution,
-                                   bounds.minY + j * resolution);
+  // Sample tile by tile against a pruned field. A member more than
+  // padding + smoothing away from the tile can only ever return a large positive
+  // distance, so it never wins the smooth minimum inside it; an avoided shape
+  // beyond clearance + smoothing likewise cannot dent the boundary there. This
+  // is exact, not an approximation — those terms are provably inert.
+  for (let tj = 0; tj < rows; tj += BLOB_TILE) {
+    for (let ti = 0; ti < cols; ti += BLOB_TILE) {
+      const x0 = bounds.minX + ti * resolution, y0 = bounds.minY + tj * resolution;
+      const iEnd = Math.min(cols, ti + BLOB_TILE), jEnd = Math.min(rows, tj + BLOB_TILE);
+      const x1 = bounds.minX + (iEnd - 1) * resolution;
+      const y1 = bounds.minY + (jEnd - 1) * resolution;
+      const field = makeField(...prunePieces(pieces, x0, y0, x1, y1));
+      for (let j = tj; j < jEnd; j++)
+        for (let i = ti; i < iEnd; i++)
+          values[j * cols + i] = field(bounds.minX + i * resolution,
+                                       bounds.minY + j * resolution);
+    }
+  }
 
   const at = (i, j) => values[j * cols + i];
   const inside = (i, j) => at(i, j) < 0;
@@ -3299,7 +3597,7 @@ function blobShapes(slugs, pos) {
 // Closed outlines around `members`, largest first, in world coordinates.
 // Normally there is exactly one. There can be more when an avoided node cuts a
 // blob in two; loops *inside* another loop are holes and get dropped.
-function blobOutline(members, avoid) {
+function blobOutline(members, avoid, sampleCap) {
   if (!members.length) return [];
   const links = corridorSegments(members, avoid, BLOB.clearance + BLOB.corridor);
   // The field is positive everywhere outside this margin, which keeps the
@@ -3325,11 +3623,12 @@ function blobOutline(members, avoid) {
     box.y - reach <= bounds.maxY && box.y + box.height + reach >= bounds.minY);
 
   let resolution = BLOB.resolution;
+  const cap = Math.max(4000, Math.min(BLOB_MAX_SAMPLES, sampleCap || BLOB_MAX_SAMPLES));
   const samples = ((bounds.maxX - bounds.minX) / resolution + 1) *
                   ((bounds.maxY - bounds.minY) / resolution + 1);
-  if (samples > BLOB_MAX_SAMPLES) resolution *= Math.sqrt(samples / BLOB_MAX_SAMPLES);
+  if (samples > cap) resolution *= Math.sqrt(samples / cap);
 
-  const loops = traceContour(makeField(members, near, links), bounds, resolution);
+  const loops = traceContour({ members, links, avoid: near }, bounds, resolution);
   // Even-odd nesting: a loop inside an odd number of others is a hole.
   return loops
     .filter((loop, i) => loops.reduce(
@@ -3344,10 +3643,41 @@ function blobOutline(members, avoid) {
 // Read from `pos`, not from the drawn elements — the blob layer is built before
 // the node layer, so `nodeEls` still holds the *previous* render at this point
 // (and nothing at all on the first one, which silently disabled avoidance).
-// Nodes far outside the members' span are dropped inside blobOutline anyway.
+//
+// At 500 nodes and 59 blobs, handing every blob all 499 non-members and letting
+// blobOutline filter them is 30,000 box tests per render before any sampling
+// starts. A spatial hash over the node boxes, built once per render, answers
+// "which non-members reach into this blob's span?" directly.
+let _avoidGrid = null, _avoidGridKey = "";
+function avoidGrid(pos) {
+  const key = Object.keys(pos).length + ":" + layoutKey();
+  if (_avoidGrid && _avoidGridKey === key) return _avoidGrid;
+  const items = [];
+  for (const slug in pos) {
+    if (!bySlug[slug]) continue;
+    const p = pos[slug], d = dimsOf(slug);
+    items.push({ slug, minX: p.x - d.w / 2, maxX: p.x + d.w / 2,
+                 minY: p.y - d.h / 2, maxY: p.y + d.h / 2 });
+  }
+  _avoidGridKey = key;
+  _avoidGrid = gridHash(items, Math.max(NW, BW, 120));
+  return _avoidGrid;
+}
+
 function blobAvoidShapes(memberSet, pos) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  memberSet.forEach(slug => {
+    const p = pos[slug];
+    if (!p) return;
+    const d = dimsOf(slug);
+    minX = Math.min(minX, p.x - d.w / 2); maxX = Math.max(maxX, p.x + d.w / 2);
+    minY = Math.min(minY, p.y - d.h / 2); maxY = Math.max(maxY, p.y + d.h / 2);
+  });
+  if (!isFinite(minX)) return [];
+  const reach = BLOB.padding + BLOB.corridor + BLOB.smoothing + BLOB.clearance + 40;
   const others = [];
-  for (const slug in pos) if (!memberSet.has(slug) && bySlug[slug]) others.push(slug);
+  avoidGrid(pos).near(minX - reach, minY - reach, maxX + reach, maxY + reach)
+    .forEach(it => { if (!memberSet.has(it.slug)) others.push(it.slug); });
   return blobShapes(others, pos);
 }
 
@@ -3369,7 +3699,9 @@ function blobGeometry(h, pos) {
   const hit = blobCache.get(h.state);
   if (hit && hit.key === key) return hit.value;
   const memberSet = new Set(h.members);
-  const value = blobOutline(blobShapes(h.members, pos), blobAvoidShapes(memberSet, pos));
+  const share = BLOB_SAMPLE_BUDGET / Math.max(1, hyperedges().list.length);
+  const value = blobOutline(blobShapes(h.members, pos),
+                            blobAvoidShapes(memberSet, pos), share);
   blobCache.set(h.state, { key, value });
   return value;
 }
@@ -3586,7 +3918,8 @@ function accentFor(entry) {
 }
 
 function nodeXf(p, entry) {
-  if (styleFor(entry) === "circle") return `translate(${p.x},${p.y})`;
+  const shape = styleFor(entry);
+  if (shape === "circle" || shape === "puck") return `translate(${p.x},${p.y})`;
   const d = dimsFor(entry);
   return `translate(${p.x - d.w / 2},${p.y - d.h / 2})`;
 }
@@ -3605,12 +3938,12 @@ function drawNode(entry, pos) {
     fill: accentFor(entry) }));
   g.appendChild(el("text", { x: 16, y: 21, "font-family": FONT, "font-size": 12.5,
     "font-weight": node.is_root ? 700 : 600, fill: T().ink }, trunc(node.title, 32)));
-  g.appendChild(el("text", { x: 16, y: 36.5, "font-family": MONO, "font-size": 10.5,
-    fill: T().muted }, node.slug));
+  g.appendChild(el("text", { class: "detail", x: 16, y: 36.5, "font-family": MONO,
+    "font-size": 10.5, fill: T().muted }, node.slug));
   let x = 16;
   const meta = (text, color, bold) => {
-    const t = el("text", { x, y: 52, "font-family": FONT, "font-size": 10.5,
-      fill: color, "font-weight": bold ? 650 : 400 }, text);
+    const t = el("text", { class: "detail", x, y: 52, "font-family": FONT,
+      "font-size": 10.5, fill: color, "font-weight": bold ? 650 : 400 }, text);
     g.appendChild(t);
     x += text.length * 6.3 + 13;
   };
@@ -3700,8 +4033,8 @@ function drawBoardCard(entry, pos) {
   g.appendChild(el("text", { x: 15, y: 22, "font-family": FONT, "font-size": 13,
     "font-weight": node.is_root ? 700 : 620, fill: T().ink },
     trunc(node.title, 26)));
-  g.appendChild(el("text", { x: 15, y: 39, "font-family": MONO, "font-size": 10.5,
-    fill: T().muted }, node.slug));
+  g.appendChild(el("text", { class: "detail", x: 15, y: 39, "font-family": MONO,
+    "font-size": 10.5, fill: T().muted }, node.slug));
   if (node.is_root) {
     g.appendChild(el("text", { x: 15, y: 60, "font-family": FONT, "font-size": 11,
       fill: T().ink2, "font-weight": 650 }, "state root"));
@@ -3723,8 +4056,32 @@ function drawBoardCard(entry, pos) {
   return g;
 }
 
+// A collapsed hyperedge: one body carrying the claim's colour and its size.
+// Clicking it opens the claim, where the button to expand it again lives.
+function drawPuck(entry, pos) {
+  const h = hyperedges().index[entry.state];
+  const color = T().cat[(h ? h.ci : 0) % T().cat.length];
+  const p = pos[entry.node.slug];
+  const g = el("g", { class: "node", "data-slug": entry.node.slug,
+                      cursor: "pointer", transform: nodeXf(p, entry) });
+  g.appendChild(el("circle", { r: PUCK_R, fill: color, "fill-opacity": 0.18,
+    stroke: color, "stroke-width": 2 }));
+  g.appendChild(el("text", { x: 0, y: 4, "font-family": FONT, "font-size": 14,
+    "font-weight": 700, "text-anchor": "middle", fill: color,
+    "pointer-events": "none" }, String(entry.node.members)));
+  g.appendChild(el("text", { class: "nodelabel", x: 0, y: PUCK_R + 14,
+    "font-family": MONO, "font-size": 10.5, "text-anchor": "middle",
+    fill: color, "pointer-events": "none" }, entry.state));
+  const tip = el("title");
+  tip.textContent = entry.node.title + " — " + entry.node.members +
+                    " record nodes, collapsed";
+  g.appendChild(tip);
+  return g;
+}
+
 function drawAnyNode(entry, pos) {
   switch (styleFor(entry)) {
+    case "puck":   return drawPuck(entry, pos);
     case "chip":   return drawChipNode(entry, pos);
     case "board":  return drawBoardCard(entry, pos);
     case "circle": return drawCircleNode(entry, pos);
@@ -3807,6 +4164,10 @@ function drawBlobs(pos) {
   const hs = hyperedges().list.slice()
     .sort((a, b) => b.members.length - a.members.length);  // big first, small on top
   hs.forEach(h => {
+    // A collapsed claim is represented by its puck; drawing its blob as well —
+    // around whatever members another claim still keeps on screen — would be two
+    // contradictory pictures of the same thing.
+    if (collapsed.has(h.state)) return;
     const d = blobPathFor(h, pos);
     if (!d) return;
     const color = T().cat[h.ci % T().cat.length];
@@ -3913,6 +4274,13 @@ function renderAll() {
   });
   if (recVis()) draw("record");
   if (stVis()) draw("state");
+  collapsed.forEach(state => {           // one puck per collapsed hyperedge
+    const slug = puckKey(state);
+    if (!pos[slug] || !bySlug[slug]) return;
+    const gEl = drawAnyNode(bySlug[slug], pos);
+    nodeLayer.appendChild(gEl);
+    nodeEls[slug] = gEl;
+  });
 
   renderCrossLinks();
   applyTf();
@@ -3958,12 +4326,25 @@ function renderCrossLinks() {
 // Below this zoom a 10.5px label is under 7px on screen — noise, not text.
 const LABEL_MIN_ZOOM = 0.62;
 
+// Level of detail. Text that cannot be read costs layout and paint time for
+// nothing, so it is switched off by zoom rather than drawn small: secondary
+// lines first, then all node text, leaving a coloured box that still reads as a
+// shape at a glance.
+function applyLod(k) {
+  const set = (sel, on) =>
+    svg.querySelectorAll(sel).forEach(e => e.style.display = on ? "" : "none");
+  set("text.nodelabel", k >= LABEL_MIN_ZOOM);
+  set("#nodes text.detail", k >= DETAIL_MIN_ZOOM);
+  const nodes = document.getElementById("nodes");
+  if (nodes) nodes.style.setProperty("--lod-text", k >= TEXT_MIN_ZOOM ? "1" : "0");
+  set("#nodes text:not(.nodelabel):not(.detail)", k >= TEXT_MIN_ZOOM);
+}
+
 function applyTf() {
   const t = tfFor();
   const world = document.getElementById("world");
   if (world) world.setAttribute("transform", `translate(${t.x},${t.y}) scale(${t.k})`);
-  const on = t.k >= LABEL_MIN_ZOOM ? "" : "none";
-  svg.querySelectorAll("text.nodelabel").forEach(el => el.style.display = on);
+  applyLod(t.k);
 }
 
 // ------------------------------------------------------- dim / select / search
@@ -4006,7 +4387,9 @@ function updateDim() {
     const box = nodeEls[slug].firstChild;  // the shape stays firstChild in every draw*
     const shape = styleFor(entry);
     const n = entry.node;
-    if (shape === "circle") {
+    if (shape === "puck") {
+      box.setAttribute("stroke-width", slug === selected ? 3.2 : 2);
+    } else if (shape === "circle") {
       const heavy = n.is_root || n.is_hwm || n.unreconciled || n.frontier;
       box.setAttribute("stroke", slug === selected ? T().ink : accentFor(entry));
       box.setAttribute("stroke-width", slug === selected ? 2.4 : heavy ? 2.2 : 1.4);
@@ -4157,6 +4540,16 @@ function renderPanel() {
     html += "<h3>Cited as provenance by</h3>" +
       linkList(citedBy.map(l => ({ slug: l.state, note: l.label })));
   } else if (!node.is_root) {
+    // A claim with an impact set can be folded to one puck. At 500 nodes that is
+    // the difference between reading the shape of the work and reading a wall.
+    const h = hyperedges().index[node.slug];
+    if (h) {
+      const on = collapsed.has(node.slug);
+      html += `<h3>Cluster</h3><p class="meta">${h.members.length} record node` +
+        `${h.members.length > 1 ? "s" : ""} declare impact on this claim.</p>` +
+        `<button class="act" data-collapse="${node.slug}">` +
+        `${on ? "Expand" : "Collapse to one puck"}</button>`;
+    }
     const prov = DATA.links.filter(l => l.state === node.slug && l.kind === "provenance");
     html += "<h3>Derived from (provenance)</h3>" +
       linkList(prov.map(l => ({ slug: l.record, note: l.label })));
@@ -4218,6 +4611,14 @@ function legendHTML() {
 function bindPanel() {
   panel.querySelectorAll("a.slug").forEach(a =>
     a.addEventListener("click", () => jumpTo(a.dataset.slug)));
+  panel.querySelectorAll("button[data-collapse]").forEach(b =>
+    b.addEventListener("click", () => toggleCollapse(b.dataset.collapse)));
+}
+
+function toggleCollapse(state) {
+  if (collapsed.has(state)) collapsed.delete(state); else collapsed.add(state);
+  rerender();
+  renderPanel();
 }
 
 // -------------------------------------------------------------- interaction
@@ -4272,7 +4673,8 @@ svg.addEventListener("pointerup", e => {
   svg.classList.remove("dragging");
   if (!drag) return;
   if (!drag.moved) {
-    if (drag.type === "node") select(drag.slug);
+    if (drag.type === "node")
+      select(isPuck(drag.slug) ? puckState(drag.slug) : drag.slug);
     else if (drag.blob) select(drag.blob);
     else deselect();
   }
@@ -4591,6 +4993,9 @@ function adoptData(fresh) {
   DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
   _hyper = null;
   _spineRank = null;
+  registerPucks();
+  // A claim that no longer exists cannot stay collapsed.
+  [...collapsed].forEach(st => { if (!bySlug[st]) collapsed.delete(st); });
   blobCache.clear();
   for (const k in positions) delete positions[k];   // layouts depend on the data
   if (selected && !bySlug[selected]) selected = null;
@@ -4636,6 +5041,7 @@ function startLive() {
 // see VIEW_ALIASES); #<slug> jumps to a node.
 document.body.dataset.theme = theme;
 applySide();
+registerPucks();   // synthetic entries for collapsed hyperedges
 const boot = decodeURIComponent(location.hash.slice(1));
 const bootView = VIEW_ALIASES[boot] || boot;
 applyPreset(PRESETS[bootView] ? bootView : "clusters");

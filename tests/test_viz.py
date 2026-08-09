@@ -146,6 +146,27 @@ def test_lane_layout_reuses_a_lane_that_owes_nothing(tmp_path):
     assert by_slug["solo-eee-0005"] == 0, "a lane owing nothing must be reused"
 
 
+def test_lane_layout_survives_a_child_older_than_its_parent(tmp_path):
+    """Backdated imports and skewed clocks produce children that predate their
+    parents. Lanes are assigned in time order, so such a parent has no lane yet —
+    which used to raise. The edge just cannot continue a lane."""
+    nodes = []
+    for i, (slug, parents, when) in enumerate([
+            ("root-aaa-0001", [], "2026-08-01T00:00:00+00:00"),
+            ("late-bbb-0002", ["root-aaa-0001"], "2026-08-05T00:00:00+00:00"),
+            # committed after its parent, but stamped before it
+            ("early-ccc-0003", ["late-bbb-0002"], "2026-08-03T00:00:00+00:00")], start=1):
+        nodes.append({"node_id": f"50000000-0000-0000-0000-{i:012d}",
+                      "slug_name": slug, "title": slug, "content": "none: fixture",
+                      "created_at": when,
+                      "parent_ids": [f"50000000-0000-0000-0000-{j:012d}"
+                                     for j in range(1, i) if nodes[j - 1]["slug_name"] in parents]})
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps({"version": 1, "nodes": nodes}))
+    chrono, lanes = hg.lane_layout(hg.load_graph(path))
+    assert len(lanes) == 3 and all(v >= 0 for v in lanes.values())
+
+
 def test_lane_layout_keeps_a_shared_lane_adjacent():
     """The property the lanes exist for, checked on this repo's real graph.
 

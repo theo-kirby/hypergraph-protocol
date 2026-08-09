@@ -156,7 +156,8 @@ function accentFor(entry) {
 }
 
 function nodeXf(p, entry) {
-  if (styleFor(entry) === "circle") return `translate(${p.x},${p.y})`;
+  const shape = styleFor(entry);
+  if (shape === "circle" || shape === "puck") return `translate(${p.x},${p.y})`;
   const d = dimsFor(entry);
   return `translate(${p.x - d.w / 2},${p.y - d.h / 2})`;
 }
@@ -175,12 +176,12 @@ function drawNode(entry, pos) {
     fill: accentFor(entry) }));
   g.appendChild(el("text", { x: 16, y: 21, "font-family": FONT, "font-size": 12.5,
     "font-weight": node.is_root ? 700 : 600, fill: T().ink }, trunc(node.title, 32)));
-  g.appendChild(el("text", { x: 16, y: 36.5, "font-family": MONO, "font-size": 10.5,
-    fill: T().muted }, node.slug));
+  g.appendChild(el("text", { class: "detail", x: 16, y: 36.5, "font-family": MONO,
+    "font-size": 10.5, fill: T().muted }, node.slug));
   let x = 16;
   const meta = (text, color, bold) => {
-    const t = el("text", { x, y: 52, "font-family": FONT, "font-size": 10.5,
-      fill: color, "font-weight": bold ? 650 : 400 }, text);
+    const t = el("text", { class: "detail", x, y: 52, "font-family": FONT,
+      "font-size": 10.5, fill: color, "font-weight": bold ? 650 : 400 }, text);
     g.appendChild(t);
     x += text.length * 6.3 + 13;
   };
@@ -270,8 +271,8 @@ function drawBoardCard(entry, pos) {
   g.appendChild(el("text", { x: 15, y: 22, "font-family": FONT, "font-size": 13,
     "font-weight": node.is_root ? 700 : 620, fill: T().ink },
     trunc(node.title, 26)));
-  g.appendChild(el("text", { x: 15, y: 39, "font-family": MONO, "font-size": 10.5,
-    fill: T().muted }, node.slug));
+  g.appendChild(el("text", { class: "detail", x: 15, y: 39, "font-family": MONO,
+    "font-size": 10.5, fill: T().muted }, node.slug));
   if (node.is_root) {
     g.appendChild(el("text", { x: 15, y: 60, "font-family": FONT, "font-size": 11,
       fill: T().ink2, "font-weight": 650 }, "state root"));
@@ -293,8 +294,32 @@ function drawBoardCard(entry, pos) {
   return g;
 }
 
+// A collapsed hyperedge: one body carrying the claim's colour and its size.
+// Clicking it opens the claim, where the button to expand it again lives.
+function drawPuck(entry, pos) {
+  const h = hyperedges().index[entry.state];
+  const color = T().cat[(h ? h.ci : 0) % T().cat.length];
+  const p = pos[entry.node.slug];
+  const g = el("g", { class: "node", "data-slug": entry.node.slug,
+                      cursor: "pointer", transform: nodeXf(p, entry) });
+  g.appendChild(el("circle", { r: PUCK_R, fill: color, "fill-opacity": 0.18,
+    stroke: color, "stroke-width": 2 }));
+  g.appendChild(el("text", { x: 0, y: 4, "font-family": FONT, "font-size": 14,
+    "font-weight": 700, "text-anchor": "middle", fill: color,
+    "pointer-events": "none" }, String(entry.node.members)));
+  g.appendChild(el("text", { class: "nodelabel", x: 0, y: PUCK_R + 14,
+    "font-family": MONO, "font-size": 10.5, "text-anchor": "middle",
+    fill: color, "pointer-events": "none" }, entry.state));
+  const tip = el("title");
+  tip.textContent = entry.node.title + " — " + entry.node.members +
+                    " record nodes, collapsed";
+  g.appendChild(tip);
+  return g;
+}
+
 function drawAnyNode(entry, pos) {
   switch (styleFor(entry)) {
+    case "puck":   return drawPuck(entry, pos);
     case "chip":   return drawChipNode(entry, pos);
     case "board":  return drawBoardCard(entry, pos);
     case "circle": return drawCircleNode(entry, pos);
@@ -377,6 +402,10 @@ function drawBlobs(pos) {
   const hs = hyperedges().list.slice()
     .sort((a, b) => b.members.length - a.members.length);  // big first, small on top
   hs.forEach(h => {
+    // A collapsed claim is represented by its puck; drawing its blob as well —
+    // around whatever members another claim still keeps on screen — would be two
+    // contradictory pictures of the same thing.
+    if (collapsed.has(h.state)) return;
     const d = blobPathFor(h, pos);
     if (!d) return;
     const color = T().cat[h.ci % T().cat.length];
@@ -483,6 +512,13 @@ function renderAll() {
   });
   if (recVis()) draw("record");
   if (stVis()) draw("state");
+  collapsed.forEach(state => {           // one puck per collapsed hyperedge
+    const slug = puckKey(state);
+    if (!pos[slug] || !bySlug[slug]) return;
+    const gEl = drawAnyNode(bySlug[slug], pos);
+    nodeLayer.appendChild(gEl);
+    nodeEls[slug] = gEl;
+  });
 
   renderCrossLinks();
   applyTf();
@@ -528,12 +564,25 @@ function renderCrossLinks() {
 // Below this zoom a 10.5px label is under 7px on screen — noise, not text.
 const LABEL_MIN_ZOOM = 0.62;
 
+// Level of detail. Text that cannot be read costs layout and paint time for
+// nothing, so it is switched off by zoom rather than drawn small: secondary
+// lines first, then all node text, leaving a coloured box that still reads as a
+// shape at a glance.
+function applyLod(k) {
+  const set = (sel, on) =>
+    svg.querySelectorAll(sel).forEach(e => e.style.display = on ? "" : "none");
+  set("text.nodelabel", k >= LABEL_MIN_ZOOM);
+  set("#nodes text.detail", k >= DETAIL_MIN_ZOOM);
+  const nodes = document.getElementById("nodes");
+  if (nodes) nodes.style.setProperty("--lod-text", k >= TEXT_MIN_ZOOM ? "1" : "0");
+  set("#nodes text:not(.nodelabel):not(.detail)", k >= TEXT_MIN_ZOOM);
+}
+
 function applyTf() {
   const t = tfFor();
   const world = document.getElementById("world");
   if (world) world.setAttribute("transform", `translate(${t.x},${t.y}) scale(${t.k})`);
-  const on = t.k >= LABEL_MIN_ZOOM ? "" : "none";
-  svg.querySelectorAll("text.nodelabel").forEach(el => el.style.display = on);
+  applyLod(t.k);
 }
 
 // ------------------------------------------------------- dim / select / search
@@ -576,7 +625,9 @@ function updateDim() {
     const box = nodeEls[slug].firstChild;  // the shape stays firstChild in every draw*
     const shape = styleFor(entry);
     const n = entry.node;
-    if (shape === "circle") {
+    if (shape === "puck") {
+      box.setAttribute("stroke-width", slug === selected ? 3.2 : 2);
+    } else if (shape === "circle") {
       const heavy = n.is_root || n.is_hwm || n.unreconciled || n.frontier;
       box.setAttribute("stroke", slug === selected ? T().ink : accentFor(entry));
       box.setAttribute("stroke-width", slug === selected ? 2.4 : heavy ? 2.2 : 1.4);

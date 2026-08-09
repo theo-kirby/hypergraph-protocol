@@ -27,6 +27,12 @@ const BW = 232, BH = 78, BCOL = BW + 26, BROW = BH + 12;  // frontier board card
 // Nothing may fit below this. Shrinking past it trades "you can see everything"
 // for "you can read nothing" — the view scrolls instead.
 const MIN_FIT = 0.45, MAX_FIT = 1.25;
+const PUCK_R = 30;  // a collapsed hyperedge, drawn as one body
+// Level of detail. Secondary lines go first, then all node text: below these a
+// card is a coloured box, which is still a useful shape at a glance.
+const DETAIL_MIN_ZOOM = 0.58, TEXT_MIN_ZOOM = 0.34;
+// How many of the most recent record nodes each time window keeps.
+const WINDOWS = { all: Infinity, "250": 250, "100": 100, "50": 50 };
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 const SLUG_JS = /\b[a-z][a-z0-9]*-[a-z][a-z0-9]*-[0-9]{4}\b/g;
@@ -43,6 +49,7 @@ const show = {
   layout: "force",    // "timeline" | "board" | "layered" | "force"
   xaxis:  "rank",     // timeline only: "rank" (even) | "time" (real dates)
   board:  "status",   // board only: "status" columns | "tree" architecture
+  window: "all",      // record graph: "all" or the most recent N by chrono
   links:  "focus",    // cross-graph links: "focus" | "all" | "none"
   tree:   true,       // intra-graph parent edges
   impact: false,      // include impact links among the cross-graph ones
@@ -59,29 +66,53 @@ const LAYOUT_GRAPH = { timeline: "record", board: "state" };
 const SEG_FOR_LAYOUT = { xaxis: ["timeline"], board: ["board"] };
 function segHidden(key) {
   if (key === "links") return show.graphs !== "both";
+  // A time window only means something when there is enough history to hide.
+  if (key === "window") return !recVis() || DATA.record.nodes.length <= 60;
   const only = SEG_FOR_LAYOUT[key];
   return !!only && only.indexOf(show.layout) < 0;
 }
 // Pan/zoom + node positions are cached per layout signature; edge/blob toggles
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
-const layoutKey = () => [show.layout, show.graphs, show.style,
-                         show.xaxis, show.board].join(":");
+const layoutKey = () => [show.layout, show.graphs, show.style, show.xaxis,
+                         show.board, show.window,
+                         [...collapsed].sort().join(",")].join(":");
+
+// Hyperedges collapsed to a single puck. Held here rather than in `show` because
+// it is a set of slugs, and because it belongs to the graph rather than to the
+// display mode — collapsing survives a change of view.
+const collapsed = new Set();
+const PUCK = "puck:";
+const puckKey = state => PUCK + state;
+const isPuck = slug => slug.startsWith(PUCK);
+const puckState = slug => slug.slice(PUCK.length);
+
+// A puck stands in for its whole hyperedge, so it answers to the state node's
+// text: search finds it, and the panel opens the claim itself.
+function registerPucks() {
+  hyperedges().list.forEach(h => {
+    const st = bySlug[h.state];
+    if (!st) return;
+    bySlug[puckKey(h.state)] = { graph: "puck", state: h.state, node: {
+      slug: puckKey(h.state), title: st.node.title, content: st.node.content,
+      parents: [], members: h.members.length } };
+  });
+}
 
 // Four views, each named after its job. Timeline = what happened, in order.
 // Frontier = what is true now, and what is open. Provenance = which record work
 // each state claim rests on. Clusters = which work belongs to the same claim.
 const PRESETS = {
   timeline:   { graphs:"record", style:"cards",   layout:"timeline",
-                xaxis:"rank", board:"status", links:"focus",
+                xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:true, impact:false, prov:false, blobs:false },
   frontier:   { graphs:"state",  style:"cards",   layout:"board",
-                xaxis:"rank", board:"status", links:"focus",
+                xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:false, impact:false, prov:false, blobs:false },
   provenance: { graphs:"both",   style:"cards",   layout:"layered",
-                xaxis:"rank", board:"status", links:"focus",
+                xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:true, impact:true,  prov:true,  blobs:false },
   clusters:   { graphs:"record", style:"circles", layout:"force",
-                xaxis:"rank", board:"status", links:"focus",
+                xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:true, impact:false, prov:false, blobs:true },
 };
 // Pre-rename deep links keep working: #record #state #combo #combination #hyper.
@@ -91,12 +122,14 @@ const VIEW_ALIASES = { record:"timeline", state:"frontier", combo:"provenance",
 // compact chips and the board draws status cards, because those two layouts exist
 // precisely to show what a generic card cannot.
 function styleFor(entry) {
+  if (entry.graph === "puck") return "puck";
   if (show.layout === "timeline" && entry.graph === "record") return "chip";
   if (show.layout === "board" && entry.graph === "state") return "board";
   return show.style === "circles" ? "circle" : "card";
 }
 function dimsFor(entry) {
   switch (styleFor(entry)) {
+    case "puck":   return { w: PUCK_R * 2, h: PUCK_R * 2 };
     case "chip":   return { w: CW, h: CH };
     case "board":  return { w: BW, h: BH };
     case "circle": return { w: 2 * R, h: 2 * R };

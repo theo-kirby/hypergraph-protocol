@@ -177,3 +177,19 @@ def test_links_control_is_hidden_without_both_graphs(page):
     assert page.is_hidden('.seg[data-key="links"]')
     open_view(page, "provenance")
     assert page.is_visible('.seg[data-key="links"]')
+
+
+def test_level_of_detail_drops_text_as_the_view_shrinks(page):
+    """Text that cannot be read costs paint time for nothing."""
+    open_view(page, "provenance")
+    shown = lambda sel: page.evaluate(
+        f"""() => [...document.querySelectorAll('{sel}')]
+                 .filter(e => e.style.display !== 'none').length""")
+    assert shown("#nodes text.detail") > 0
+    page.evaluate("""() => { const s = document.getElementById("svg");
+        s.dispatchEvent(new WheelEvent("wheel", {deltaY: 900, clientX: 300,
+                                                 clientY: 300, bubbles: true})); }""")
+    page.wait_for_timeout(120)
+    scale = measure(page)["scale"]
+    assert scale < 0.58, f"the wheel should have zoomed out (scale {scale})"
+    assert shown("#nodes text.detail") == 0, "secondary lines must drop out first"

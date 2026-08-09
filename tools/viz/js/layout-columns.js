@@ -28,7 +28,54 @@ function stateColumnOrder() {
     .sort((a, b) => bary(a) - bary(b) || a.seq - b.seq);
 }
 
+// The record graph outgrows the screen long before it outgrows the format: at 500
+// nodes the timeline is 87,000px wide. A window keeps the most recent N by
+// chronological rank and drops the rest from the layout entirely, so the world
+// shrinks rather than merely being scrolled past.
+function windowedOut(pos) {
+  const keep = WINDOWS[show.window];
+  if (!isFinite(keep)) return;
+  const cutoff = DATA.record.nodes.length - keep;
+  if (cutoff <= 0) return;
+  DATA.record.nodes.forEach(n => { if (n.chrono < cutoff) delete pos[n.slug]; });
+}
+
+// A collapsed hyperedge is replaced by one puck at the centre of its members.
+// A member cited by another, still-expanded claim stays visible — it belongs to
+// that one too, and hiding it would misreport the other blob.
+function collapseOut(pos) {
+  if (!collapsed.size) return;
+  const H = hyperedges();
+  collapsed.forEach(state => {
+    const h = H.index[state];
+    if (!h) return;
+    let x = 0, y = 0, n = 0;
+    h.members.forEach(m => { const p = pos[m]; if (p) { x += p.x; y += p.y; n++; } });
+    if (!n) return;
+    pos[puckKey(state)] = { x: x / n, y: y / n };
+  });
+  collapsed.forEach(state => {
+    const h = H.index[state];
+    if (!h) return;
+    h.members.forEach(m => {
+      const owners = H.memberOf[m] || [];
+      if (owners.every(st => collapsed.has(st))) delete pos[m];
+    });
+  });
+}
+
 function computeLayout() {
+  const pos = finishLayout(rawLayout());
+  return pos;
+}
+
+function finishLayout(pos) {
+  windowedOut(pos);
+  collapseOut(pos);
+  return pos;
+}
+
+function rawLayout() {
   const pos = {};
   const cards = show.style === "cards";
   if (show.layout === "timeline") {
@@ -58,29 +105,45 @@ function computeLayout() {
     layoutForce(pos);
     if (cards) {  // sim runs in circle metric; stretch, then separate any
       for (const s in pos) { pos[s].x *= 3.2; pos[s].y *= 1.8; }
-      const slugs = Object.keys(pos);  // insertion order: deterministic
-      const mw = NW + 24, mh = NH + 24;
-      for (let pass = 0; pass < 40; pass++) {
-        let any = false;
-        for (let i = 0; i < slugs.length; i++) {
-          for (let j = i + 1; j < slugs.length; j++) {
-            const a = pos[slugs[i]], b = pos[slugs[j]];
-            const ox = mw - Math.abs(a.x - b.x), oy = mh - Math.abs(a.y - b.y);
-            if (ox <= 0 || oy <= 0) continue;  // cards clear of each other
-            any = true;
-            if (ox * mh < oy * mw) {  // push apart along the cheaper axis
-              const s = (a.x <= b.x ? -1 : 1) * ox / 2;
-              a.x += s; b.x -= s;
-            } else {
-              const s = (a.y <= b.y ? -1 : 1) * oy / 2;
-              a.y += s; b.y -= s;
-            }
-          }
-        }
-        if (!any) break;
-      }
+      separateCards(pos);
     }
   }
   return pos;
+}
+
+// Push overlapping cards apart. This used to be 40 passes over every pair, which
+// at 500 nodes is 5 million comparisons per pass. A card can only overlap another
+// within one card's distance, so a uniform grid keyed on card size answers "which
+// cards are near this one?" directly and the pass becomes linear in practice.
+// Slug order stays the iteration order, so the result is unchanged in kind and
+// still deterministic.
+function separateCards(pos) {
+  const slugs = Object.keys(pos);   // insertion order: deterministic
+  const mw = NW + 24, mh = NH + 24;
+  for (let pass = 0; pass < 40; pass++) {
+    const grid = gridHash(slugs.map(s => ({
+      slug: s, minX: pos[s].x - mw / 2, maxX: pos[s].x + mw / 2,
+      minY: pos[s].y - mh / 2, maxY: pos[s].y + mh / 2,
+    })), Math.max(mw, mh));
+    let any = false;
+    for (const slug of slugs) {
+      const a = pos[slug];
+      for (const other of grid.near(a.x - mw, a.y - mh, a.x + mw, a.y + mh)) {
+        if (other.slug <= slug) continue;   // each pair once, in slug order
+        const b = pos[other.slug];
+        const ox = mw - Math.abs(a.x - b.x), oy = mh - Math.abs(a.y - b.y);
+        if (ox <= 0 || oy <= 0) continue;   // cards clear of each other
+        any = true;
+        if (ox * mh < oy * mw) {            // push apart along the cheaper axis
+          const s = (a.x <= b.x ? -1 : 1) * ox / 2;
+          a.x += s; b.x -= s;
+        } else {
+          const s = (a.y <= b.y ? -1 : 1) * oy / 2;
+          a.y += s; b.y -= s;
+        }
+      }
+    }
+    if (!any) break;
+  }
 }
 

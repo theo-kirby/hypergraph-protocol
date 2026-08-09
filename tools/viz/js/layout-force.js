@@ -13,6 +13,9 @@
 
 const CLUSTER_GAP = 34;        // clear space demanded between two hyperedges
 const CLUSTER_TICKS = 260, NODE_TICKS = 240;
+// Below this the exact pairwise loop is cheaper than building a tree per tick,
+// and it stays as the reference the approximation is tested against.
+const BH_MIN_NODES = 120;
 
 // FNV-1a -> [0,1): the page's only source of jitter, and it is a pure
 // function of the slug — so every load lays out identically.
@@ -109,21 +112,32 @@ function nodeHomes(centres) {
   return homes;
 }
 
+const REPULSION = 20000, REPULSION_CAP = 30;
+
 function simTick(pos, nodes, springs, homes, alpha) {
   const f = {};
   nodes.forEach(s => f[s] = { x: 0, y: 0 });
-  for (let i = 0; i < nodes.length; i++) {          // pairwise repulsion
-    for (let j = i + 1; j < nodes.length; j++) {
-      const a = pos[nodes[i]], b = pos[nodes[j]];
-      let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
-      if (d2 < 1e-4) {  // coincident: deterministic symmetry break
-        const ang = hashSlug(nodes[i] + nodes[j]) * 6.283185307;
-        dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1;
+  // Repulsion through a Barnes-Hut tree: exact near, lumped far. Below the
+  // crossover the tree costs more than it saves, so small graphs keep the plain
+  // pairwise loop — which is also the reference the tree is checked against.
+  if (nodes.length >= BH_MIN_NODES) {
+    const tree = quadtree(nodes, pos);
+    nodes.forEach(s => qtRepulsion(tree, s, pos[s].x, pos[s].y,
+                                   REPULSION, REPULSION_CAP, f[s]));
+  } else {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = pos[nodes[i]], b = pos[nodes[j]];
+        let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+        if (d2 < 1e-4) {  // coincident: deterministic symmetry break
+          const ang = hashSlug(nodes[i] + nodes[j]) * 6.283185307;
+          dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1;
+        }
+        const d = Math.sqrt(d2), rep = Math.min(REPULSION_CAP, REPULSION / d2);
+        const ux = dx / d, uy = dy / d;
+        f[nodes[i]].x += ux * rep; f[nodes[i]].y += uy * rep;
+        f[nodes[j]].x -= ux * rep; f[nodes[j]].y -= uy * rep;
       }
-      const d = Math.sqrt(d2), rep = Math.min(30, 20000 / d2);
-      const ux = dx / d, uy = dy / d;
-      f[nodes[i]].x += ux * rep; f[nodes[i]].y += uy * rep;
-      f[nodes[j]].x -= ux * rep; f[nodes[j]].y -= uy * rep;
     }
   }
   springs.forEach(sp => {                           // [from, to, k, rest]

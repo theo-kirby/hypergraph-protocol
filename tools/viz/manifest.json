@@ -6,6 +6,7 @@
   ],
   "js": [
     "js/core.js",
+    "js/quadtree.js",
     "js/layout-timeline.js",
     "js/layout-board.js",
     "js/layout-columns.js",

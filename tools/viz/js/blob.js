@@ -27,6 +27,14 @@
 const BLOB = { padding: 15, corridor: 10, smoothing: 18, clearance: 11,
                resolution: 5, tolerance: 1.4, maxPoints: 220 };
 const BLOB_MAX_SAMPLES = 60000;   // per blob; coarsen rather than stall
+// Total grid samples one render may spend across *all* blobs. 12 blobs still get
+// the full 60k each; 59 blobs get 12k each and coarsen instead of taking seven
+// seconds. Sampling was 98% of the first paint at 500 nodes.
+const BLOB_SAMPLE_BUDGET = 720000;
+// A tile of the sampling grid. Everything further than its own influence radius
+// from a tile cannot change the field inside it, so each tile samples a pruned
+// set — see traceContour.
+const BLOB_TILE = 24;
 // Below this zoom the field's detail is invisible anyway, so the cheap hull is
 // the honest choice; it is also what a drag uses, to keep the frame rate.
 const BLOB_FIELD_MIN_ZOOM = 0.3;
@@ -236,8 +244,40 @@ function corridorSegments(members, obstacles, margin) {
   return out;
 }
 
+// Distance from a point to a box, 0 inside.
+function boxGap(b, x0, y0, x1, y1) {
+  const dx = Math.max(b.x - x1, x0 - (b.x + b.width), 0);
+  const dy = Math.max(b.y - y1, y0 - (b.y + b.height), 0);
+  return Math.hypot(dx, dy);
+}
+
+// The subset of members, corridors and obstacles that can affect a tile.
+function prunePieces(pieces, x0, y0, x1, y1) {
+  const memberReach = BLOB.padding + BLOB.smoothing;
+  const linkReach = BLOB.corridor + BLOB.smoothing;
+  const avoidReach = BLOB.clearance + BLOB.smoothing;
+  let members = pieces.members.filter(m => boxGap(m.box, x0, y0, x1, y1) <= memberReach);
+  if (!members.length) {
+    // Every member is far: the field is positive here whichever one we seed
+    // with, but the smooth minimum needs one, so take the nearest.
+    let best = pieces.members[0], bestGap = Infinity;
+    pieces.members.forEach(m => {
+      const g = boxGap(m.box, x0, y0, x1, y1);
+      if (g < bestGap) { bestGap = g; best = m; }
+    });
+    members = [best];
+  }
+  const links = pieces.links.filter(([a, b]) => {
+    const box = { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]),
+                  width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) };
+    return boxGap(box, x0, y0, x1, y1) <= linkReach;
+  });
+  const avoid = pieces.avoid.filter(s => boxGap(s.box, x0, y0, x1, y1) <= avoidReach);
+  return [members, links, avoid];
+}
+
 // The scalar field whose zero contour is the blob boundary.
-function makeField(members, avoid, links) {
+function makeField(members, links, avoid) {
   // Subtraction uses a tighter blend than the union: too soft and an avoided
   // node dents the boundary from much further away than its clearance.
   const cut = BLOB.smoothing / 2;
@@ -260,14 +300,28 @@ function makeField(members, avoid, links) {
 // Each contour point sits on one grid edge and is named by that edge ("h3,7"),
 // not by its coordinates, so two neighbouring cells agree on it exactly and
 // joining segments into loops is bookkeeping rather than guesswork.
-function traceContour(field, bounds, resolution) {
+function traceContour(pieces, bounds, resolution) {
   const cols = Math.max(2, Math.ceil((bounds.maxX - bounds.minX) / resolution) + 1);
   const rows = Math.max(2, Math.ceil((bounds.maxY - bounds.minY) / resolution) + 1);
   const values = new Float64Array(cols * rows);
-  for (let j = 0; j < rows; j++)
-    for (let i = 0; i < cols; i++)
-      values[j * cols + i] = field(bounds.minX + i * resolution,
-                                   bounds.minY + j * resolution);
+  // Sample tile by tile against a pruned field. A member more than
+  // padding + smoothing away from the tile can only ever return a large positive
+  // distance, so it never wins the smooth minimum inside it; an avoided shape
+  // beyond clearance + smoothing likewise cannot dent the boundary there. This
+  // is exact, not an approximation — those terms are provably inert.
+  for (let tj = 0; tj < rows; tj += BLOB_TILE) {
+    for (let ti = 0; ti < cols; ti += BLOB_TILE) {
+      const x0 = bounds.minX + ti * resolution, y0 = bounds.minY + tj * resolution;
+      const iEnd = Math.min(cols, ti + BLOB_TILE), jEnd = Math.min(rows, tj + BLOB_TILE);
+      const x1 = bounds.minX + (iEnd - 1) * resolution;
+      const y1 = bounds.minY + (jEnd - 1) * resolution;
+      const field = makeField(...prunePieces(pieces, x0, y0, x1, y1));
+      for (let j = tj; j < jEnd; j++)
+        for (let i = ti; i < iEnd; i++)
+          values[j * cols + i] = field(bounds.minX + i * resolution,
+                                       bounds.minY + j * resolution);
+    }
+  }
 
   const at = (i, j) => values[j * cols + i];
   const inside = (i, j) => at(i, j) < 0;
@@ -432,7 +486,7 @@ function blobShapes(slugs, pos) {
 // Closed outlines around `members`, largest first, in world coordinates.
 // Normally there is exactly one. There can be more when an avoided node cuts a
 // blob in two; loops *inside* another loop are holes and get dropped.
-function blobOutline(members, avoid) {
+function blobOutline(members, avoid, sampleCap) {
   if (!members.length) return [];
   const links = corridorSegments(members, avoid, BLOB.clearance + BLOB.corridor);
   // The field is positive everywhere outside this margin, which keeps the
@@ -458,11 +512,12 @@ function blobOutline(members, avoid) {
     box.y - reach <= bounds.maxY && box.y + box.height + reach >= bounds.minY);
 
   let resolution = BLOB.resolution;
+  const cap = Math.max(4000, Math.min(BLOB_MAX_SAMPLES, sampleCap || BLOB_MAX_SAMPLES));
   const samples = ((bounds.maxX - bounds.minX) / resolution + 1) *
                   ((bounds.maxY - bounds.minY) / resolution + 1);
-  if (samples > BLOB_MAX_SAMPLES) resolution *= Math.sqrt(samples / BLOB_MAX_SAMPLES);
+  if (samples > cap) resolution *= Math.sqrt(samples / cap);
 
-  const loops = traceContour(makeField(members, near, links), bounds, resolution);
+  const loops = traceContour({ members, links, avoid: near }, bounds, resolution);
   // Even-odd nesting: a loop inside an odd number of others is a hole.
   return loops
     .filter((loop, i) => loops.reduce(
@@ -477,10 +532,41 @@ function blobOutline(members, avoid) {
 // Read from `pos`, not from the drawn elements — the blob layer is built before
 // the node layer, so `nodeEls` still holds the *previous* render at this point
 // (and nothing at all on the first one, which silently disabled avoidance).
-// Nodes far outside the members' span are dropped inside blobOutline anyway.
+//
+// At 500 nodes and 59 blobs, handing every blob all 499 non-members and letting
+// blobOutline filter them is 30,000 box tests per render before any sampling
+// starts. A spatial hash over the node boxes, built once per render, answers
+// "which non-members reach into this blob's span?" directly.
+let _avoidGrid = null, _avoidGridKey = "";
+function avoidGrid(pos) {
+  const key = Object.keys(pos).length + ":" + layoutKey();
+  if (_avoidGrid && _avoidGridKey === key) return _avoidGrid;
+  const items = [];
+  for (const slug in pos) {
+    if (!bySlug[slug]) continue;
+    const p = pos[slug], d = dimsOf(slug);
+    items.push({ slug, minX: p.x - d.w / 2, maxX: p.x + d.w / 2,
+                 minY: p.y - d.h / 2, maxY: p.y + d.h / 2 });
+  }
+  _avoidGridKey = key;
+  _avoidGrid = gridHash(items, Math.max(NW, BW, 120));
+  return _avoidGrid;
+}
+
 function blobAvoidShapes(memberSet, pos) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  memberSet.forEach(slug => {
+    const p = pos[slug];
+    if (!p) return;
+    const d = dimsOf(slug);
+    minX = Math.min(minX, p.x - d.w / 2); maxX = Math.max(maxX, p.x + d.w / 2);
+    minY = Math.min(minY, p.y - d.h / 2); maxY = Math.max(maxY, p.y + d.h / 2);
+  });
+  if (!isFinite(minX)) return [];
+  const reach = BLOB.padding + BLOB.corridor + BLOB.smoothing + BLOB.clearance + 40;
   const others = [];
-  for (const slug in pos) if (!memberSet.has(slug) && bySlug[slug]) others.push(slug);
+  avoidGrid(pos).near(minX - reach, minY - reach, maxX + reach, maxY + reach)
+    .forEach(it => { if (!memberSet.has(it.slug)) others.push(it.slug); });
   return blobShapes(others, pos);
 }
 
@@ -502,7 +588,9 @@ function blobGeometry(h, pos) {
   const hit = blobCache.get(h.state);
   if (hit && hit.key === key) return hit.value;
   const memberSet = new Set(h.members);
-  const value = blobOutline(blobShapes(h.members, pos), blobAvoidShapes(memberSet, pos));
+  const share = BLOB_SAMPLE_BUDGET / Math.max(1, hyperedges().list.length);
+  const value = blobOutline(blobShapes(h.members, pos),
+                            blobAvoidShapes(memberSet, pos), share);
   blobCache.set(h.state, { key, value });
   return value;
 }

@@ -73,6 +73,16 @@ function renderPanel() {
     html += "<h3>Cited as provenance by</h3>" +
       linkList(citedBy.map(l => ({ slug: l.state, note: l.label })));
   } else if (!node.is_root) {
+    // A claim with an impact set can be folded to one puck. At 500 nodes that is
+    // the difference between reading the shape of the work and reading a wall.
+    const h = hyperedges().index[node.slug];
+    if (h) {
+      const on = collapsed.has(node.slug);
+      html += `<h3>Cluster</h3><p class="meta">${h.members.length} record node` +
+        `${h.members.length > 1 ? "s" : ""} declare impact on this claim.</p>` +
+        `<button class="act" data-collapse="${node.slug}">` +
+        `${on ? "Expand" : "Collapse to one puck"}</button>`;
+    }
     const prov = DATA.links.filter(l => l.state === node.slug && l.kind === "provenance");
     html += "<h3>Derived from (provenance)</h3>" +
       linkList(prov.map(l => ({ slug: l.record, note: l.label })));
@@ -134,5 +144,13 @@ function legendHTML() {
 function bindPanel() {
   panel.querySelectorAll("a.slug").forEach(a =>
     a.addEventListener("click", () => jumpTo(a.dataset.slug)));
+  panel.querySelectorAll("button[data-collapse]").forEach(b =>
+    b.addEventListener("click", () => toggleCollapse(b.dataset.collapse)));
+}
+
+function toggleCollapse(state) {
+  if (collapsed.has(state)) collapsed.delete(state); else collapsed.add(state);
+  rerender();
+  renderPanel();
 }
 

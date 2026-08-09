@@ -60,6 +60,9 @@ function adoptData(fresh) {
   DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
   _hyper = null;
   _spineRank = null;
+  registerPucks();
+  // A claim that no longer exists cannot stay collapsed.
+  [...collapsed].forEach(st => { if (!bySlug[st]) collapsed.delete(st); });
   blobCache.clear();
   for (const k in positions) delete positions[k];   // layouts depend on the data
   if (selected && !bySlug[selected]) selected = null;

@@ -50,7 +50,8 @@ svg.addEventListener("pointerup", e => {
   svg.classList.remove("dragging");
   if (!drag) return;
   if (!drag.moved) {
-    if (drag.type === "node") select(drag.slug);
+    if (drag.type === "node")
+      select(isPuck(drag.slug) ? puckState(drag.slug) : drag.slug);
     else if (drag.blob) select(drag.blob);
     else deselect();
   }
