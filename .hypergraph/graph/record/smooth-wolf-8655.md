@@ -6,6 +6,12 @@ created_at: '2026-08-09T09:49:57+00:00'
 parents:
 - rough-moss-4912
 summary: Convex hulls replaced by a ported signed-distance field with corridors and non-member avoidance; a two-level force layout separates the 12 hyperedges.
+flywheel:
+  node_id: cd6eaad8-b7c0-5ef4-8343-3b17c4bade62
+  slug: white-dust-6761
+  revision: 0
+  pushed_at: '2026-08-09T10:47:13+00:00'
+  content_sha256: aefdfe5c21e864ba2f22eabc43a2ed26a012b1ce287b40315090e3e2ff48cddf
 ---
 ## What
 

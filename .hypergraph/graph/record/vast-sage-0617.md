@@ -6,6 +6,12 @@ created_at: '2026-08-09T09:56:25+00:00'
 parents:
 - smooth-wolf-8655
 summary: Provenance opens with zero cross-links drawn instead of 177; 'all' bundles them into one ribbon per claim; barycentre ordering cuts crossings 13%.
+flywheel:
+  node_id: f9cb67ce-574c-5312-8829-161978f5c933
+  slug: curly-sun-7938
+  revision: 0
+  pushed_at: '2026-08-09T10:47:13+00:00'
+  content_sha256: 9ee35d4811ab5037fda5187c807b6e7c5b762dc61a068feec4de0b5515b937ea
 ---
 ## What
 

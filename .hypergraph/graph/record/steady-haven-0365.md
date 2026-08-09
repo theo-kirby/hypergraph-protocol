@@ -6,6 +6,12 @@ created_at: '2026-08-09T10:20:11+00:00'
 parents:
 - cold-rose-6963
 summary: 'First paint at 500 nodes: 8.22s -> 0.43s. Measurement showed the blob field was 98% of it, not the O(n^2) sim; tile pruning and a sample budget fixed it.'
+flywheel:
+  node_id: bef7fb84-f75a-5f17-b30f-4ae956753183
+  slug: jolly-hat-7422
+  revision: 0
+  pushed_at: '2026-08-09T10:47:13+00:00'
+  content_sha256: ce62578fad59a8350fdaa19fe68d3319082bfd7c3d720e946ea187d4852f18b4
 ---
 ## What
 

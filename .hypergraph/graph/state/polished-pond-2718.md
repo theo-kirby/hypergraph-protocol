@@ -9,9 +9,9 @@ summary: Four job-named views (Timeline/Frontier/Provenance/Clusters) each with 
 flywheel:
   node_id: f4d676d8-a180-55fc-ae3f-54c1e4d3bcab
   slug: polished-pond-2718
-  revision: 3
-  pushed_at: '2026-08-09T10:15:16+00:00'
-  content_sha256: 79b42c3cb03589863b6a3a68378d8332a6bec3a5ded1aae9ae2f823c6533b129
+  revision: 4
+  pushed_at: '2026-08-09T10:47:13+00:00'
+  content_sha256: 31ab1ec481b4836fed0976e653627919ecbf17852f17fdb9eb2f3e12e20dd542
 ---
 Status: working
 

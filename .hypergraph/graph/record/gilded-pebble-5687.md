@@ -6,6 +6,12 @@ created_at: '2026-08-09T09:18:09+00:00'
 parents:
 - ancient-dew-4488
 summary: 'Forward-work decision: replace one generic Sugiyama layout with four job-named views, port excaligraph''s SDF blob geometry, split the viz sources behind a bundler.'
+flywheel:
+  node_id: 0b4fc69b-7646-5435-bf1f-f967982c87fb
+  slug: jolly-haze-5584
+  revision: 0
+  pushed_at: '2026-08-09T10:47:13+00:00'
+  content_sha256: 3efeadf1d606d4304d190933e6c037e567e045f1a31654312e0d5bc50fec6739
 ---
 ## What
 

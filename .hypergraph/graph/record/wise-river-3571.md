@@ -6,6 +6,12 @@ created_at: '2026-08-09T10:24:20+00:00'
 parents:
 - steady-haven-0365
 summary: Legend rewritten for the four views and their new marks, keyboard shortcuts, dark theme verified, SVG export fixed to cover all four layouts at full detail.
+flywheel:
+  node_id: f6b6de60-6126-5155-b7c0-3213b995beb2
+  slug: royal-shadow-4576
+  revision: 0
+  pushed_at: '2026-08-09T10:47:13+00:00'
+  content_sha256: 199e69a4033106dc4846b3ad29a40742d9b1c1e2275f0a01ed3ca6586336c9dc
 ---
 ## What
 

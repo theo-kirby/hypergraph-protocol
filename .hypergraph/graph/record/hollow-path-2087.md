@@ -6,6 +6,12 @@ created_at: '2026-08-09T10:01:53+00:00'
 parents:
 - vast-sage-0617
 summary: viz --format excaligraph emits a spec excaligraph build turns into a valid Excalidraw scene; cross-graph edges default off because the first, complete figure was unreadable.
+flywheel:
+  node_id: b5bad438-dc8a-5175-80b0-9feb53ede291
+  slug: odd-cloud-1647
+  revision: 0
+  pushed_at: '2026-08-09T10:47:13+00:00'
+  content_sha256: 8be71e2bd414edb733a83bc03a5e820bd387948c8ca71962af28fc9c011b4c5f
 ---
 ## What
 

@@ -6,6 +6,12 @@ created_at: '2026-08-09T09:25:50+00:00'
 parents:
 - gilded-pebble-5687
 summary: Byte-identical split of the viz page into tools/viz/ with a bundler, a --dev source path, job-named views, and a Playwright baseline that quantifies the unreadable views.
+flywheel:
+  node_id: aaf73ebd-875b-5d53-9b6c-5ed43f828b02
+  slug: crimson-poetry-6961
+  revision: 0
+  pushed_at: '2026-08-09T10:47:13+00:00'
+  content_sha256: 0cea949e0ca8d9e33f8fa0da132c31533aceff783e41aa9a313c44f0d1069941
 ---
 ## What
 
