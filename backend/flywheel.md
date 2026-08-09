@@ -1,22 +1,31 @@
-# Flywheel Adapter
+# Flywheel: the host's payload contract
 
-Maps [INTERFACE.md](INTERFACE.md) operations to Flywheel MCP tool calls. Canonical
-tool semantics live in the Flywheel contract (`flywheel_get_contract`,
-`flywheel_get_contract_section("graph")`, `…("stage_commit")`); this file is the
-recipe book the skills follow.
+**Not an agent-facing document.** No skill reads this, and none should. It is the
+payload/lease contract that `hypergraph push` codes against — kept because it is the
+only written record of several things the live OpenAPI does not state: `repo_context`'s
+six required keys, `local_temp_node_id`, `base_committed_revision` semantics, the
+409/429 contract, the write limits, and add-parent-before-remove ordering.
 
-Flywheel facts the protocol relies on:
+For what mirroring *is* and why, read [mirror.md](mirror.md). For the protocol's
+storage, read [local-adapter.md](local-adapter.md).
+
+Facts the mirror code relies on:
 
 - Node body = `title` + markdown `content` + optional `summary`. No typed fields.
-- Every node gets an immutable `slug_name` (`adjective-noun-####`) on create.
+- Every node gets an immutable `slug_name` (`adjective-noun-####`) on create — which
+  is why a mirrored node's slug diverges from the local one (mirror.md).
 - `commit_new_node` / `commit_node` are the only canonical persistence boundaries.
 - Mutating writes are optimistic-locking (`expected_revision` /
-  `base_committed_revision`), conflict = HTTP 409. MCP transport auto-manages
-  idempotency keys, so retrying the same call after a wait is safe.
+  `base_committed_revision`); conflict = HTTP 409.
+- **Every mutating endpoint's documented success schema is `{}`.** Probe the response
+  and fail loudly; never default a missing `revision` to 0.
 
-## Operation mapping
+CLI equivalents of each call below: `flywheel help <command> --format=json` returns a
+machine-readable schema for all of them.
 
-### 1. `create_root` → `flywheel_commit_new_node`
+## Calls the mirror makes
+
+### Create a node → `nodes:commit-new`
 
 ```jsonc
 {
@@ -34,45 +43,24 @@ Flywheel facts the protocol relies on:
 }
 ```
 
-Save the returned `node_id` + `slug_name` into `.hypergraph/config.yml`.
+`hypergraph mirror roots --mint` uses this, and appends the returned
+`node_id` + `slug_name` to the config under `mirror_roots:`.
 
-### 2. `append_record_node` → `flywheel_commit_new_node` (or `flywheel_branch_node`)
+### Create with parents → `nodes:commit-new`
 
-Preferred: `flywheel_commit_new_node` with `parent_ids: [<causal parent(s)>]` and the
-full staged payload (record-node template content, real `repo_context` when code is
-involved: `repo_url`, `branch_name`, `head_commit_sha`).
+Same call, with `parent_ids: [<causal parent(s)>]` and the full staged payload —
+record-node content, and a real `repo_context` when code is involved (`repo_url`,
+`branch_name`, `head_commit_sha`, parsed out of the node's `## Repo` section).
 
-`flywheel_branch_node` also works (creates a canonical child immediately, then edit
-via lease + `commit_node`), but it needs the parent's `expected_revision` and a 409
-retry loop — more calls for no benefit here. Use it only when you want the node to
-exist before its content is ready.
+`branch_node` also creates children but needs the parent's `expected_revision` and a
+409 retry loop — more calls for no benefit, so `push` does not use it.
 
-Multiple causal parents: create with the primary parent, then `flywheel_add_parent`
-for the rest.
+Multiple causal parents: create with the primary parent, then add the rest (below).
 
-### 3. `read_node` → `flywheel_get_node`
+### Update a node → get → lease → commit → release
 
-Relationship arrays on the response are not guaranteed complete — use op 4/5 tools for
-traversal, not `get_node`.
-
-### 4. `list_children` → `flywheel_get_node_children`
-
-Page with `first` / `after`; `projection: "core"` is enough for orientation.
-
-### 5. `get_tree` → `flywheel_get_node_tree`
-
-Bounded root-aware tree/DAG projection from an anchor node. Orient uses this on the
-state root: one call typically returns the whole state graph topology.
-
-### 6. `resolve_slug` → `flywheel_resolve_node_slug`
-
-Branch on `status`: `unique` / `context_resolved` → use the node_id;
-`ambiguous` → stop and surface the candidates (never guess before mutating);
-`not_found` → for the checker this is a dangling-pointer violation, for skills an error.
-
-### 7. `update_state_node` → get → lease → commit
-
-The full safe-update sequence (reconcile only — SPEC I3):
+The full safe-update sequence. `FlywheelCliTransport.commit()` implements it with
+the release in a `finally`, so 409 semantics live in exactly one place:
 
 1. `flywheel_get_node` — read latest body + `committed_revision`.
 2. `flywheel_acquire_stage_lease` on the node — yields `stage_session_id`.
@@ -96,27 +84,24 @@ I3 this should not happen — treat it as a signal that a second writer is viola
 protocol, and say so.) On **409** `stage lease missing or expired`: re-acquire and
 retry; heartbeat (`flywheel_heartbeat_stage_lease`) during long compositions.
 
-### 8. `export_graph` → `flywheel_export_subgraph`
+### Export a subgraph → `export:subgraph`
 
 ```jsonc
 { "node_ids": ["<root node_id>"], "include_descendants": true, "max_nodes": <bound> }
 ```
 
-Run once per graph (record root, state root) and save to
-`.hypergraph/cache/record.json` / `.hypergraph/cache/state.json` for
-`tools/hypergraph.py`. The checker accepts the export as-is; note the export encodes
-edges as `incoming_ids` (parents) / `outgoing_ids` (children), which the checker
-normalizes along with `node_id` / `slug_name` / `title` / `content` / `created_at`. If the graph is larger than `max_nodes`, raise the bound — a truncated
-export silently weakens every cross-graph check.
+This is what `push --verify` diffs against and what `mirror pull` splits. The export
+encodes edges as `incoming_ids` (parents) / `outgoing_ids` (children), which
+`load_graph` normalizes along with `node_id` / `slug_name` / `title` / `content` /
+`created_at` — so the same reader handles it and a local export.
 
-### 9. `attach_artifact` → prepare / upload / finalize
+`max_nodes` defaults to 500 and tops out at 5000. **A truncated export is a hard
+error, not a smaller answer**: every node past the cut reads as drift in `verify` and
+silently weakens every cross-graph check. Do not run `check` against one of these at
+all — a mirror export reports dangling pointers for every locally-minted slug
+(mirror.md).
 
-1. `flywheel_prepare_artifact_uploads` on the record node → batch token + signed URLs.
-2. Upload **raw file bytes** to each signed URL (no JSON wrappers).
-3. `flywheel_finalize_artifact_uploads` → appends all staged artifacts in one revision
-   bump. Give every artifact a real `title` — it's the display label.
-
-### 10a. Re-parenting an existing node → `flywheel_add_parent` / `flywheel_remove_parent`
+### Re-parenting → `nodes:add-parent` / `nodes:remove-parent`
 
 Not an INTERFACE operation — a mirror-repair move. It exists for one situation: an
 adopted project mirrors a node under a placeholder parent (typically the mirror root)
@@ -140,12 +125,6 @@ add validates against cycles and refuses an edge that would create one.
 Prove it on a single node before trusting it on a batch. If a node cannot be
 re-parented, leave the placeholder edge in place and record the limitation — never
 re-mint the mirror to fix topology.
-
-### 10. `tag` → `flywheel_create_node_tag` / `flywheel_set_node_tag_assignments`
-
-Reserved for future work (`unreconciled` auto-tagging via hooks, one-only
-`current-best`). Note `set_node_tag_assignments` takes `tag_ids` as a JSON array and
-*omitting it clears all assignments* — always pass the full desired array.
 
 ## Write limits and failure handling
 

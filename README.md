@@ -182,7 +182,7 @@ SPEC.md                     the protocol (invariants + conventions)
 backend/INTERFACE.md        ~10 abstract operations — the portability contract
 backend/local-adapter.md    op → node files + hypergraph CLI (git-native; the one impl)
 backend/mirror.md           optional one-way mirroring — CLI internals, not agent-facing
-backend/flywheel-adapter.md the host's payload/lease contract, for the mirror code only
+backend/flywheel.md         the host's payload/lease contract, for the mirror code only
 skills/hypergraph-*/        the five skills (.claude/skills/ symlinks these)
 templates/                  record-node / state-node / config shapes
 tools/hypergraph.py         checker + renderer + visualizer + storage + mirror (uv script)

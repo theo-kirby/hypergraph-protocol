@@ -237,4 +237,4 @@ forensics after a crash.
 
 Payload shapes, the `repo_context` keys, `local_temp_node_id`,
 `base_committed_revision` semantics and the 409/429 contract:
-[flywheel-adapter.md](flywheel-adapter.md).
+[flywheel.md](flywheel.md).

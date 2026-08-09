@@ -15,19 +15,10 @@ Invocations below write `hypergraph …`. In a dev checkout of the protocol repo
 `uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
 `uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
 
-## Backend dispatch
-
-Read `backend:` from `.hypergraph/config.yml` before touching anything:
-
-- **`local`** → [local-adapter.md](references/local-adapter.md). Node files in the repo;
-  every state write goes through `hypergraph update <slug> --expect <sha> --reconcile`
-  (§7) or `hypergraph new state … --reconcile` (§1/§2). Both refuse without
-  `--reconcile` — that flag is the I3 gate, so only this skill ever passes it.
-- **`flywheel`** → [flywheel-adapter.md](references/flywheel-adapter.md). MCP get →
-  lease → commit → release.
-
-A missing key means `flywheel`. If `mirror: flywheel` is set alongside `backend: local`,
-refresh the mirror at the end (step 8).
+Every state write goes through `hypergraph update <slug> --expect <sha> --reconcile`
+or `hypergraph new state … --reconcile` ([local-adapter.md](references/local-adapter.md)
+§1/§2/§7). Both refuse without `--reconcile` — that flag is the I3 gate, and this is
+the only skill that ever passes it.
 
 ## When To Use
 
@@ -40,26 +31,22 @@ record it first (SPEC I1), then reconcile it in.
 
 ## Workflow
 
-1. **Load context**: `.hypergraph/config.yml`; read the state root (its node file, or
-   `flywheel_get_node`) and parse `## Reconciliation` for the current HWM.
-2. **Export the record graph** → `.hypergraph/cache/record.json`:
-   `hypergraph export --config .hypergraph/config.yml` (`local`, writes both graphs) or
-   `flywheel_export_subgraph` on the record root with `include_descendants: true`
-   (`flywheel`).
+1. **Load context**: `.hypergraph/config.yml`; read the state root's node file and
+   parse `## Reconciliation` for the current HWM.
+2. **Export both graphs** → `.hypergraph/cache/{record,state}.json`:
+   `hypergraph export --config .hypergraph/config.yml`.
 3. **Enumerate unreconciled nodes**: record nodes created after the HWM node, in
    causal/created order — `check` prints the count and the pending impact targets. If
    none, regenerate STATE.md and stop.
 4. **Fold impacts, per state node** (batch all pending deltas for a target into one
-   write). For each affected state node, using read-sha → compose → `hypergraph update
-   --expect --reconcile` (local-adapter §7) or get → lease → commit → release
-   (flywheel-adapter §7):
+   write). For each affected state node: read-sha → compose the complete new body →
+   `hypergraph update --expect --reconcile`.
    - Apply the deltas: flip `Status:`, add/update claims in `## Current` with inline
      `[rec: <slug>]` citations, append `## Provenance` lines for every record node
      folded in (SPEC I4, I6).
    - `NEW` targets: create the state node under the architecturally right parent
      (usually the state root) — `hypergraph new state --parent <state-root-slug>
-     --status … --prov "<record-slug> — why" --reconcile`, or
-     `flywheel_commit_new_node` with the full state-node template.
+     --status … --prov "<record-slug> — why" --reconcile`.
    - Negative knowledge: entries carry scope, confidence, evidence slugs; a
      generalized scope needs a `decision:` slug pointing at a decision record node —
      if none exists, keep the scope narrow (SPEC I7).
@@ -70,52 +57,37 @@ record it first (SPEC I1), then reconcile it in.
      (SPEC I8) — when in doubt, fold only what was declared and note the discrepancy.
 5. **Advance the HWM**: rewrite the state root's `## Reconciliation` with
    `high_water_mark:` = the newest record node folded in and `reconciled_at:` = now
-   (SPEC I5), through the same op-7 sequence. Do this *after* the folds so a crashed run
-   under-reports rather than skips.
-6. **Re-export both graphs** → `.hypergraph/cache/{record,state}.json` (`hypergraph
-   export --config .hypergraph/config.yml`, or two `flywheel_export_subgraph` calls),
-   then:
+   (SPEC I5), through the same read-sha → update sequence. Do this *after* the folds so
+   a crashed run under-reports rather than skips.
+6. **Regenerate and check**:
    ```
-   uv run <hypergraph repo>/tools/hypergraph.py render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
-   uv run <hypergraph repo>/tools/hypergraph.py check --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json --config .hypergraph/config.yml
+   hypergraph sync --config .hypergraph/config.yml
    ```
-7. **Commit** (`local` only): `git add .hypergraph/graph STATE.md` — the reconcile is not
-   durable until the node files are committed.
-8. **Refresh the mirror** (`local` + `mirror: flywheel` only): `hypergraph push --plan`,
-   execute the ops per local-adapter §Mirroring, then `hypergraph push --record-result`
-   and commit the frontmatter updates. A plan that exits 1 carries a record-graph
-   violation — fix it locally, do not mirror it. Then close the loop:
-   - **Slug legend**: `hypergraph push --legend` → commit/update the mirror-only
-     legend node (title exactly "Hypergraph mirror slug legend", parented to the
-     mirror's record root; find it among the root's children by title, lease +
-     commit if it exists, create otherwise). It never gets a local node file.
-   - **Archive lineage** (adopted projects, config has `archive:`): refresh it
-     alongside the legend. `hypergraph push --lineage` → lease + commit the mirror
-     **record root**'s body when it differs from what is there. It changes only when
-     the `archive:` block or the imported-node count does, so this is usually a no-op
-     read; a mode-B project has no `archive:` block and skips it (the command exits 2).
-   - **Verify**: fetch a fresh export of the project's own mirror roots — the ones in
-     `mirror_roots:` (or the config record/state roots) — via
-     `flywheel_export_subgraph`, `include_descendants: true`, one call with those
-     node_ids, and run `hypergraph push --verify --against <export.json>`. **Never
-     add the archive roots to that export**: an adopted project's mirror can hold
-     almost none of the graph and still verify clean when the archive is spliced in,
-     because the imported nodes' archive-owned ids resolve through it. Exit 1 means
-     drift — report each DRIFT line; local files are canonical, so drift is fixed by
-     re-pushing (or investigating who wrote to the mirror), never by editing local
-     nodes to match the mirror.
+   `sync` re-exports both graphs, regenerates STATE.md, runs `check`, and publishes.
+   It stops before publishing if `check` reports violations. (The separate
+   `export` / `render` / `check` commands still exist if you want the steps apart.)
+7. **Publish.** `sync` already did this; run `hypergraph push` on its own if you split
+   the steps. On a project with no mirror configured it prints one line and exits 0 —
+   there is nothing to decide, so just run it. A **nonzero exit means one of two
+   things**, and they are not the same:
+   - *append-only breach* — a record node's body changed after it was published.
+     Fix the local edit; a correction is a new child node, never an edit.
+   - *drift* — the published copy no longer matches the node files. **Local files are
+     canonical.** Fix drift by re-publishing, or by investigating who else wrote;
+     never by editing node files to match.
+8. **Commit.** `git add .hypergraph/graph STATE.md` — the reconcile is not durable
+   until the node files are committed. Do this *after* publishing, so the frontmatter
+   `push` writes is caught by the same `git add`.
 9. **Report honestly**: what was folded, what was created, checker output verbatim —
    including violations you could not fix. Impacts that could not be applied cleanly
    (ambiguous target, contradictory deltas) get reported, not guessed at.
 
 ## Guardrails
 
-- Single writer: do not run two reconciles concurrently. A refused `--expect` (`local`)
-  or a 409 `stale committed revision` (`flywheel`) mid-run means another writer is
-  violating I3 — stop and report it.
-- Full-payload writes: both `hypergraph update --body` and `flywheel_commit_node`
-  replace the whole body; compose the complete new content locally before committing.
-  Release Flywheel leases promptly.
+- Single writer: do not run two reconciles concurrently. A refused `--expect` mid-run
+  means another writer is violating I3 — stop and report it.
+- Full-payload writes: `hypergraph update --body` replaces the whole body, so compose
+  the complete new content before writing. It is not a diff.
 - Never delete record nodes, never edit record content, never add cross-graph edges.
 - Every claim you write must cite a record slug you actually read (SPEC I1/I4) — no
   provenance from memory.
