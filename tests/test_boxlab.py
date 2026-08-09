@@ -897,6 +897,8 @@ def test_opting_into_a_shared_account_records_it_as_a_confound(monkeypatch):
     from boxlab import preflight as pf
     from boxlab.config import LabConfig
     monkeypatch.setattr(pf, "flywheel_node_ids", lambda url, key: ["a", "b", "a"])
+    monkeypatch.setattr(pf, "flywheel_can_write",
+                        lambda url, key: (True, "write access confirmed"))
     cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
     report = pf.Report(label="t")
     pf.check_flywheel_isolation(cfg, [1, 2, 3], report, allow_shared=True)
@@ -924,6 +926,8 @@ def test_the_baseline_is_written_so_the_run_stays_attributable(monkeypatch, tmp_
     from boxlab.config import LabConfig
     monkeypatch.setattr(pf, "flywheel_node_ids",
                         lambda url, key: ["n1", "n2", "n2", "n3"])
+    monkeypatch.setattr(pf, "flywheel_can_write",
+                        lambda url, key: (True, "write access confirmed"))
     cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
     out = tmp_path / "flywheel-baseline.json"
     pf.check_flywheel_isolation(cfg, [1, 2, 3], pf.Report(label="t"),
@@ -940,3 +944,56 @@ def test_metrics_declares_the_shared_account_confound():
     assert "DECLARED CONFOUND" in text
     assert "applies to arm B alone" in text
     assert "--shared-flywheel" in text
+
+
+def test_preflight_verifies_the_flywheel_key_can_actually_write(monkeypatch):
+    """A read-only key passes every other Flywheel check and records nothing.
+
+    Measured on 2026-08-09: the rotated key authenticated, listed 458 nodes, and
+    answered every `commit_new_node` with `403 auth_error`. Preflight reported
+    21/21. Arm B's whole job is writing nodes.
+    """
+    from boxlab import preflight as pf
+    from boxlab.config import LabConfig
+    monkeypatch.setattr(pf, "flywheel_node_ids", lambda url, key: ["a"])
+    monkeypatch.setattr(pf, "flywheel_can_write",
+                        lambda url, key: (False, "403 auth_error: read-only"))
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "read-only-key-xxxxxx"})
+    report = pf.Report(label="t")
+    pf.check_flywheel_isolation(cfg, [1, 2, 3], report, allow_shared=True)
+    assert not report.ok
+    assert any("can CREATE nodes" in c.name for c in report.failures)
+
+
+def test_the_write_probe_deletes_what_it_creates(monkeypatch):
+    """A probe that litters the account is a probe nobody will keep enabled."""
+    from boxlab import preflight as pf
+    calls = []
+
+    def fake(api_url, key, name, arguments, **kw):
+        calls.append(name)
+        if name == "flywheel_commit_new_node":
+            return False, '{"node_id": "probe-123"}'
+        return False, "{}"
+
+    monkeypatch.setattr(pf, "_flywheel_call", fake)
+    ok, detail = pf.flywheel_can_write("https://x", "k")
+    assert ok and "deleted" in detail
+    assert calls == ["flywheel_commit_new_node", "flywheel_delete_node"]
+
+
+def test_a_probe_that_cannot_be_deleted_still_passes_but_says_so():
+    """Write access is confirmed; the litter is reported, not hidden."""
+    from boxlab import preflight as pf
+    import types
+    def fake(api_url, key, name, arguments, **kw):
+        if name == "flywheel_commit_new_node":
+            return False, '{"node_id": "probe-9"}'
+        return True, "403 cannot delete"
+    pf._flywheel_call, original = fake, pf._flywheel_call
+    try:
+        ok, detail = pf.flywheel_can_write("https://x", "k")
+    finally:
+        pf._flywheel_call = original
+    assert ok
+    assert "could NOT be deleted" in detail and "probe-9" in detail

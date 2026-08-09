@@ -159,6 +159,81 @@ def flywheel_node_ids(api_url: str, key: str, *, page_size: int = 100,
     return ids
 
 
+def _flywheel_call(api_url: str, key: str, name: str, arguments: dict,
+                   *, timeout: float = 60.0) -> tuple:
+    """`(is_error, text)` from one MCP tool call. Never raises."""
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": name, "arguments": arguments}}
+    request = urllib.request.Request(
+        api_url.rstrip("/") + "/mcp-server", data=json.dumps(payload).encode(),
+        method="POST",
+        headers={"Authorization": f"Bearer {key}",
+                 "Content-Type": "application/json",
+                 "Accept": "application/json, text/event-stream",
+                 "User-Agent": "boxlab-preflight"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            envelope = json.loads(response.read().decode("utf-8", "replace"))
+    except Exception as exc:
+        return True, str(exc)
+    result = envelope.get("result") or {}
+    text = "".join(b.get("text", "") for b in (result.get("content") or [])
+                   if isinstance(b, dict))
+    return bool(result.get("isError")), text
+
+
+def flywheel_can_write(api_url: str, key: str) -> tuple:
+    """Can this key actually **create a node**? Returns `(ok, detail)`.
+
+    Reading proves nothing about writing, and arm B's entire job is writing. A
+    read-only key passes every other Flywheel check in this file — the account is
+    reachable, the node count is knowable — and then produces a run in which the
+    arm records nothing at all. That is not a hypothetical: the key in use on
+    2026-08-09 authenticated fine, listed 458 nodes, and answered every
+    `flywheel_commit_new_node` with `403 auth_error: Only users with write access
+    may perform this operation`.
+
+    There is no scope introspection — `flywheel_auth_status` reports identity, not
+    permission — and validation runs before authorization, so a deliberately
+    malformed call cannot distinguish the two. The only honest probe is to create
+    a node and delete it again. It is labelled unmistakably, and the delete runs
+    in a `finally`: a probe node left behind is far cheaper than a nine-box run
+    that records nothing.
+    """
+    marker = "boxlab-preflight-write-probe"
+    null_ctx = {k: None for k in ("repo_url", "branch_name", "head_commit_sha",
+                                  "origin_host", "updated_by",
+                                  "external_transcript_ref")}
+    is_error, text = _flywheel_call(api_url, key, "flywheel_commit_new_node", {
+        "local_temp_node_id": f"local-{marker}",
+        "parent_ids": [],
+        "staged_payload": {
+            "title": f"{marker} — safe to delete",
+            "content": "Written by boxlab preflight to verify write access, and "
+                       "deleted immediately. If you are reading this, the delete "
+                       "failed; removing it by hand is safe.",
+            "summary": "", "repo_context": null_ctx}})
+    if is_error:
+        first = (text or "").strip().splitlines()[0] if text else "unknown error"
+        return False, first[:200]
+
+    node_id = None
+    try:
+        body = json.loads(text)
+        node_id = (body.get("node") or body).get("node_id")
+    except (ValueError, AttributeError):
+        pass
+    finally:
+        if node_id:
+            cleaned, msg = _flywheel_call(api_url, key, "flywheel_delete_node",
+                                          {"node_id": node_id})
+            if cleaned:
+                return True, (f"write OK; probe node {node_id} could NOT be "
+                              f"deleted ({msg.strip().splitlines()[0][:80]}) — "
+                              "remove it by hand")
+    return True, "write access confirmed (probe node created and deleted)"
+
+
 def flywheel_node_count(api_url: str, key: str) -> Optional[int]:
     """Total nodes visible to `key`, or None when the account cannot be read.
 
@@ -262,6 +337,8 @@ def check_flywheel_isolation(config: LabConfig, seeds: List[int],
                    f"{len(set(ids))} pre-existing node(s) recorded"
                    + (f" → {baseline_path}" if baseline_path else "")
                    + "; nodes created after this point are the run's")
+        can_write, detail = flywheel_can_write(config.flywheel_api_url, key)
+        report.add("flywheel · key can CREATE nodes", can_write, detail)
         report.add("flywheel · CONFOUND ACCEPTED (arms not isolated)", True,
                    f"seeds {seeds} share one account by Operator decision — they "
                    "can list and read each other's nodes. Declared in METRICS.md; "
@@ -298,6 +375,9 @@ def check_flywheel_isolation(config: LabConfig, seeds: List[int],
                        "" if total == 0 else
                        f"{total} pre-existing node(s); the run would orient on "
                        "someone else's graph")
+        # Reading proves nothing about writing, and writing is the arm's job.
+        can_write, detail = flywheel_can_write(config.flywheel_api_url, key)
+        report.add(f"flywheel · seed {seed} key can CREATE nodes", can_write, detail)
 
 
 def ensure_repos(config: LabConfig, arms: List[str], seeds: List[int],
