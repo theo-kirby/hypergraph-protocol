@@ -301,6 +301,42 @@ def test_init_adopts_the_imported_root_in_mode_a(tmp_path, capsys):
     loaded = hg.load_config(config)
     assert loaded["record_root"]["slug"] == roots["record"]
     assert loaded["state_root"]["slug"] == roots["state"]
+    # and the ids must be the *nodes'* own, not ones derived from their slugs
+    for kind in ("record", "state"):
+        node = hg.load_local_nodes(graph_dir, kind)[roots[kind]]
+        assert loaded[f"{kind}_root"]["node_id"] == node.node_id
+
+
+def test_init_writes_the_imported_roots_real_node_id_not_one_derived_from_the_slug(
+        tmp_path, capsys):
+    """`--fork` preserves the archive's node_id verbatim, so deriving the config's id
+    from the slug wrote a config that disagreed with the node file it pointed at.
+    `check` does not compare the two, and `mirror_root_ids()`/`push` read the config,
+    so the graph would have published under an id nothing else in the repo used.
+
+    Found on neural-whoop: the config claimed `8e92751d…`, the node file said
+    `51aabea1…`, and the adopting agent had to hand-correct the YAML — the exact
+    failure mode `--init` exists to prevent."""
+    repo = scratch_repo(tmp_path)
+    config = repo / ".hypergraph" / "config.yml"
+    graph_dir = repo / ".hypergraph" / "graph"
+    assert run("import", "--record", CLEAN / "record.json", "--state",
+               CLEAN / "state.json", "--graph-dir", graph_dir, "--fork") == 0
+
+    # give the record root an id that is deliberately not uuid5(slug), as a real
+    # archive id would be
+    slug = [s for s, n in hg.load_local_nodes(graph_dir, "record").items()
+            if not n.parents][0]
+    path = graph_dir / "record" / f"{slug}.md"
+    archive_id = "51aabea1-f793-534d-a0a7-bc9b1e368bbb"
+    meta, _ = hg.split_frontmatter(path.read_text())
+    path.write_text(path.read_text().replace(meta["node_id"], archive_id))
+
+    assert run("adopt", "--repo", repo, "--init", "--config", config,
+               "--graph-dir", graph_dir) == 0
+    capsys.readouterr()
+    assert hg.load_config(config)["record_root"]["node_id"] == archive_id
+    assert archive_id != hg.node_id_for(slug)
 
 
 def duplicate_root(graph_dir, kind, slug, new_slug):
@@ -357,8 +393,15 @@ def test_survey_reports_tags_and_directory_births(tmp_path):
     assert births["src"] and births["dashboard"]
 
 
-def test_survey_degrades_silently_without_tags_or_new_dirs(tmp_path, capsys):
-    """Most repos have no tags. That is an empty list, never a warning."""
+def test_survey_says_none_rather_than_going_quiet(tmp_path, capsys):
+    """Most repos have no tags. That is an empty list, never a warning — but it must
+    still be *said*.
+
+    Printing only the categories that fired left a reader unable to tell "no tags in
+    this repo" from "tags were not computed": one adoption reported the survey
+    "prints one signal category and stays silent about the others", and had to read
+    `--survey --json` to learn the other two were empty rather than unimplemented. A
+    silent category reads as an absent feature."""
     repo = scratch_repo(tmp_path)
     git = hg.adopt_survey(repo)["git"]
     assert git["tags"] == []
@@ -367,9 +410,10 @@ def test_survey_degrades_silently_without_tags_or_new_dirs(tmp_path, capsys):
     assert run("adopt", "--repo", repo, "--survey") == 0
     cap = capsys.readouterr()
     assert cap.err == ""
-    assert "tags —" not in cap.out          # nothing to say, so no empty heading
+    assert "tags — none in this repo" in cap.out
     assert "directory births" in cap.out
-    assert "quiet gaps" not in cap.out      # one run of commits is not a gap
+    assert "quiet gaps — none longer than" in cap.out
+    assert "one continuous era" in cap.out
 
 
 # ------------------------------------------------------------------- the docs

@@ -3,7 +3,12 @@
 # requires-python = ">=3.10"
 # dependencies = ["pyyaml"]
 # ///
-"""Hypergraph protocol tooling: invariant checker, STATE.md renderer, local backend.
+"""Hypergraph tooling: invariant checker, STATE.md renderer, local backend.
+
+Hypergraph is a substrate for autonomous research and engineering — two graphs per
+project, an append-only record of what happened and a single-writer projection of what
+is true now, with every claim citing the evidence it rests on. This file is the whole
+CLI for it (SPEC.md is the protocol).
 
 Consumes JSON graph exports (backend `export_graph`, e.g. flywheel_export_subgraph
 saved to .hypergraph/cache/{record,state}.json). No network, no auth, deterministic.
@@ -60,7 +65,7 @@ from __future__ import annotations
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 import argparse
 import hashlib
@@ -295,8 +300,13 @@ def check_impacts(record: Graph, state: Graph, record_root: Node | None, report:
                 report.add("violation", "I2", node.ref,
                            f"impact targets unknown state node `{target}`")
     if exempted:
+        # "the record root is not I2-checked" is why this can read one below the
+        # number you imported. Saying so beats leaving a reader to work out whether
+        # a node went missing.
         report.add("info", "I2", "-",
-                   f"{exempted} pre-epoch record node(s) exempt from I2 (legacy history)")
+                   f"{exempted} pre-epoch record node(s) exempt from I2 (legacy "
+                   f"history; the record root is not I2-checked, so this reads one "
+                   f"below an import count that included it)")
 
 
 def parse_impacts(body: str) -> tuple[list[tuple[str, str, bool]], str | None, list[str]]:
@@ -384,15 +394,67 @@ def check_provenance(node: Node, sections: dict[str, str], record: Graph, report
                        f"provenance slug `{slug}` does not resolve to a record node")
 
 
+def claim_units(body: str) -> list[str]:
+    """Split a `## Current` section into the units that each need a citation.
+
+    A unit is a bullet **with its wrapped continuation lines**, or a paragraph. Both,
+    not either: the old rule was `bullets or paragraphs`, so a section containing any
+    bullet had its prose paragraphs excluded from the check entirely — claims in them
+    were never checked for citations, silently, which is the wrong direction for a
+    checker to fail in. It also treated a unit as a single *line*, so a citation that
+    wrapped onto the next line read as missing; that produced 27 false warnings on
+    one adopted repo and taught its agent to reformat correct prose."""
+    units: list[str] = []
+    current: list[str] | None = None
+    fenced = False
+    lines = body.splitlines()
+
+    def flush(index: int | None = None):
+        """`index` is the line that ended this unit, so a lead-in can see what follows."""
+        nonlocal current
+        if current is None:
+            return
+        text = "\n".join(current)
+        # "Two failures are measured rather than suspected:" introduces the bullets
+        # that carry the evidence; it is punctuation for the list, not a claim of its
+        # own, and demanding a citation on it teaches people to cite noise.
+        lead_in = text.rstrip().endswith(":") and index is not None and any(
+            ln.strip().startswith("- ") for ln in lines[index:index + 2] if ln.strip())
+        if not lead_in:
+            units.append(text)
+        current = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush(i)
+            fenced = not fenced
+            continue
+        if fenced:
+            continue                          # a code block asserts nothing
+        if stripped.startswith("#"):
+            flush(i)
+            continue                          # a heading is structure, not a claim
+        if stripped.startswith("- "):
+            flush(i)
+            current = [stripped]
+        elif not stripped:
+            flush(i + 1)
+        elif current is not None:
+            current.append(stripped)          # a wrapped continuation of the bullet
+        else:
+            current = [stripped]              # a paragraph, checked like any claim
+    flush()
+    return [u for u in units if u.strip()]
+
+
 def check_current_citations(node: Node, sections: dict[str, str], report: Report) -> None:
     """I1 proxy (warning): claim units in ## Current without an inline citation."""
     body = sections.get("current")
     if body is None:
         report.add("warning", "I1", node.ref, "no `## Current` section")
         return
-    bullets = [ln.strip() for ln in body.splitlines() if ln.strip().startswith("- ")]
-    units = bullets or [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
-    for unit in units:
+    for unit in claim_units(COMMENT_RE.sub("", body)):
         if not CITE_RE.search(unit):
             head = unit.splitlines()[0][:60]
             report.add("warning", "I1", node.ref,
@@ -2494,6 +2556,8 @@ SHIPPED_BLOCK_DIGESTS = frozenset({
     "9119d3e23dbac92888b7f420213b2307d280b8d584c62c02d6ac6dbe4d53330c",
     # 0.0.7 — adds the `hypergraph upgrade` note to non-negotiable 4
     "c0698b961c95a5c98a1e3df40cba88e5917db5d02e427c6fa4c7727a57feafa0",
+    # 0.0.8 — says what the two graphs are for, not just where they live
+    "0e6bd61095cb87c87cb96d5c74c52e18ad0dc22f5f6a5ae2dd636f4d4961a7d3",
 })
 
 
@@ -4005,7 +4069,12 @@ def mirror_pull(transport, args: argparse.Namespace, *, out_dir: Path) -> int:
     for kind, ids in (("record", record_set), ("state", state_set)):
         if not ids:
             continue
-        path = out_dir / f"{kind}.json"
+        # `legacy-` and not `record.json`: `export` writes `record.json` into this
+        # same directory by default, so the pull and the first export collided and
+        # the export silently destroyed the legacy graph. Step 7 still needs it —
+        # `--resolve-prefixes --against` reads it — and it is the only record of
+        # pre-import artifact counts. Found on neural-whoop, recovered by re-pulling.
+        path = out_dir / f"legacy-{kind}.json"
         path.write_text(json.dumps(
             {"version": EXPORT_VERSION, "graph": kind, "exported_at": utc_now(),
              "nodes": [by_id[i] for i in sorted(
@@ -4198,26 +4267,36 @@ def print_timeline_signals(git: dict) -> None:
     """Three independent signals about where an era boundary might fall.
 
     Each is printed as *evidence*, never as a decided era: the author knows which
-    of them meant something and the CLI does not. A signal with nothing to say
-    prints nothing at all rather than an empty heading."""
+    of them meant something and the CLI does not. Each of the three prints either its
+    findings or an explicit "none", so a quiet category is never mistaken for one that
+    did not run."""
     tags, births = git.get("tags") or [], git.get("dir_births") or []
     gaps = git.get("eras") or []
-    if not (tags or births or len(gaps) > 1):
-        return
     print("\n## Timeline signals (evidence for an epoch boundary — *suggestions*, "
           "not epochs)\n")
+    # Every category prints, empty or not. Printing only the ones that fired left a
+    # reader unable to tell "no tags in this repo" from "tags were not computed" —
+    # one adoption had to read `--survey --json` to find out which, and a silent
+    # category reads as an absent feature.
     if tags:
         print("  tags — the author's own markers")
         for tag in tags:
             print(f"    {tag['date']}  {tag['tag']}")
+    else:
+        print("  tags — none in this repo")
     if births:
         print("  directory births — first commit touching each top-level source dir")
         for birth in births:
             print(f"    {birth['date']}  {birth['path']}/")
+    else:
+        print("  directory births — none")
     if len(gaps) > 1:
         print(f"  quiet gaps — runs separated by more than {ERA_GAP_DAYS} idle days")
         for era in gaps:
             print(f"    {era['start']} → {era['end']}  {era['commits']:>5} commits")
+    else:
+        print(f"  quiet gaps — none longer than {ERA_GAP_DAYS} idle days; this repo "
+              "reads as one continuous era")
 
 
 def print_survey(survey: dict) -> None:
@@ -4440,6 +4519,20 @@ def adopt_init(repo: Path, args: argparse.Namespace) -> int:
         graph_dir, "record", f"{project} — record", record_body)
     state_slug, state_minted = ensure_root_node(
         graph_dir, "state", f"{project} — state", state_body)
+
+    def root_id(kind: str, slug: str) -> str:
+        """The node's *own* id, not one derived from its slug.
+
+        `node_id_for(slug)` is right only for a root this command minted. A mode-A
+        adoption imports the legacy root with `--fork`, which preserves the archive's
+        node_id verbatim — so deriving the id from the slug wrote a config that
+        disagreed with the node file it pointed at. `check` does not compare them,
+        and `mirror_root_ids()`/`push` read the config, so the graph would have
+        published under an id nothing else in the repo used. Found on neural-whoop,
+        where the config claimed 8e92751d… and the node file said 51aabea1…."""
+        node = load_local_nodes(graph_dir, kind, missing_ok=True).get(slug)
+        return (node.node_id if node and node.node_id else node_id_for(slug))
+
     try:
         declared_graph_dir = Path(graph_dir).resolve().relative_to(repo)
     except ValueError:
@@ -4452,8 +4545,8 @@ def adopt_init(repo: Path, args: argparse.Namespace) -> int:
         f"# The release that last installed this project's skills, AGENTS.md block\n"
         f"# and workflows — refreshed by `hypergraph upgrade`.\n"
         f"hypergraph_version: {__version__}\n\n"
-        f"record_root:\n  node_id: {node_id_for(record_slug)}\n  slug: {record_slug}\n\n"
-        f"state_root:\n  node_id: {node_id_for(state_slug)}\n  slug: {state_slug}\n\n"
+        f"record_root:\n  node_id: {root_id('record', record_slug)}\n  slug: {record_slug}\n\n"
+        f"state_root:\n  node_id: {root_id('state', state_slug)}\n  slug: {state_slug}\n\n"
         f"cache_dir: .hypergraph/cache\n"
         f"state_md: STATE.md\n"
         f"graph_dir: {declared_graph_dir}\n")

@@ -9,9 +9,9 @@ summary: Parked by Operator (no date); v0.1 gate met with four unreleased change
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
-  revision: 10
-  pushed_at: '2026-08-09T16:30:11+00:00'
-  content_sha256: 2fba267c67c6204eb9ac5eae65a7a58d3e85c95f8525adde05016718161d3b0e
+  revision: 11
+  pushed_at: '2026-08-09T19:23:46+00:00'
+  content_sha256: 3790d26ca602ce781ce639a1b73ff136cb9e02793789644acfe615db9558facd
 ---
 Status: open
 
@@ -41,6 +41,8 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - Version parity is guarded in three places now, and the third fired on this release: `test_spec_header_matches_pyproject` failed with `SPEC.md says v0.0.5, pyproject says 0.0.6` on a release where SPEC.md itself did not change [rec: sleepy-vine-2805].
 - **The README front door now matches the distribution.** Quickstart opened with `./install.sh — symlink the skills into ~/.claude/skills`, which requires cloning this repo — the one thing this node has said since the shape was decided that adopters never do; the real path (`uv tool install hypergraph-protocol` + `hypergraph skills install`) appeared nowhere, and adopt was prose after the quickstart. There is now an `## Install` section before Quickstart, two labelled routes (new project → init, existing → adopt), bare `hypergraph` in every adopter-facing command block, and `./install.sh` demoted to a dev-checkout note. A doc test asserts the install lines, because that is the claim that went stale [rec: patient-sail-0175].
 
+**What the project says it is has changed, everywhere it is said** [rec: clever-ledge-6588]. It was "a protocol for keeping research projects legible to fresh agents" — a description of the mechanism, not of the goal. It is now a **substrate for autonomous research and engineering**: the memory layer an agent needs to carry work across months and contexts without a human holding the thread, aimed at a structural failure rather than a capability one, because a chat log is not memory, a codebase records only what was kept, and a task list rots. The name is explained rather than asserted — a claim answers to many pieces of evidence and a piece of evidence bears on many claims, so the citations join sets to sets across two graphs. And the two halves are separated by maturity **in public**: the record graph is established practice, an append-only causal log being a lab notebook under another name, while the state graph and the cross-graph structure that falls out of it are the novel half and under active development, with whether the projection stays small and honest as its evidence base grows without bound named as the open research question. README, SPEC, AGENTS.md, the CLI docstring, the package description and the shipped agents-block all carry it.
+
 ## Negative knowledge
 
 - [scope: naming/distribution of this project | confidence: high | evidence: damp-mountain-8757] Bare `hypergraph` is taken on PyPI; `hg*` names read as Mercurial (its CLI is `hg`); clone/fork distribution rejected — the protocol is an overlay on adopters' repos, not a template.
@@ -48,6 +50,7 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 
 ## Provenance
 
+- clever-ledge-6588 — the goal restated as an auto-research substrate, and the record/state maturity split published
 - damp-mountain-8757 — publication shape + name decision; executed PyPI 0.0.1 publish, GitHub rename, gitleaks-clean history check
 - vast-sky-3964 — 0.0.2 scope: skills install + agents-block template as package data
 - crisp-lake-4496 — 0.0.2 built, twine-clean, wheel-verified; publish blocked on credentials at the time

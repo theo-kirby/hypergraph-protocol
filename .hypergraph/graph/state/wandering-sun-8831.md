@@ -9,9 +9,9 @@ summary: 'check/render/viz + local backend + epoch support + push --verify/--leg
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 13
-  pushed_at: '2026-08-09T12:46:25+00:00'
-  content_sha256: 8098af0b600a2c2b3bea64666e216c17f9ab00e0b5f59896f4899f2862b98c62
+  revision: 14
+  pushed_at: '2026-08-09T19:23:46+00:00'
+  content_sha256: 1b42a9aa49772577038b047b8a9617b230918b2f0d869694d31d3c769e8ea0d7
 ---
 Status: working
 
@@ -33,6 +33,8 @@ Status: working
 - Suite at **282 tests**, up from 250, with `tests/test_collaboration.py` carrying 32 of them including the literal two-branch reproduction from the investigation. Two older tests changed contract rather than breaking: `read_hwm` returns `[]` for `none`, and the no-transport degradation case now asserts exit 0 with the remedy still named, plus exit 2 under `--require-mirror` [rec: placid-ridge-4035].
 - **A packaging defect made the sdist unbuildable, and every declaration in `pyproject.toml` was correct** [rec: long-peak-1620]. hatchling walks with `followlinks=True` and skips any directory whose `(st_dev, st_ino)` it has already seen; `.claude/skills/hypergraph-*` are the committed dogfooding symlinks into `skills/` and sort first, so it materialized the skills under `.claude/` and dropped the real tree as a duplicate. `skip-excluded-dirs = true` plus `exclude` fixes it — `exclude` alone made it worse. Suite to 283, the new test building an sdist and asserting it carries every path the wheel force-includes.
 
+**The I1 citation checker had a silent hole, and it is fixed** [rec: clever-ledge-6588]. Claim units were `bullets or paragraphs` — either, never both — so a `## Current` section containing any bullet had its prose paragraphs excluded from the citation check **entirely**, and most state nodes mix the two. Units were also single lines, so a citation that wrapped onto a continuation read as missing; that produced 27 false warnings on one adopted repo and taught its agent to reflow correct prose. A unit is now a bullet with its continuation lines, or a paragraph, with headings, fenced code blocks and colon lead-ins to a bullet list excluded as structure rather than claims. The fix earned itself immediately: it found 3 uncited claims in cadex and 8 in neural-whoop that both repos' passing `check` had never looked at.
+
 ## Negative knowledge
 
 - [scope: parsing flywheel_export_subgraph output | confidence: high | evidence: steep-cell-5173] the export encodes edges as incoming_ids/outgoing_ids, not parent_ids — a parser reading only parent_ids sees every node as a root.
@@ -46,6 +48,7 @@ Status: working
 
 ## Provenance
 
+- clever-ledge-6588 — the I1 unit rule stopped checking paragraphs the moment a section had a bullet
 - wandering-rice-9747 — component seeded at project init
 - flat-pine-9555 — checker + renderer implementation and green test run (M3)
 - steep-cell-5173 — live-export verification + edge-encoding fix (M5)

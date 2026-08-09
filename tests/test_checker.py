@@ -224,3 +224,69 @@ def test_backend_local_and_a_missing_backend_key_are_both_silent():
     for config in ({"backend": "local"}, {}):
         report = hg.run_check(clean / "record.json", clean / "state.json", config)
         assert not [str(f) for f in report.warnings() if "backend" in str(f)]
+
+
+# --------------------------------------------------- I1: what counts as a claim
+#
+# The unit-splitting rule was `bullets or paragraphs` — either, never both — so a
+# `## Current` section containing any bullet had its prose paragraphs dropped from
+# the check entirely. A checker that silently stops checking is worse than one that
+# is noisy, and this one was silent for every state node that mixes the two, which is
+# most of them. Found by a mode-A adoption of neural-whoop.
+
+def test_a_paragraph_claim_is_checked_even_when_the_section_has_bullets():
+    body = ("Status: working\n\n## Current\n\n"
+            "This paragraph asserts something and cites nothing at all.\n\n"
+            "- a bullet that does cite [rec: wise-anchor-1001]\n")
+    units = hg.claim_units(body.split("## Current\n", 1)[1])
+    uncited = [u for u in units if not hg.CITE_RE.search(u)]
+    assert len(units) == 2
+    assert uncited and uncited[0].startswith("This paragraph asserts")
+
+
+def test_a_citation_on_a_wrapped_continuation_line_counts():
+    """A unit is a bullet plus its continuation lines, not one line. The old rule
+    reported correctly-cited prose as uncited, which taught adopters to reflow text
+    to satisfy the checker."""
+    body = ("- a claim long enough that its citation wrapped onto\n"
+            "  the following line [rec: wise-anchor-1001]\n")
+    units = hg.claim_units(body)
+    assert len(units) == 1
+    assert hg.CITE_RE.search(units[0])
+
+
+def test_nested_sub_bullets_are_their_own_claims():
+    """Each needs its own citation — a parent's does not cover them."""
+    body = ("- parent [rec: wise-anchor-1001]\n"
+            "  - child with no citation\n")
+    units = hg.claim_units(body)
+    assert len(units) == 2
+    assert not hg.CITE_RE.search(units[1])
+
+
+def test_headings_and_code_blocks_are_not_claims():
+    """Checking paragraphs surfaced four warnings on this repo's own state graph, all
+    of them markdown headings. A heading is structure and a code block asserts
+    nothing; demanding citations on either teaches people to cite noise."""
+    body = ("### A heading needs no citation\n\n"
+            "Prose under it does [rec: wise-anchor-1001].\n\n"
+            "```\nrun --this --command\n```\n")
+    units = hg.claim_units(body)
+    assert len(units) == 1
+    assert units[0].startswith("Prose under it")
+
+
+def test_a_colon_lead_in_to_a_bullet_list_is_not_a_claim():
+    """"Two failures are measured rather than suspected:" is punctuation for the list
+    that follows, and the bullets carry the evidence. Three adopted state nodes hit
+    this the moment paragraphs started being checked."""
+    body = ("Two failures are measured rather than suspected:\n\n"
+            "- the first [rec: wise-anchor-1001]\n"
+            "- the second [rec: wise-anchor-1001]\n")
+    assert len(hg.claim_units(body)) == 2
+
+
+def test_a_paragraph_that_merely_ends_in_a_colon_is_still_a_claim():
+    """The exemption is for lead-ins, not for any sentence with a colon in it."""
+    body = "The rule is explicit: nothing here cites anything.\n\nAnd nor does this.\n"
+    assert len(hg.claim_units(body)) == 2

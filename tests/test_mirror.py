@@ -564,12 +564,30 @@ def test_pull_splits_one_export_into_two_disjoint_graphs(tmp_path):
     args = type("A", (), {"record_node_id": [RECORD_ROOT], "state_node_id": [STATE_ROOT],
                           "node_id": None})()
     hg.mirror_pull(fake, args, out_dir=tmp_path / "pull")
-    record = json.loads((tmp_path / "pull" / "record.json").read_text())
-    state = json.loads((tmp_path / "pull" / "state.json").read_text())
+    record = json.loads((tmp_path / "pull" / "legacy-record.json").read_text())
+    state = json.loads((tmp_path / "pull" / "legacy-state.json").read_text())
     record_ids = {n["node_id"] for n in record["nodes"]}
     state_ids = {n["node_id"] for n in state["nodes"]}
     assert not record_ids & state_ids
     assert "fw-wise-anchor-1001" in record_ids and "fw-bright-harbor-2001" in state_ids
+
+
+def test_pull_does_not_write_where_export_will_overwrite_it(tmp_path):
+    """The pull and the first `export` both defaulted to `.hypergraph/cache/` and both
+    wrote `record.json`, so the export destroyed the legacy graph — which step 7 still
+    needs and which is the only record of pre-import artifact counts. Found on
+    neural-whoop, where it had to be re-pulled."""
+    graph_dir = local_graph_copy(tmp_path)
+    fake = FakeTransport(graph_dir)
+    push(graph_dir, config_for(graph_dir), fake)
+    args = type("A", (), {"record_node_id": [RECORD_ROOT], "state_node_id": [STATE_ROOT],
+                          "node_id": None})()
+    cache = tmp_path / "cache"
+    hg.mirror_pull(fake, args, out_dir=cache)
+    written = {p.name for p in cache.glob("*.json")}
+    # `export` owns these two names in this directory; the pull must not claim them.
+    assert "record.json" not in written and "state.json" not in written
+    assert {"legacy-record.json", "legacy-state.json"} <= written
 
 
 def test_pull_refuses_anchors_whose_graphs_overlap(tmp_path):

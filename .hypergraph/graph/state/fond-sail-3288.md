@@ -9,11 +9,11 @@ summary: ''
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 3
-  pushed_at: '2026-08-09T18:17:00+00:00'
-  content_sha256: c7d7724aa1a13c15807af1cf4262edc6c07adc68b4d4f0ccc6c0f623fe4209e9
+  revision: 4
+  pushed_at: '2026-08-09T19:23:47+00:00'
+  content_sha256: b62dc954eee8eb5ad5e6725afeaf83c60b70d62da4be7b5f924389187f481cad
 ---
-Status: broken
+Status: working
 
 ## Current
 
@@ -67,9 +67,7 @@ named so the adopter merges by hand. `--agents-block` opts into overwriting, exa
 before the fix classifies correctly on its first run, because the evidence is the block
 itself. The nested-marker design was tried first and rejected: on cadex the ADR-log
 clause is woven into the *middle of numbered item 2*, so no pair of markers separates
-it. **Status stays `broken` because every adopter runs 0.0.7 from PyPI**, where the
-destructive behaviour is live; this becomes true for anyone only when a release carries
-it.
+it. **Shipped in 0.0.8**, so the destructive behaviour is no longer live for an adopter who upgrades, and the status returns to `working` [rec: clever-ledge-6588]. The 0.0.8 template is registered in `SHIPPED_BLOCK_DIGESTS`, so a block still untouched is refreshed automatically and only an edited one is reported and left alone.
 
 A second gap, smaller: on a repo adopted before the stamp, `check` emits only the
 "predates the stamp" info, so the case where the **CLI** is the older half cannot be

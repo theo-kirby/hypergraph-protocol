@@ -9,9 +9,9 @@ summary: 'Adoption built, field-proven, and now MCP-free: mirror pull plus four 
 flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
-  revision: 7
-  pushed_at: '2026-08-09T18:08:20+00:00'
-  content_sha256: 469a062ae1e86b0b8a51b2fb37d1175911e2f339e354d701fd9472da21724b38
+  revision: 8
+  pushed_at: '2026-08-09T19:23:47+00:00'
+  content_sha256: 8aff6de79c986a6c20cee8461696949734d5c9194182b2f66af9864b9bd8b4d9
 ---
 Status: working
 
@@ -39,6 +39,9 @@ Status: working
   - **It never checks that `.claude/skills/` is actually committable.** cadex's `.gitignore` opens with `.*` and un-ignores only `!/.hypergraph/`, so the graph travelled and the skills did not — a clone would have received an AGENTS.md instructing it to run `hypergraph-orient` with no skill to run. Nothing detects this: `adopt` does not read `.gitignore` and `check` reads the graph, not the repo [rec: vast-valley-5745].
   - **The 3–10 prehistory guidance was exceeded at 14**, on a project with a pre-repo life and six parallel verticals, where the nodes still read as eras rather than a changelog. The guidance looks too tight rather than the adoption wrong [rec: vast-valley-5745].
 - **One field deviation is better than the skill's own text and should replace it**: cadex parented its epoch marker on **every** prehistory tip, not the newest one. That makes the marker the single record tip, so one high-water mark covers the whole authored history — which the current rule ("mode B on the newest prehistory node") does not guarantee when prehistory ends in parallel workstreams [rec: vast-valley-5745].
+- **Second field adoption, and the first of either mode run without its author in the room**: neural-whoop, mode A, 189 legacy Flywheel nodes, by an agent that could not ask a question. It checks 0/0 with the archive verifiably untouched (root still `revision: 28`), identity preserved verbatim across all 189 nodes, an honest frontier and 43 negative-knowledge entries — and it is the first real exercise of the mode A path, which mode B never touches [rec: clever-ledge-6588].
+- **Nine documentation defects it found, now fixed** [rec: clever-ledge-6588]. The costly ones were mechanical and undiscoverable from the templates: `## State Impact` is refused in a body and must come from `--impact`, which itself prepends `- target: ` so a template line copied verbatim yields `- target: target: …`; state slugs are minted and cannot be chosen, so the readable `NEW <kebab-name>` impact targets never resolve to the nodes you then mint; and advancing the HWM to the marker rather than to the record tips left **111 nodes unreconciled** on a wide DAG. Step 4's ordering prose insisted `--init` precede the import and then described the outcome only the *other* order produces. Step 8 never said to install the skills or to check they are committable. Two instructions were simply wrong outside mode B: "the prehistory bodies say so" names the one artifact mode A does not have, and contract reconciliation is two writes rather than one — an amendment inside the sentinels does not stop a reader following instructions three hundred lines above it.
+- A **mode A walkthrough** now documents the ordering that works and why it is not the numbered one, and the marker guidance says not to write state-graph counts the marker cannot yet know — it is authored before the state graph exists, and record nodes are immutable [rec: clever-ledge-6588].
 - Acceptance test passed: a fresh agent with no protocol context completed the full loop in a3go — orient in 6 calls, genuine frontier work (GEO-1 precondition: d=1 boards proven exactly 2D Go, corner-flip endpoint measured), causally-parented record, no state writes, librarian reconcile, mirror verify clean — zero protocol violations [rec: fond-tree-4727].
 
 ## Negative knowledge
@@ -66,5 +69,6 @@ Status: working
 - silver-ember-3035 — mirror pull replaces the MCP export path for mode A
 - calm-sand-3399 — adopt affordances (survey/init/marker/resolve-prefixes); the no-generated-prose line
 - patient-sail-0175 — adoption fixed end-to-end after walking it against an outside repo: root-aware `--init`, 8-step order, timeline signals, staged interview, 3–10 prehistory nodes
+- clever-ledge-6588 — neural-whoop adopted mode A with no author available; the mode A path's nine documentation defects and the walkthrough that replaces them
 - ancient-bluff-9706 — the installed skills and AGENTS.md block became refreshable, closing the write-once gap an adoption used to leave
 - vast-valley-5745 — cadex audited: the path holds on a third-party run, and three gaps it does not cover

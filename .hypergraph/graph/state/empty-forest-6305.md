@@ -9,9 +9,9 @@ summary: Node files are the only storage; hypergraph push/sync/mirror now execut
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 10
-  pushed_at: '2026-08-09T12:46:25+00:00'
-  content_sha256: acd3b744cf5eb2d7438c0e0bb1b86dab37b40927ebf5f0b022c9c9917ebe2107
+  revision: 11
+  pushed_at: '2026-08-09T19:23:46+00:00'
+  content_sha256: 03657dbc89b0836f7c0357ebbc6ecf40cffa1a5b02257f36e07c20545ce985dc
 ---
 Status: working
 
@@ -35,6 +35,8 @@ Status: working
 - **The dirty-tree guard was deliberately not built**, despite being scoped alongside the branch guard. Reconcile publishes *before* it commits, on purpose, so `push`'s frontmatter writes land in the same `git add` — which makes a dirty graph the expected state at push time [rec: placid-ridge-4035].
 - **The exit-0 no-op guarantee is too narrow.** It covers *no mirror configured*, but an outside contributor inherits the committed `mirror:` key and holds no credentials, so reconcile's unconditional publish step exits 2 on their machine. It must also no-op when credentials are absent or belong to an account other than `mirror_account_id`, with `--require-mirror` for CI [rec: vast-rain-4873].
 
+**Two storage-path defects, both found by the first mode A adoption run without its author, both fixed** [rec: clever-ledge-6588]. `adopt --init` derived the config's root `node_id` from the slug unconditionally — but a mode A root arrives through `import --fork`, which preserves the archive's id verbatim, so on neural-whoop the config claimed `8e92751d…` while the node file said `51aabea1…`. `check` does not compare the two and `push` reads the config, so the project would have published under an id nothing else in the repo used; it now reads the node's own id. Separately, `mirror pull` and `export` both defaulted to `.hypergraph/cache/record.json`, so the first export destroyed the legacy pull — which step 7 still needs and which is the only record of what stayed on the archive. The pull now writes `legacy-record.json` / `legacy-state.json`.
+
 ## Negative knowledge
 
 - [scope: mirroring a local graph to a hosted store | confidence: high | evidence: old-dawn-8747, kind-valley-8040] the host mints its own slug on create, so nodes authored locally after the switch live there under a different slug while the markdown still cites the local one — `check` against a mirror export reported 25 dangling-pointer violations (I4/I5/I7) on a graph that checks 0/0 from the node files. The mirror is a readable projection, never the thing you check.
@@ -48,6 +50,7 @@ Status: working
 
 ## Provenance
 
+- clever-ledge-6588 — the adopted root's node_id and the pull/export path collision
 - patient-limit-9007 — Operator directive opening this gap, with constraints and sequencing
 - old-dawn-8747 — the adapter, the CLI subcommands, and this repo's migration onto it
 - kind-valley-8040 — first live mirror push; measured mirror-consistency limits

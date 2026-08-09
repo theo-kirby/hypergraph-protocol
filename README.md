@@ -1,20 +1,35 @@
 # Hypergraph
 
-A protocol for keeping research projects legible to fresh agents. Hypergraph maintains
-**two graphs per project**, kept as [markdown files committed in your
+**A substrate for autonomous research and engineering.**
+
+The goal is agents that carry out real research and real engineering over months
+without a human holding the thread — and the obstacle is not agent capability. It is
+that agents are made to work in a substrate that does not support the shape of the
+job. Chat logs are not memory. A codebase records what was kept, never what was tried
+and rejected. A task list rots the moment reality moves. So every fresh context
+re-derives what the last one already knew, repeats dead ends nobody wrote down, and
+quietly contradicts decisions it never saw. That failure is structural, not a prompting
+problem, and no amount of context window fixes it.
+
+Hypergraph is an attempt at a substrate where those failures are not available.
+Knowledge has somewhere to go, being wrong is a first-class outcome, and the thing an
+arriving agent reads first is *what is true now* rather than everything that ever
+happened. Its unit of work is not a commit or a ticket — it is a claim with its
+evidence attached.
+
+It maintains **two graphs per project**, kept as [markdown files committed in your
 repo](backend/local-adapter.md):
 
 - **Record graph** — the append-only log of everything that happened: decisions,
   experiments, evidence, dead ends. Optimized for audit, not orientation.
 - **State graph** — a small, single-writer, distilled projection of what is true
   *now*: architecture, what works, what's broken or open (the **frontier**), and
-  accumulated negative knowledge. Every state node cites the record nodes it derives
-  from — that many-to-one cross-graph provenance is the "hypergraph".
+  accumulated negative knowledge.
 
-The problem it solves: on a mature project, cold-start orientation over an append-only
-DAG means traversing thousands of nodes. With Hypergraph, a fresh agent reads the
-frontier in ≤ ~6 tool calls and follows provenance slugs into the record graph only
-where the task demands history.
+Concretely: on a mature project, cold-start orientation over an append-only DAG means
+traversing thousands of nodes. With Hypergraph, a fresh agent reads the frontier in
+≤ ~6 tool calls and follows provenance slugs into the record graph only where the task
+demands history.
 
 How it stays coherent with many parallel agents: knowledge lands **record-first** —
 every record node declares its `## State Impact` (or `none: <reason>`), and a separate
@@ -23,6 +38,35 @@ append-only high-water mark. Nobody edits state inline. Forward work follows the
 rule: new directions (including Operator directives) enter as decision record nodes
 whose impacts open `Status: open` state nodes — the frontier carries intent as claims
 about gaps, never as task lists.
+
+## Why "hypergraph"
+
+Because of what connects the two graphs, and that connection is the actual bet.
+
+Every state node cites the record nodes it derives from. One claim about the world is
+answerable to *many* pieces of evidence at once, and one piece of evidence bears on
+*many* claims — so the citation structure is not a tree or a second DAG. Its edges join
+sets of nodes to sets of nodes, across two graphs. That is a hypergraph, and it is what
+makes a claim auditable: you can always ask "what is this believed on the strength of",
+and get back a set you can read.
+
+**The two halves are at very different stages, and it is worth being honest about
+which is which:**
+
+- **The record graph is established practice.** An append-only, causally-parented log
+  of what was done and why is a lab notebook, an ADR log, an experiment tracker. We are
+  implementing a known good idea carefully, not inventing one.
+- **The state graph — and the hypergraph that falls out of it — is the novel part, and
+  it is under active development.** A single-writer distillation that stays small while
+  its evidence base grows without bound; negative knowledge as a first-class citizen
+  with scope and confidence; a frontier that is falsified by work rather than checked
+  off. Whether that projection stays honest at scale, and whether agents actually
+  orient better against it than against raw history, is the open research question this
+  project exists to answer. It is being tested on live projects — this repo runs on
+  itself, and the protocol has been adopted by others — and it is not finished.
+
+If you are evaluating this, treat the record half as engineering and the state half as
+a hypothesis with encouraging early results.
 
 ## Where the graphs live
 

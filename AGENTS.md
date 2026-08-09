@@ -1,9 +1,14 @@
 # Agent instructions for this repo
 
-This repo runs under its own protocol: **Hypergraph** (see [SPEC.md](SPEC.md)). It
-keeps two graphs as markdown files committed under `.hypergraph/graph/` — an
-append-only **record graph** (everything that happened) and a distilled **state
-graph** (what is true now, including the frontier of open/broken/blocked work).
+This repo builds **Hypergraph** (see [SPEC.md](SPEC.md)): a substrate for autonomous
+research and engineering — the memory layer an agent needs to carry work across months
+and contexts without a human holding the thread. It is a research project, and the
+state-graph half of it is a live hypothesis rather than settled engineering; treat
+evidence about whether it actually works as the most valuable thing you can produce.
+
+It runs under its own protocol. It keeps two graphs as markdown files committed under
+`.hypergraph/graph/` — an append-only **record graph** (everything that happened) and a
+distilled **state graph** (what is true now, including the frontier of open/broken/blocked work).
 `.hypergraph/config.yml` holds the graph roots; `STATE.md` is a generated snapshot.
 The node files are the source of truth: the graphs travel with the repo, offline.
 
