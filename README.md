@@ -45,6 +45,26 @@ your files stay canonical — and it is entirely a property of the CLI: the skil
 know it exists, and a project without it never touches that path
 ([mirror.md](backend/mirror.md)).
 
+## Working in parallel
+
+Several agents, a fork and a pull request, a colleague on another machine — the two
+graphs already split along the line git merges on, so the rule falls out of the
+invariants rather than adding machinery (SPEC: Collaboration):
+
+**Contributors record; the maintainer reconciles.**
+
+The record graph is append-only with one file per node, so concurrent branches produce
+new files and merge without conflict — and each record node arrives in the pull request
+as a file, so the claim is reviewed beside the code that justifies it. The state graph
+has a single writer (I3), so reconcile runs once on the default branch over everything
+that merged. Publishing follows the same line: the mirror is a build artifact of the
+default branch, so `hypergraph push` stands down at exit 0 on a feature branch or on a
+clone whose credentials don't own the mirror. Nobody needs a credential to contribute.
+
+Two workflows in [templates/github-actions/](templates/github-actions/) make it
+enforceable: `hypergraph check --since origin/<base>` fails a pull request that changes
+files without recording anything, and a publish job refreshes the mirror on merge.
+
 ## What ships
 
 - **[SPEC.md](SPEC.md)** — the protocol: invariants I1–I8 + conventions.
@@ -59,7 +79,8 @@ know it exists, and a project without it never touches that path
   (Timeline, Frontier, Provenance, Clusters), each with a layout that fits its data
   (zero JS dependencies, no network; opens straight from `file://`), or an
   excaligraph spec for hand-editable excalidraw figures; `export`/`import`/`new`/
-  `update` are the storage layer, and `push`/`sync`/`mirror` the optional mirror.
+  `update` are the storage layer, `hwm` reports the reconciliation frontier, and
+  `push`/`sync`/`mirror` the optional mirror.
 - **[templates/](templates/)** — the exact markdown shapes the checker parses.
 
 ## Quickstart
@@ -185,11 +206,12 @@ backend/mirror.md           optional one-way mirroring — CLI internals, not ag
 backend/flywheel.md         the host's payload/lease contract, for the mirror code only
 skills/hypergraph-*/        the five skills (.claude/skills/ symlinks these)
 templates/                  record-node / state-node / config shapes
+templates/github-actions/   PR check + publish-on-merge workflows
 tools/hypergraph.py         checker + renderer + visualizer + storage + mirror (uv script)
 tools/bundle_viz.py         dev tool: bundles tools/viz/* into the page constant
 tools/viz/                  the viz page's sources (html + css + js parts)
 tools/fixtures/             test fixtures (clean, violations, local-graph, self)
-tests/                      pytest suites (checker + viz + local backend)
+tests/                      pytest suites (checker, viz, storage, mirror, collaboration)
 tests/browser/              playwright layout baselines (dev group; self-skipping)
 ```
 

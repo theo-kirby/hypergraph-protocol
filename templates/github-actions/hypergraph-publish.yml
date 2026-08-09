@@ -1,0 +1,54 @@
+# Hypergraph — publish the mirror from the default branch.
+#
+# Copy to `.github/workflows/hypergraph-publish.yml`. Only needed if the project
+# has a `mirror:` in its config; without one `push` exits 0 as a no-op and this
+# workflow does nothing.
+#
+# The mirror is a build artifact of the default branch, like a docs site. Running
+# it here rather than on a laptop is what keeps the public graph equal to the
+# public repo: nothing reaches the mirror until it is merged, and no contributor
+# or cloud agent ever needs the credentials.
+#
+# `--require-mirror` turns "cannot publish" into a red build. That is deliberate:
+# everywhere else a stand-down is correct, but in CI a silent no-op is a deploy
+# that quietly stopped working.
+
+name: hypergraph-publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # The state graph has one writer by protocol (SPEC I3). Two publishes racing
+  # would be two writers, so queue them instead.
+  group: hypergraph-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install
+        run: |
+          uv tool install hypergraph-protocol
+          npm install -g @paradigma-inc/flywheel
+
+      - name: Publish
+        env:
+          FLYWHEEL_API_KEY: ${{ secrets.FLYWHEEL_API_KEY }}
+        run: |
+          hypergraph push --config .hypergraph/config.yml --require-mirror
+
+      - name: Commit the mirror identity written back into the node files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .hypergraph/graph
+          git diff --cached --quiet || git commit -m "Mirror: stamp published node identity"
+          git push

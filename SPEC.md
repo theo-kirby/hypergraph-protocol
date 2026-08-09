@@ -1,4 +1,4 @@
-# Hypergraph Protocol — v0.0.4
+# Hypergraph Protocol — v0.0.5
 
 Hypergraph is a protocol for maintaining **two graphs per research project**, kept as
 [markdown files committed in the repo](backend/local-adapter.md):
@@ -29,8 +29,9 @@ handful of tool calls instead of traversing thousands of record nodes.
   DAGs would topologically merge them.
 - **Frontier** — the set of state nodes with status `open`, `broken`, or `blocked`.
   This is what a fresh agent should read first.
-- **High-water mark (HWM)** — the most recent record node whose declared state impact
-  has been folded into the state graph.
+- **High-water mark (HWM)** — the *frontier* of record tips whose declared state impact
+  has been folded into the state graph. A record node is reconciled when it is an
+  ancestor of one of them; a linear record graph has exactly one tip.
 - **Reconcile** — the single-writer pass that folds record-node impact declarations
   into the state graph and advances the HWM.
 
@@ -97,15 +98,28 @@ The state root's content carries a `## Reconciliation` section:
 
 ```
 ## Reconciliation
-- high_water_mark: <record-slug or none>
+- high_water_mark: <record-slug[, record-slug…] or none>
 - reconciled_at: <ISO-8601 timestamp>
 ```
 
-Because the record graph is append-only, "everything through node N is folded in" is a
-complete description of reconciliation progress, and reconcile runs idempotently from
-it. Record nodes created after the HWM node are *unreconciled* — enumerable by the
+The mark is a **frontier**: the set of record tips whose entire ancestry has been folded
+into state. A record node is *reconciled* exactly when it is an ancestor of some tip in
+the frontier, itself included; everything else is **unreconciled** — enumerable by the
 checker, which reports their count and per-state-node staleness. Unreconciled nodes are
-normal between reconcile runs; a missing/unresolvable HWM is a violation.
+normal between reconcile runs; a missing tip, or one that does not resolve to a record
+node, is a violation.
+
+Reachability, never wall-clock. The record graph is append-only but not linear: any
+merge of concurrent work gives it several tips, and no single tip dominates the others.
+A node authored before the last reconcile and merged after it is *not* an ancestor of
+the frontier, so a rule that compares timestamps reports it as already folded and drops
+it from the frontier permanently, with no violation anywhere. Clock skew between
+machines widens the window. One tip — what a project with a linear record graph writes,
+and the only form this section had before v0.0.5 — is a frontier of one.
+
+`hypergraph hwm` reports the frontier and what is outstanding. `hwm --suggest` prints
+the frontier that expresses, in ancestry, what the pre-v0.0.5 timestamp rule treated as
+reconciled; a project upgrading across that change adopts it once, in a reconcile pass.
 
 ### I6 — Status vocabulary
 
@@ -166,6 +180,43 @@ I1) or reconcile hallucinated (fix: rewrite the state node from its citations).
 - **State stays small.** The whole state graph should be readable in one sitting.
   Reconcile compacts: merge redundant claims, drop superseded detail (the record graph
   keeps the history), keep negative knowledge tight.
+
+## Collaboration
+
+More than one person or agent works most repos: worktrees, branches, a fork and a pull
+request, a fleet of cloud agents. The two graphs already split along the line that git
+merges on, so the rule follows from the invariants rather than extending them.
+
+- **The record graph merges for free.** It is append-only with one file per node, so two
+  branches produce two new files and a merge produces no conflict. The merged graph shows
+  the fork truthfully: concurrent nodes share a parent, and the DAG records that they
+  were concurrent. A slug collision across branches is an add/add conflict on the same
+  filename — loud, which matters because the node id is derived from the slug.
+- **The state graph has one writer** (I3), so concurrent branches edit the same files.
+
+Therefore: **contributors record; the maintainer reconciles.** A pull request carries
+facts — new record nodes, which merge cleanly and arrive in the diff as files, so the
+claim is reviewed beside the code that justifies it. The default branch carries claims.
+Reconcile runs there, once, over everything merged since the last pass; a single pass
+across a batch produces one coherent claim where N passes produce N overlapping edits.
+
+- **Publish from the default branch only.** A mirror is a projection of published
+  history — a build artifact of the branch, like a docs site. Publishing from a feature
+  branch puts nodes on an append-only store that may never merge, and an append-only
+  store has no clean retraction. `hypergraph push` stands down at exit 0 anywhere else,
+  and on a clone whose credentials are not the mirror's owner, so the reconcile workflow
+  is identical for a maintainer and a contributor. CI passes `--require-mirror`, because
+  that is the one place a silent no-op is indistinguishable from a healthy deploy.
+- **After a merge, `sync` rather than `check`.** The checker reads exports; a stale cache
+  hides every merged node.
+- **Never commit a conflict marker.** A node body git's merge driver wrote satisfies
+  every other invariant. The checker rejects it, at authoring time and at check time,
+  because a published record node is immutable and the damage would be permanent.
+- **A repo fork is not a graph fork.** Forking a repository on a hosting service copies
+  the graph verbatim — same slugs, same node ids — and that is correct: the fork is the
+  same project, and a pull request merges back into the same graph. `import --fork`
+  means something else entirely: starting a *new* project from someone else's graph,
+  which mints new identity and files the source under `archive:` (see below).
 
 ## Adoption epochs
 
@@ -310,7 +361,7 @@ regenerable projection and the repo stays canonical. It is a property of the too
 of the protocol: **the skills do not know it exists**, and a project with no mirror
 configured never touches that path. Mechanics: [backend/mirror.md](backend/mirror.md).
 
-## Future work (out of scope for v0.0.4)
+## Future work (out of scope for v0.0.5)
 
 Committed forward work lives in the state graph as open frontier nodes (see Forward
 work above) — for this repo, that is where field dogfooding is tracked. The list below

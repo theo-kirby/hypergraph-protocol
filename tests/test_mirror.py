@@ -650,9 +650,21 @@ def test_push_reports_actionably_when_no_transport_exists(tmp_path, monkeypatch,
     monkeypatch.setattr(hg.shutil, "which", lambda *_a: None)
     monkeypatch.delenv("FLYWHEEL_BASE_URL", raising=False)
     monkeypatch.delenv("FLYWHEEL_API_KEY", raising=False)
-    assert run("push", "--config", config, "--graph-dir", graph_dir) == 2
-    err = capsys.readouterr().err
-    assert "FLYWHEEL_BASE_URL" in err and "keychain" in err
+
+    # No transport is indistinguishable from "this clone is not the publisher", which
+    # is the ordinary case on a fork, so push stands down at exit 0 rather than
+    # breaking reconcile's unconditional publish step. The message still has to name
+    # the remedy — a stand-down that says nothing is just a silent failure.
+    assert run("push", "--config", config, "--graph-dir", graph_dir) == 0
+    out = capsys.readouterr().out
+    assert "nothing published" in out
+    assert "FLYWHEEL_BASE_URL" in out and "keychain" in out
+
+    # CI is the one place where standing down is wrong: a deploy that quietly stopped
+    # publishing looks exactly like a healthy one.
+    assert run("push", "--config", config, "--graph-dir", graph_dir,
+               "--require-mirror") == 2
+    assert "FLYWHEEL_BASE_URL" in capsys.readouterr().err
 
 
 # ------------------------------------------------------------------- live test

@@ -1,0 +1,59 @@
+# Hypergraph — pull-request check.
+#
+# Copy to `.github/workflows/hypergraph-check.yml`.
+#
+# Two things it enforces, and they are different:
+#
+#   1. The graph is valid — invariants I1–I8 over the two exports.
+#   2. The branch recorded its work — `--since` fails a PR that changes files
+#      without adding a record node. This is the only mechanism that reaches a
+#      contributor who never read AGENTS.md. Drop the `--since` argument if you
+#      want validity without that obligation.
+#
+# `fetch-depth: 0` is required. `--since` needs the merge base with the target
+# branch, and the default shallow clone does not have one.
+
+name: hypergraph
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Export the graph from the node files
+        run: |
+          uv tool install hypergraph-protocol
+          hypergraph export --config .hypergraph/config.yml
+
+      - name: Check invariants
+        run: |
+          hypergraph check \
+            --record .hypergraph/cache/record.json \
+            --state .hypergraph/cache/state.json \
+            --config .hypergraph/config.yml
+
+      - name: Check that this branch recorded its work
+        if: github.event_name == 'pull_request'
+        run: |
+          hypergraph check \
+            --record .hypergraph/cache/record.json \
+            --state .hypergraph/cache/state.json \
+            --config .hypergraph/config.yml \
+            --since "origin/${{ github.base_ref }}"
+
+      - name: STATE.md is generated, so it must match the graph
+        run: |
+          hypergraph render --state .hypergraph/cache/state.json \
+            --config .hypergraph/config.yml --output STATE.md
+          git diff --exit-code -- STATE.md \
+            || { echo "::error::STATE.md is stale — run 'hypergraph sync' and commit"; exit 1; }

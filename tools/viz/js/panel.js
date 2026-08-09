@@ -111,7 +111,8 @@ function legendHTML() {
       <tr><td>cross-graph links</td><td>${DATA.links.length}</td></tr>
       <tr><td>frontier</td><td>${frontier}</td></tr>
       <tr><td>unreconciled</td><td>${unrec}</td></tr>
-      <tr><td>high-water mark</td><td>${DATA.reconciliation.high_water_mark ? slugLink(DATA.reconciliation.high_water_mark) : "—"}</td></tr>
+      <tr><td>high-water mark</td><td>${(DATA.reconciliation.high_water_frontier || []).length
+        ? DATA.reconciliation.high_water_frontier.map(slugLink).join(", ") : "—"}</td></tr>
       <tr><td>reconciled at</td><td>${esc((DATA.reconciliation.reconciled_at || "—").slice(0, 16).replace("T", " "))}</td></tr>
     </table>
     <h3>State status</h3>

@@ -246,7 +246,7 @@ def test_roots_can_be_minted_offline_and_only_once(tmp_path, capsys):
     _meta, content = hg.split_frontmatter(
         (graph_dir / "state" / f"{state_root}.md").read_text())
     hwm, ts = hg.read_hwm(hg.Node("", state_root, "", content, [], ""))
-    assert hwm == "none" and hg.parse_ts(ts) is not None
+    assert hwm == [] and hg.parse_ts(ts) is not None  # `none` parses as an empty frontier
     assert run("new", "record", "--graph-dir", graph_dir, "--root",
                "--title", "second root", "--body", overview) == 2
     assert "already has a root" in capsys.readouterr().err

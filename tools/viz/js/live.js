@@ -16,7 +16,7 @@ function liveSignature(data) {
   // Cheap and sufficient: what exists, and when the graphs were exported.
   return [data.record.nodes.length, data.state.nodes.length, data.links.length,
           data.record.exported_at, data.state.exported_at,
-          data.reconciliation.high_water_mark].join("|");
+          (data.reconciliation.high_water_frontier || []).join(",")].join("|");
 }
 
 function liveStatus(text, tone) {

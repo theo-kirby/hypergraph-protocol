@@ -25,6 +25,11 @@ the only skill that ever passes it.
 - After one or more hypergraph-record commits (the user asks to reconcile, or `check`
   reports unreconciled nodes / pending impacts).
 - Before a milestone, handoff, or fresh-agent onboarding, so the frontier is current.
+- **On the default branch, as the maintainer.** Contributors and parallel agents record
+  only; the record graph merges without conflict, the state graph has one writer (SPEC
+  I3), and reconciling on a side branch makes two. If you are on a feature branch or a
+  fork, stop: record the work, open the pull request, and let the reconcile happen once
+  after it merges. One pass over a merged batch writes one coherent claim.
 
 Not for recording new knowledge — if you learn something *during* reconcile, stop and
 record it first (SPEC I1), then reconcile it in.
@@ -56,9 +61,15 @@ record it first (SPEC I1), then reconcile it in.
      didn't declare) are allowed but must stay derivable from the cited record nodes
      (SPEC I8) — when in doubt, fold only what was declared and note the discrepancy.
 5. **Advance the HWM**: rewrite the state root's `## Reconciliation` with
-   `high_water_mark:` = the newest record node folded in and `reconciled_at:` = now
+   `high_water_mark:` = the record **tips** you folded through and `reconciled_at:` = now
    (SPEC I5), through the same read-sha → update sequence. Do this *after* the folds so
    a crashed run under-reports rather than skips.
+   - Usually one slug — the newest node you folded. After a merge there are several,
+     because a branch's tip is not an ancestor of main's. `hypergraph hwm` lists what is
+     outstanding; anything still listed after you write the mark was not covered.
+   - If `check` says nodes *predate* the mark and names `hwm --suggest`, this graph is
+     crossing the v0.0.5 change. Run it and write the frontier it prints — those nodes
+     were already folded, and folding them again duplicates claims.
 6. **Regenerate and check**:
    ```
    hypergraph sync --config .hypergraph/config.yml
@@ -67,9 +78,10 @@ record it first (SPEC I1), then reconcile it in.
    It stops before publishing if `check` reports violations. (The separate
    `export` / `render` / `check` commands still exist if you want the steps apart.)
 7. **Publish.** `sync` already did this; run `hypergraph push` on its own if you split
-   the steps. On a project with no mirror configured it prints one line and exits 0 —
-   there is nothing to decide, so just run it. A **nonzero exit means one of two
-   things**, and they are not the same:
+   the steps. It exits 0 and prints one line whenever there is nothing for *this*
+   checkout to publish — no mirror configured, not the default branch, or credentials
+   that do not own the mirror — so there is nothing to decide: just run it. A **nonzero
+   exit means one of two things**, and they are not the same:
    - *append-only breach* — a record node's body changed after it was published.
      Fix the local edit; a correction is a new child node, never an edit.
    - *drift* — the published copy no longer matches the node files. **Local files are
@@ -86,6 +98,10 @@ record it first (SPEC I1), then reconcile it in.
 
 - Single writer: do not run two reconciles concurrently. A refused `--expect` mid-run
   means another writer is violating I3 — stop and report it.
+- After a merge, start from `hypergraph sync`, never a bare `check`. The checker reads
+  the exports, so a stale cache reports the pre-merge graph and hides everything that
+  arrived. If a merge left conflict markers in a node file, `check` now fails on them —
+  resolve the file, do not paste around it.
 - Full-payload writes: `hypergraph update --body` replaces the whole body, so compose
   the complete new content before writing. It is not a diff.
 - Never delete record nodes, never edit record content, never add cross-graph edges.

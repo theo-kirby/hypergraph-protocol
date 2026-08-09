@@ -30,6 +30,12 @@ The graphs are markdown node files committed in this repo
   frontier. Intent enters through the record graph like everything else (SPEC:
   Forward work).
 
+- **On any branch, fork or machine.** Recording is the whole obligation for a
+  contributor or a parallel agent: record nodes are one file each and merge without
+  conflict, so a pull request that adds them is never a merge problem, and the claim
+  lands in the diff beside the code it is about. Do not reconcile — the maintainer does
+  that once on the default branch after the merge (SPEC: Collaboration).
+
 Not for editing state nodes (that is reconcile's job — SPEC I3) or for orientation
 (use hypergraph-orient).
 

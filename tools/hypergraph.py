@@ -58,7 +58,7 @@ from __future__ import annotations
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 
 import argparse
 import hashlib
@@ -90,9 +90,12 @@ NEG_ENTRY_RE = re.compile(
     r"(?:\|\s*decision:\s*(?P<dec>[^|\]]+?)\s*)?"
     r"\]\s*(?P<stmt>.+)$"
 )
-HWM_RE = re.compile(r"^-?\s*high_water_mark:\s*(?P<hwm>\S+)\s*$")
+HWM_RE = re.compile(r"^-?\s*high_water_mark:\s*(?P<hwm>.+?)\s*$")
 RECONCILED_AT_RE = re.compile(r"^-?\s*reconciled_at:\s*(?P<ts>\S+)\s*$")
 COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+# git's merge driver, all three styles. `|||||||` is diff3's common-ancestor header.
+CONFLICT_EDGE_RE = re.compile(r"^(?:<{7}|>{7}|\|{7})(?:\s|$)")
+CONFLICT_MID_RE = re.compile(r"^={7}\s*$")
 
 
 @dataclass
@@ -429,19 +432,106 @@ def check_negative_knowledge(node: Node, sections: dict[str, str], record: Graph
                            f"decision slug `{dec}` does not resolve to a record node")
 
 
-def read_hwm(state_root: Node) -> tuple[str | None, str | None]:
-    """→ (hwm slug or 'none' or None-if-missing, reconciled_at or None)."""
+def read_hwm(state_root: Node) -> tuple[list[str] | None, str | None]:
+    """→ (reconciliation frontier, reconciled_at or None).
+
+    The frontier is the set of record tips whose ancestry has been folded into state
+    (SPEC I5). `None` means the `high_water_mark:` line is absent; `[]` means it reads
+    `none`, i.e. nothing has been reconciled yet. One slug — the pre-0.0.5 form, and
+    still what a project with a linear record graph writes — parses as a frontier of one.
+
+    A frontier rather than a single mark because merges make the record graph a DAG with
+    several tips, and no single tip dominates the others [rec: vast-rain-4873].
+    """
     _, sections = split_sections(state_root.content)
     body = sections.get("reconciliation")
     if body is None:
         return None, None
-    hwm = ts = None
+    frontier: list[str] | None = None
+    ts = None
     for line in body.splitlines():
         if m := HWM_RE.match(line.strip()):
-            hwm = m.group("hwm")
+            raw = m.group("hwm").strip()
+            if raw == "none":
+                frontier = []
+            else:
+                seen: list[str] = []
+                for slug in raw.replace(",", " ").split():
+                    slug = slug.strip("`")
+                    if slug and slug not in seen:
+                        seen.append(slug)
+                frontier = seen
         elif m := RECONCILED_AT_RE.match(line.strip()):
             ts = m.group("ts")
-    return hwm, ts
+    return frontier, ts
+
+
+def format_hwm(frontier: list[str] | None) -> str:
+    """The `high_water_mark:` value for a frontier — the exact inverse of `read_hwm`."""
+    return ", ".join(frontier) if frontier else "none"
+
+
+def ancestors_of(graph: Graph, slugs: list[str]) -> set[str]:
+    """Node ids reachable from `slugs` by walking parents, seeds included.
+
+    Cycles are impossible in a causal graph but the visited set makes it safe anyway,
+    and unknown slugs are skipped — the caller reports those as violations.
+    """
+    seen: set[str] = set()
+    stack = [graph.by_slug[s].node_id for s in slugs if s in graph.by_slug]
+    while stack:
+        node_id = stack.pop()
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        node = graph.nodes.get(node_id)
+        if node is None:
+            continue
+        stack.extend(pid for pid in node.parent_ids if pid in graph.nodes)
+    return seen
+
+
+def unreconciled_nodes(record: Graph, frontier: list[str],
+                       record_root: Node | None) -> list[Node]:
+    """Record nodes whose impact has not been folded into state.
+
+    Reachability, never wall-clock: a node authored before the last reconcile but
+    merged after it is *not* an ancestor of the frontier, and enumerating by timestamp
+    silently drops it [rec: vast-rain-4873].
+    """
+    reconciled = ancestors_of(record, frontier)
+    out = []
+    for node in record.nodes.values():
+        if record_root and node.node_id == record_root.node_id:
+            continue
+        if node.node_id not in reconciled:
+            out.append(node)
+    return sorted(out, key=lambda n: (n.created_at, n.slug))
+
+
+def suggest_frontier(record: Graph, frontier: list[str],
+                     record_root: Node | None) -> list[str]:
+    """The frontier that expresses, in ancestry, what the pre-0.0.5 timestamp rule
+    treated as reconciled: every record node at or before the newest current mark.
+
+    Returns the *maximal* members of that set — the ones with no child also in it —
+    because listing every node would be noise. Migration aid only (`hwm --suggest`).
+    """
+    marks = [record.by_slug[s] for s in frontier if s in record.by_slug]
+    if not marks:
+        return []
+    cutoff = max((m.created for m in marks if m.created is not None), default=None)
+    if cutoff is None:
+        return sorted({m.slug for m in marks})
+    covered = {n.node_id for n in record.nodes.values()
+               if n.created is not None and n.created <= cutoff
+               and not (record_root and n.node_id == record_root.node_id)}
+    has_covered_child = set()
+    for node in record.nodes.values():
+        if node.node_id in covered:
+            has_covered_child.update(pid for pid in node.parent_ids)
+    tips = [record.nodes[nid] for nid in covered if nid not in has_covered_child]
+    return [n.slug for n in sorted(tips, key=lambda n: (n.created_at, n.slug))]
 
 
 def check_hwm(record: Graph, state: Graph, record_root: Node | None,
@@ -449,39 +539,43 @@ def check_hwm(record: Graph, state: Graph, record_root: Node | None,
     """I5: parseable high-water mark on the state root + unreconciled enumeration."""
     if state_root is None:
         return
-    hwm, ts = read_hwm(state_root)
-    if hwm is None and ts is None:
+    frontier, ts = read_hwm(state_root)
+    if frontier is None and ts is None:
         report.add("violation", "I5", state_root.ref,
                    "state root missing `## Reconciliation` section")
         return
-    if not hwm:
+    if frontier is None:
         report.add("violation", "I5", state_root.ref, "missing `high_water_mark:` line")
     if not ts or parse_ts(ts) is None:
         report.add("violation", "I5", state_root.ref,
                    f"missing or unparseable `reconciled_at:` timestamp (got {ts!r})")
-
-    hwm_node = None
-    if hwm and hwm != "none":
-        hwm_node = record.by_slug.get(hwm)
-        if hwm_node is None:
-            report.add("violation", "I5", state_root.ref,
-                       f"high_water_mark `{hwm}` does not resolve to a record node")
-            return
-    if hwm is None:
+    if frontier is None:
         return
 
-    cutoff = hwm_node.created if hwm_node else None
-    unreconciled = []
-    for node in record.nodes.values():
-        if record_root and node.node_id == record_root.node_id:
-            continue
-        if hwm_node and node.node_id == hwm_node.node_id:
-            continue
-        created = node.created
-        if cutoff is None or (created is not None and created > cutoff):
-            unreconciled.append(node)
+    unknown = [s for s in frontier if s not in record.by_slug]
+    for slug in unknown:
+        report.add("violation", "I5", state_root.ref,
+                   f"high_water_mark `{slug}` does not resolve to a record node")
+    if unknown:
+        return
+
+    unreconciled = unreconciled_nodes(record, frontier, record_root)
     report.add("info", "I5", state_root.ref,
                f"{len(unreconciled)} unreconciled record node(s) past high-water mark")
+
+    # Migration aid. Before 0.0.5 the frontier was one slug and membership was a
+    # timestamp comparison, so a merged side branch counted as reconciled without ever
+    # being an ancestor. Those nodes surface here the first time a project upgrades;
+    # they are not new work, and re-folding them would duplicate claims.
+    marks = [record.by_slug[s] for s in frontier]
+    newest = max((m.created for m in marks if m.created is not None), default=None)
+    predating = [n for n in unreconciled
+                 if n.created is not None and newest is not None and n.created <= newest]
+    if predating:
+        report.add("info", "I5", state_root.ref,
+                   f"{len(predating)} of those predate the newest mark — if they were folded "
+                   f"under the pre-0.0.5 timestamp rule, run `hypergraph hwm --suggest` "
+                   f"and adopt the frontier it prints (SPEC I5)")
     stale: dict[str, int] = {}
     for node in unreconciled:
         _, sections = split_sections(node.content)
@@ -575,6 +669,32 @@ def check_legacy_backend_key(config: dict, report: Report) -> None:
                    "graph into the repo' in backend/mirror.md. Then drop the key.")
 
 
+def check_conflict_markers(graph: Graph, report: Report) -> None:
+    """Reject node content that git's merge driver wrote and nobody resolved.
+
+    Every other check validates what an author meant. This one validates that an author
+    was involved at all: a body carrying `<<<<<<< HEAD` parses cleanly, satisfies every
+    invariant, commits, and is then published to an append-only mirror [rec: vast-rain-4873].
+
+    `<<<<<<<` and `>>>>>>>` are unambiguous — no markdown construct starts a line that
+    way. A bare `=======` is *not*: it is also a setext H1 underline, so it is reported
+    only inside a node that already shows a real marker.
+    """
+    for node in graph.nodes.values():
+        lines = node.content.splitlines()
+        hard = [(i, ln) for i, ln in enumerate(lines, 1)
+                if CONFLICT_EDGE_RE.match(ln)]
+        if not hard:
+            continue
+        mid = [i for i, ln in enumerate(lines, 1) if CONFLICT_MID_RE.match(ln)]
+        where = ", ".join(f"line {i}" for i, _ in hard[:3]) + ("…" if len(hard) > 3 else "")
+        report.add("violation", "-", node.ref,
+                   f"unresolved git conflict marker ({where}"
+                   + (f"; separator at line {mid[0]}" if mid else "")
+                   + f"): {hard[0][1].strip()[:40]!r}. Resolve the merge before recording — "
+                     "a record node is immutable once published, so this would be permanent.")
+
+
 def run_check(record_path: Path, state_path: Path, config: dict | None = None,
               *, config_given: bool | None = None) -> Report:
     if config_given is None:
@@ -588,6 +708,8 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
     state_root = find_root(state, config.get("state_root"), report, "state",
                            config_given=config_given)
     check_legacy_backend_key(config, report)
+    check_conflict_markers(record, report)
+    check_conflict_markers(state, report)
     epoch_cutoff = resolve_epoch_cutoff(config, record, report)
     check_impacts(record, state, record_root, report, epoch_cutoff)
     check_state_nodes(record, state, state_root, report)
@@ -595,10 +717,62 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
     return report
 
 
+def check_since(ref: str, config: dict, report: Report, *, cwd: Path | None = None) -> None:
+    """I1 across a branch: did this work get recorded at all?
+
+    `check` can only see nodes that exist; work that was never recorded is invisible to
+    it by construction. Comparing the branch against its merge base with `ref` closes
+    that gap, and it is the only mechanism that reaches a contributor who never read
+    AGENTS.md [rec: vast-rain-4873].
+
+    Three-dot range on purpose: `<ref>...HEAD` is what the branch *adds*, not everything
+    that has happened on `<ref>` since it forked.
+    """
+    repo = cwd or Path.cwd()
+    if not _git(repo, "rev-parse", "--is-inside-work-tree").strip():
+        report.add("violation", "I1", "-", f"--since {ref}: not a git checkout")
+        return
+    if not _git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").strip():
+        report.add("violation", "I1", "-",
+                   f"--since {ref}: no such ref. In CI, check out with fetch-depth: 0 — "
+                   "a shallow clone has no merge base to compare against.")
+        return
+
+    graph_dir = str(config.get("graph_dir") or DEFAULT_GRAPH_DIR).strip("/")
+    generated = {str(config.get("state_md") or "STATE.md").strip("/"),
+                 str(config.get("cache_dir") or DEFAULT_CACHE_DIR).strip("/")}
+
+    def is_generated(path: str) -> bool:
+        return any(path == g or path.startswith(g + "/") for g in generated)
+
+    changed = [p for p in _git(repo, "diff", "--name-only", f"{ref}...HEAD").splitlines() if p]
+    added = [p for p in _git(repo, "diff", "--name-only", "--diff-filter=A",
+                             f"{ref}...HEAD").splitlines() if p]
+
+    work = [p for p in changed
+            if not p.startswith(graph_dir + "/") and p != graph_dir and not is_generated(p)]
+    records = [p for p in added if p.startswith(f"{graph_dir}/record/") and p.endswith(".md")]
+
+    if not work:
+        report.add("info", "I1", "-", f"--since {ref}: no work outside the graph — nothing to record")
+        return
+    if records:
+        report.add("info", "I1", "-",
+                   f"--since {ref}: {len(records)} record node(s) for {len(work)} changed file(s)")
+        return
+    sample = ", ".join(sorted(work)[:4]) + ("…" if len(work) > 4 else "")
+    report.add("violation", "I1", "-",
+               f"--since {ref}: {len(work)} file(s) changed and no record node was added "
+               f"({sample}). Work that exists only in the diff is invisible to the project's "
+               "memory — run the hypergraph-record skill, or `hypergraph new record`.")
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     report = run_check(args.record, args.state, config,
                        config_given=args.config is not None)
+    if getattr(args, "since", None):
+        check_since(args.since, config, report)
     violations, warnings, infos = report.violations(), report.warnings(), report.infos()
     for f in violations:
         print(f"VIOLATION {f}")
@@ -608,6 +782,52 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(f"info      {f}")
     print(f"\ncheck: {len(violations)} violation(s), {len(warnings)} warning(s)")
     return 1 if violations else 0
+
+
+def cmd_hwm(args: argparse.Namespace) -> int:
+    """Report the reconciliation frontier, or suggest the one a pre-0.0.5 graph needs.
+
+    Read-only in both modes: it prints a value for the reconcile pass to write, because
+    the state root is a state node and only reconcile may write those (SPEC I3).
+    """
+    config = load_config(args.config)
+    record = load_graph(args.record)
+    state = load_graph(args.state)
+    scratch = Report()
+    record_root = find_root(record, config.get("record_root"), scratch, "record")
+    state_root = find_root(state, config.get("state_root"), scratch, "state")
+    if state_root is None:
+        raise LocalGraphError("hwm: cannot identify the state root — pass --config")
+
+    frontier, ts = read_hwm(state_root)
+    frontier = frontier or []
+
+    if args.suggest:
+        suggested = suggest_frontier(record, frontier, record_root)
+        if not suggested:
+            print("hwm --suggest: nothing reconciled yet — the frontier is `none`")
+            return 0
+        print(f"high_water_mark: {format_hwm(suggested)}")
+        if suggested != frontier:
+            covered = len(ancestors_of(record, suggested)) - (1 if record_root else 0)
+            print(f"\n{len(suggested)} tip(s) covering {covered} record node(s). This is what the "
+                  f"pre-0.0.5 timestamp rule treated as reconciled, expressed as ancestry.\n"
+                  f"Adopt it in the next reconcile pass — do not hand-edit the state root.",
+                  file=sys.stderr)
+        return 0
+
+    print(f"high_water_mark: {format_hwm(frontier)}")
+    print(f"reconciled_at:   {ts or 'unknown'}")
+    unknown = [s for s in frontier if s not in record.by_slug]
+    for slug in unknown:
+        print(f"  ! `{slug}` does not resolve to a record node")
+    if unknown:
+        return 1
+    pending = unreconciled_nodes(record, frontier, record_root)
+    print(f"\n{len(pending)} unreconciled record node(s):")
+    for node in pending:
+        print(f"  {node.slug}  {node.created_at}  {node.title[:70]}")
+    return 0
 
 
 # ------------------------------------------------------------------------ render
@@ -628,7 +848,8 @@ def render_state(state_path: Path, config: dict | None = None) -> str:
         raise SystemExit("render: cannot identify state root; pass --config")
 
     project = config.get("project") or root.title.split(" — ")[0].strip() or "project"
-    hwm, ts = read_hwm(root)
+    frontier, ts = read_hwm(root)
+    hwm = ", ".join(f"`{s}`" for s in frontier) if frontier else None
 
     children: dict[str, list[Node]] = {}
     for node in state.nodes.values():
@@ -656,7 +877,7 @@ def render_state(state_path: Path, config: dict | None = None) -> str:
         "> Generated by `tools/hypergraph.py render` from the state-graph export.",
         "> Do not hand-edit — run the hypergraph-reconcile skill instead.",
         "",
-        f"Reconciled through `{hwm or 'unknown'}` at {ts or 'unknown'}.",
+        f"Reconciled through {hwm or '`unknown`'} at {ts or 'unknown'}.",
         "",
         "## Frontier",
         "",
@@ -844,11 +1065,17 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
     record_root = find_root(record, config.get("record_root"), scratch, "record")
     state_root = find_root(state, config.get("state_root"), scratch, "state")
 
-    hwm = ts = None
+    frontier = None
+    ts = None
     if state_root is not None:
-        hwm, ts = read_hwm(state_root)
-    hwm_node = record.by_slug.get(hwm) if hwm and hwm != "none" else None
-    cutoff = hwm_node.created if hwm_node else None
+        frontier, ts = read_hwm(state_root)
+    frontier = frontier or []
+    hwm_ids = {record.by_slug[s].node_id for s in frontier if s in record.by_slug}
+    reconciled_ids = ancestors_of(record, frontier)
+    # The timeline draws a single vertical rule and shades everything to its right as
+    # unreconciled. That reading only holds for a linear record graph; with several tips
+    # the rule is suppressed and the per-node accent carries the information instead.
+    hwm = frontier[0] if len(frontier) == 1 else None
 
     rec_layout = layered_layout(record)
     st_layout = layered_layout(state)
@@ -886,17 +1113,14 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
             impacts.append({"target": target, "resolved": resolved, "delta": delta, "new": is_new})
             if resolved:
                 add_link(node.ref, resolved, "impact", delta)
-        if hwm is None or is_root or (hwm_node and node.node_id == hwm_node.node_id):
-            unreconciled = False
-        else:
-            unreconciled = cutoff is None or (node.created is not None and node.created > cutoff)
+        unreconciled = not is_root and node.node_id not in reconciled_ids
         ly, od = rec_layout[node.node_id]
         record_nodes.append({
             "slug": node.ref, "title": node.title, "created_at": node.created_at,
             "parents": [id_to_slug["record"][p] for p in node.parent_ids
                         if p in id_to_slug["record"]],
             "content": node.content, "is_root": is_root,
-            "is_hwm": bool(hwm_node and node.node_id == hwm_node.node_id),
+            "is_hwm": node.node_id in hwm_ids,
             "unreconciled": unreconciled,
             "impacts": impacts, "impact_none": none_reason,
             "layer": ly, "order": od, "seq": seq,
@@ -954,7 +1178,8 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
         "record": {"root": record_root.ref if record_root else None, "nodes": record_nodes},
         "state": {"root": state_root.ref if state_root else None, "nodes": state_nodes},
         "links": links,
-        "reconciliation": {"high_water_mark": hwm, "reconciled_at": ts},
+        "reconciliation": {"high_water_mark": hwm, "reconciled_at": ts,
+                           "high_water_frontier": frontier},
     }
 
 
@@ -1581,6 +1806,7 @@ def validate_node_content(kind: str, slug: str, title: str, content: str, create
     a bad impact target or dangling provenance slug fails at authoring time."""
     report = Report()
     node, solo = _solo_graph(slug, title, content, created_at)
+    check_conflict_markers(solo, report)
     if kind == "record":
         check_impacts(solo, state, node if is_root else None, report)
     else:
@@ -2994,6 +3220,72 @@ def mirror_paths(config: dict, args: argparse.Namespace) -> tuple[Path, Path, Pa
     return cache_dir, journal, cache_dir / "push-run"
 
 
+DEFAULT_PUBLISH_BRANCH = "main"
+
+
+def publish_branch(config: dict, repo: Path) -> str:
+    """The one branch a mirror is built from: config `publish_branch:`, else whatever
+    `origin/HEAD` points at, else `main`."""
+    named = config.get("publish_branch")
+    if named:
+        return str(named)
+    ref = _git(repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD").strip()
+    if ref.startswith("refs/remotes/origin/"):
+        return ref[len("refs/remotes/origin/"):]
+    return DEFAULT_PUBLISH_BRANCH
+
+
+def publish_branch_block(config: dict, *, cwd: Path | None = None) -> str | None:
+    """→ why this checkout must not publish, or None when it may.
+
+    The mirror is a projection of *published* history, so it is built from the default
+    branch and nowhere else — the rule a docs site follows. Publishing from a feature
+    branch puts nodes on an append-only public graph that may never merge, and an
+    append-only store has no clean retraction [rec: vast-rain-4873].
+
+    There is deliberately **no dirty-tree guard**. Reconcile publishes *before* it
+    commits, precisely so `push`'s frontmatter writes land in the same `git add`, so a
+    dirty graph is the expected state at push time and refusing on it would break the
+    documented flow.
+    """
+    repo = cwd or Path.cwd()
+    if not _git(repo, "rev-parse", "--is-inside-work-tree").strip():
+        return None  # not a git checkout — nothing to compare against, so allow
+    want = publish_branch(config, repo)
+    have = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    if not have:
+        return None
+    if have == "HEAD":
+        return ("HEAD is detached, so there is no branch to publish from. Check out "
+                f"`{want}` (or pass --allow-any-branch)")
+    if have != want:
+        return (f"on branch `{have}`, and this project publishes from `{want}`. "
+                "Merge first and publish from there, or pass --allow-any-branch")
+    return None
+
+
+def mirror_not_ours(config: dict, transport) -> str | None:
+    """→ why this machine cannot publish this project's mirror, or None when it can.
+
+    Distinguishes *a contributor's clone* from *a broken owner setup*. A fork inherits
+    the committed `mirror:` key but no credentials for it, and reconcile calls `push`
+    unconditionally — so without this the documented workflow exits 2 on every outside
+    contributor's machine [rec: vast-rain-4873].
+    """
+    try:
+        status = transport.auth_status()
+    except MirrorError as exc:
+        return str(exc)
+    if not status.get("authenticated"):
+        return "not authenticated for this project's mirror"
+    expected = str(config.get("mirror_account_id") or "")
+    user_id = str(status.get("user_id") or "")
+    if expected and user_id and expected != user_id:
+        return (f"authenticated as account {user_id}, but this project's mirror belongs "
+                f"to {expected} — this clone is not the publisher")
+    return None
+
+
 def mirror_session(config: dict, args: argparse.Namespace):
     """Build (transport, journal, pacer). The one place the mirror path starts."""
     cache_dir, journal_path, run_dir = mirror_paths(config, args)
@@ -3065,13 +3357,31 @@ def cmd_push(args: argparse.Namespace) -> int:
         return 1 if report.violations() else 0
 
     # --- the executing path -------------------------------------------------
+    # Three ways to reach "nothing to publish", all of them exit 0 unless
+    # --require-mirror. Together they are what lets the reconcile skill run `push`
+    # unconditionally instead of making the agent evaluate a config test — on the
+    # maintainer's main, on a feature branch, and on a contributor's fork alike.
+    def stand_down(reason: str) -> int:
+        if args.require_mirror:
+            raise MirrorError(f"{reason} (--require-mirror)")
+        print(f"push: {reason} — nothing published")
+        return 0
+
     if not mirror_configured(config):
-        # Exit 0, never 2. This is what lets the reconcile skill run `push`
-        # unconditionally instead of making the agent evaluate a config test.
         print("push: no mirror configured — nothing to publish")
         return 0
 
-    transport, journal, pacer, cache_dir = mirror_session(config, args)
+    if not args.allow_any_branch:
+        if blocked := publish_branch_block(config):
+            return stand_down(blocked)
+
+    try:
+        transport, journal, pacer, cache_dir = mirror_session(config, args)
+        if reason := mirror_not_ours(config, transport):
+            return stand_down(reason)
+    except (MirrorUnavailable, MirrorAuthError) as exc:
+        return stand_down(str(exc))
+
     if not args.skip_preflight:
         report = mirror_doctor(config, graph_dir, transport, probe_write=False)
         for finding in report.violations():
@@ -3137,7 +3447,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         verify=False, against=None, legend=False, lineage=False, output=None,
         dry_run=args.dry_run, batch=args.batch, limit=None, yes=args.yes,
         no_legend=False, no_verify=args.no_verify, skip_preflight=args.skip_preflight,
-        transport=args.transport, rate=args.rate, journal=args.journal)
+        transport=args.transport, rate=args.rate, journal=args.journal,
+        allow_any_branch=args.allow_any_branch, require_mirror=args.require_mirror)
     return cmd_push(push_args)
 
 
@@ -4417,6 +4728,11 @@ function timelineFurniture(pos) {
     ticks.push({ x: pos[n.slug].x, day, label: day.slice(5) });
   });
 
+  // A single vertical rule reads as "everything to the right is unreconciled". That
+  // only holds for a linear record graph; once a merge gives it several tips, no one
+  // x-position separates the two sets, so the rule is suppressed and the per-node
+  // "unreconciled" accent carries the information on its own. The exporter sets
+  // high_water_mark to null whenever the frontier has more than one tip.
   const hwm = DATA.reconciliation.high_water_mark;
   const hwmX = hwm && pos[hwm] ? pos[hwm].x + CW / 2 + 8 : null;
   return { x0, x1, laneCount, ticks, hwmX,
@@ -6380,7 +6696,8 @@ function legendHTML() {
       <tr><td>cross-graph links</td><td>${DATA.links.length}</td></tr>
       <tr><td>frontier</td><td>${frontier}</td></tr>
       <tr><td>unreconciled</td><td>${unrec}</td></tr>
-      <tr><td>high-water mark</td><td>${DATA.reconciliation.high_water_mark ? slugLink(DATA.reconciliation.high_water_mark) : "—"}</td></tr>
+      <tr><td>high-water mark</td><td>${(DATA.reconciliation.high_water_frontier || []).length
+        ? DATA.reconciliation.high_water_frontier.map(slugLink).join(", ") : "—"}</td></tr>
       <tr><td>reconciled at</td><td>${esc((DATA.reconciliation.reconciled_at || "—").slice(0, 16).replace("T", " "))}</td></tr>
     </table>
     <h3>State status</h3>
@@ -6800,7 +7117,7 @@ function liveSignature(data) {
   // Cheap and sufficient: what exists, and when the graphs were exported.
   return [data.record.nodes.length, data.state.nodes.length, data.links.length,
           data.record.exported_at, data.state.exported_at,
-          data.reconciliation.high_water_mark].join("|");
+          (data.reconciliation.high_water_frontier || []).join(",")].join("|");
 }
 
 function liveStatus(text, tone) {
@@ -6919,7 +7236,18 @@ def main(argv: list[str] | None = None) -> int:
     p_check.add_argument("--record", type=Path, required=True, help="record-graph export JSON")
     p_check.add_argument("--state", type=Path, required=True, help="state-graph export JSON")
     p_check.add_argument("--config", type=Path, help=".hypergraph/config.yml")
+    p_check.add_argument("--since", metavar="REF",
+                         help="also fail when REF...HEAD changes files but adds no record "
+                              "node (I1 across a branch — for pull-request CI)")
     p_check.set_defaults(func=cmd_check)
+
+    p_hwm = sub.add_parser("hwm", help="report the reconciliation frontier (read-only)")
+    p_hwm.add_argument("--record", type=Path, required=True, help="record-graph export JSON")
+    p_hwm.add_argument("--state", type=Path, required=True, help="state-graph export JSON")
+    p_hwm.add_argument("--config", type=Path, help=".hypergraph/config.yml")
+    p_hwm.add_argument("--suggest", action="store_true",
+                       help="print the frontier a pre-0.0.5 graph needs after upgrading")
+    p_hwm.set_defaults(func=cmd_hwm)
 
     p_render = sub.add_parser("render", help="render STATE.md from a state-graph export")
     p_render.add_argument("--state", type=Path, required=True, help="state-graph export JSON")
@@ -7042,6 +7370,11 @@ def main(argv: list[str] | None = None) -> int:
                        help="minimum write pacing (default 100/min vs a 120/min ceiling)")
         p.add_argument("--journal", type=Path, metavar="FILE",
                        help="crash journal path (default: <cache_dir>/push-journal.jsonl)")
+        p.add_argument("--allow-any-branch", action="store_true",
+                       help="publish from a branch other than `publish_branch:` (default: main)")
+        p.add_argument("--require-mirror", action="store_true",
+                       help="fail instead of standing down when the mirror cannot be "
+                            "published — for CI, where a silent no-op is a broken deploy")
 
     p_push = sub.add_parser("push", help="publish committed node files to the mirror")
     graph_args(p_push)

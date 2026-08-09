@@ -20,10 +20,19 @@ state_md: STATE.md
 # ignored; `check` warns if it says anything other than `local`.
 graph_dir: .hypergraph/graph
 
+# The branch a mirror is published from, and the branch reconcile belongs on
+# (SPEC: Collaboration). Defaults to `origin/HEAD` if it resolves, else `main`.
+# `push` stands down at exit 0 anywhere else, so a contributor's fork and a feature
+# branch both run the same reconcile workflow without a config test. Set it only if
+# this project publishes from something other than its default branch.
+# publish_branch: main
+
 # Optional: publish the committed node files to a hosted graph you own
 # (backend/mirror.md). One-way — the files stay canonical and the mirror is a
 # regenerable projection. Absent → `hypergraph push` is a no-op that exits 0, which
 # is why callers never have to test for it. The skills do not know it exists.
+# A fork inherits this key and has no credentials for it; that is expected, and
+# `push` stands down rather than failing. CI passes `--require-mirror` to invert it.
 # mirror: flywheel
 
 # The account that owns the mirror roots. Set it: without it, running with a key

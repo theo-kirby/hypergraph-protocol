@@ -67,6 +67,11 @@ function timelineFurniture(pos) {
     ticks.push({ x: pos[n.slug].x, day, label: day.slice(5) });
   });
 
+  // A single vertical rule reads as "everything to the right is unreconciled". That
+  // only holds for a linear record graph; once a merge gives it several tips, no one
+  // x-position separates the two sets, so the rule is suppressed and the per-node
+  // "unreconciled" accent carries the information on its own. The exporter sets
+  // high_water_mark to null whenever the frontier has more than one tip.
   const hwm = DATA.reconciliation.high_water_mark;
   const hwmX = hwm && pos[hwm] ? pos[hwm].x + CW / 2 + 8 : null;
   return { x0, x1, laneCount, ticks, hwmX,

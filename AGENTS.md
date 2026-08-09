@@ -20,17 +20,22 @@ record of this project itself, and your work must land in it.
    experiment, dead end, decision — run the `hypergraph-record` skill: one record
    node, causally parented, with a `## State Impact` section (SPEC I1/I2). Work
    that exists only in the working tree is invisible to the project's memory; the
-   checker cannot detect it. New directions with no work yet are recorded too, as
-   decision nodes (SPEC: Forward work).
-3. **Never write state nodes** (SPEC I3). Declare impacts; only the
+   checker cannot detect it — though `hypergraph check --since <ref>` catches it
+   across a branch, and this repo's PR workflow runs it. New directions with no work
+   yet are recorded too, as decision nodes (SPEC: Forward work).
+3. **Record on any branch; reconcile only on `main`.** Record nodes are one file each
+   and merge without conflict, so recording is always safe anywhere. The state graph
+   has one writer, so a reconcile on a side branch makes two (SPEC: Collaboration).
+4. **Never write state nodes** (SPEC I3). Declare impacts; only the
    `hypergraph-reconcile` skill folds them into the state graph. Never hand-edit
    `STATE.md` — it is generated.
-4. **Verify before finishing:**
+5. **Verify before finishing:**
    ```bash
    uv run pytest tests/
-   uv run tools/hypergraph.py check --record .hypergraph/cache/record.json \
-       --state .hypergraph/cache/state.json --config .hypergraph/config.yml
+   uv run tools/hypergraph.py sync --config .hypergraph/config.yml
    ```
+   `sync` re-exports (so `check` sees the current graph, which matters most right
+   after a merge), regenerates STATE.md, checks, and publishes.
 
 ## Map
 

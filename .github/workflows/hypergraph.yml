@@ -1,0 +1,56 @@
+# This repo dogfoods its own PR check.
+#
+# It differs from `templates/github-actions/hypergraph-check.yml` in one way: it runs
+# the CLI out of this checkout (`uv run tools/hypergraph.py`) rather than installing
+# `hypergraph-protocol` from PyPI, because the version under test is the one in the
+# working tree — installing the published one would test the previous release.
+#
+# The publish workflow is deliberately *not* installed here: this project's mirror is
+# still published from the maintainer's machine, and a publish job without a
+# FLYWHEEL_API_KEY secret would fail on every merge.
+
+name: hypergraph
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Tests
+        run: uv run pytest tests/ -m "not live"
+
+      - name: Export the graph from the node files
+        run: uv run tools/hypergraph.py export --config .hypergraph/config.yml
+
+      - name: Check invariants
+        run: |
+          uv run tools/hypergraph.py check \
+            --record .hypergraph/cache/record.json \
+            --state .hypergraph/cache/state.json \
+            --config .hypergraph/config.yml
+
+      - name: Check that this branch recorded its work
+        if: github.event_name == 'pull_request'
+        run: |
+          uv run tools/hypergraph.py check \
+            --record .hypergraph/cache/record.json \
+            --state .hypergraph/cache/state.json \
+            --config .hypergraph/config.yml \
+            --since "origin/${{ github.base_ref }}"
+
+      - name: STATE.md is generated, so it must match the graph
+        run: |
+          uv run tools/hypergraph.py render --state .hypergraph/cache/state.json \
+            --config .hypergraph/config.yml --output STATE.md
+          git diff --exit-code -- STATE.md \
+            || { echo "::error::STATE.md is stale — run 'hypergraph sync' and commit"; exit 1; }
