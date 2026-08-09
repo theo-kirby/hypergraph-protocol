@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from graph_fixtures import mirror_export_of, pushed_graph
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tools" / "fixtures"
 CLEAN = FIXTURES / "clean"
@@ -357,38 +359,6 @@ def test_push_flags_a_record_body_that_changed_after_being_pushed(tmp_path, caps
 
 
 # ------------------------------------------------------------ mirror verification
-
-def pushed_graph(tmp_path):
-    """LOCAL graph copied, planned, and stamped as if the mirror push ran."""
-    graph_dir = tmp_path / "graph"
-    graph_dir.mkdir()
-    for kind in ("record", "state"):
-        target = graph_dir / kind
-        target.mkdir()
-        for src in (LOCAL / "graph" / kind).glob("*.md"):
-            (target / src.name).write_text(src.read_text())
-    plan = hg.push_plan(graph_dir)
-    results = {"results": [{"slug": op["slug"],
-                            "flywheel": {"node_id": f"fw-{op['slug']}",
-                                         "slug_name": f"wild-river-{op['slug'][-4:]}",
-                                         "revision": 1},
-                            "content_sha256": op["content_sha256"]} for op in plan["ops"]]}
-    hg.apply_push_results(graph_dir, results)
-    return graph_dir
-
-
-def mirror_export_of(graph_dir):
-    """The export a faithful mirror would produce for pushed_graph."""
-    nodes = []
-    for kind in ("record", "state"):
-        for node in hg.load_local_nodes(graph_dir, kind).values():
-            fw = node.meta["flywheel"]
-            nodes.append({"node_id": fw["node_id"], "slug_name": fw["slug"],
-                          "title": node.title, "content": node.content,
-                          "summary": str(node.meta.get("summary") or ""),
-                          "revision": fw["revision"]})
-    return {"version": 1, "nodes": nodes}
-
 
 def test_verify_clean_mirror_has_no_drift(tmp_path):
     graph_dir = pushed_graph(tmp_path)

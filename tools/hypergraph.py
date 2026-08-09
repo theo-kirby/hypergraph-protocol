@@ -35,13 +35,23 @@ The local (git-native) backend keeps both graphs as committed markdown files und
     hypergraph.py import --record record.json --state state.json [--graph-dir D]
     hypergraph.py new record|state --title T --body body.md ...
     hypergraph.py update SLUG --body new.md --expect <sha256> --reconcile
-    hypergraph.py push --plan [-o plan.json] | --record-result results.json
-    hypergraph.py push --verify --against export.json | --legend [-o legend.md]
-    hypergraph.py skills install [--user | --target DIR]
+    hypergraph.py skills install [--user | --link | --target DIR]
 
-Mirroring to Flywheel stays out of this file: `push --plan` emits an ordered plan of
-MCP calls for the skill layer to execute, and `push --record-result` folds the
-returned ids back into the node files. The tool itself never touches the network.
+**These commands never touch the network.** No credential is resolved, no binary is
+looked for, no network module is imported — the graphs are files, and that is the
+whole storage story (SPEC: Storage).
+
+One optional feature does reach out, and only when the config declares a `mirror:`
+(backend/mirror.md). It publishes the committed node files to a hosted graph the
+project owns, one-way, with the repo staying canonical:
+
+    hypergraph.py push [--dry-run] [--batch N] [--limit N] [--verify]
+    hypergraph.py sync                     # export → render → check → push
+    hypergraph.py mirror doctor | roots [--mint] | pull --node-id … --out-dir …
+
+`push` on a project with no mirror configured exits **0** as a no-op, so callers
+never have to test the config first. `push --plan` stays network-free and emits the
+ordered plan for anyone without the CLI binary.
 """
 from __future__ import annotations
 
@@ -1900,16 +1910,22 @@ def lineage_content(graph_dir: Path, config: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def apply_push_results(graph_dir: Path, results: object) -> int:
-    """Fold Flywheel's returned ids/revisions back into each node's frontmatter."""
+def apply_push_results(graph_dir: Path, results: object, *,
+                       nodes: dict | None = None) -> int:
+    """Fold the mirror's returned ids/revisions back into each node's frontmatter.
+
+    `nodes` lets a caller pass an already-loaded node map. Results are folded every
+    `--batch` nodes, so without it a 2000-node push reloads the whole graph 100
+    times."""
     if isinstance(results, dict):
         results = results.get("results", results.get("ops", []))
     if not isinstance(results, list):
         raise LocalGraphError("results file must be a list, or an object with a `results` list")
-    nodes = {}
-    for kind in GRAPH_KINDS:
-        for slug, node in load_local_nodes(graph_dir, kind, missing_ok=True).items():
-            nodes[slug] = node
+    if nodes is None:
+        nodes = {}
+        for kind in GRAPH_KINDS:
+            for slug, node in load_local_nodes(graph_dir, kind, missing_ok=True).items():
+                nodes[slug] = node
     applied = 0
     for entry in results:
         if not isinstance(entry, dict):
@@ -2011,24 +2027,973 @@ def cmd_skills(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- mirror errors
+# Everything below is the optional one-way mirror (backend/mirror.md). It is
+# reachable only from `push` / `sync` / `mirror`, and only when the config declares
+# a mirror — `check`, `render`, `viz`, `export`, `import`, `new`, `update` and
+# `skills` must never resolve a credential, look for a binary, or import a network
+# module. That is why `time`, `urllib` and `os` are imported lazily inside the
+# methods that need them, matching the deferred `import yaml` above.
+
+class MirrorError(LocalGraphError):
+    """Anything wrong on the mirror path.
+
+    Subclasses LocalGraphError, so main()'s existing handler renders every one of
+    these as `error: <one line>` and exits 2 with no extra plumbing."""
+
+
+class MirrorUnavailable(MirrorError):
+    """No usable transport: the binary is absent, or no credentials exist."""
+
+
+class MirrorAuthError(MirrorError):
+    """401/403. Aborts before any node file is stamped — a key that can read but not
+    write must not leave the graph half-pushed."""
+
+
+class MirrorConflict(MirrorError):
+    """409. Never blind-retried: under SPEC I3 there is one writer, so a conflict is
+    evidence that something else wrote."""
+
+
+class MirrorRateLimited(MirrorError):
+    """429. Carries the server's Retry-After when it supplied one."""
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+@dataclass
+class MirrorNode:
+    """One node as the host returned it. Constructed only through `from_raw`."""
+    node_id: str
+    slug: str
+    title: str
+    content: str
+    summary: str
+    revision: int | None
+    can_write: bool | None = None
+    is_owner: bool | None = None
+
+    @property
+    def sha256(self) -> str:
+        return body_sha256(self.content)
+
+    @staticmethod
+    def _bool(value: object) -> bool | None:
+        # the CLI stringifies booleans in JSON output ("True"/"False")
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in ("true", "false"):
+            return value.lower() == "true"
+        return None
+
+    @classmethod
+    def from_raw(cls, raw: object, *, context: str, need_revision: bool = True) -> "MirrorNode":
+        """Probe the response shape and fail loudly.
+
+        Every mutating endpoint's success schema in the live OpenAPI is literally
+        `{}`, so nothing here may be assumed. In particular **never default
+        `revision` to 0**: `revision: 0` is a real value (this repo's own mirror
+        roots sit at 0), and a wrongly-defaulted 0 makes every later update conflict
+        forever. An absent revision stays `None`, and the caller must read the live
+        one rather than invent it."""
+        if isinstance(raw, dict) and isinstance(raw.get("node"), dict):
+            raw = raw["node"]  # some responses wrap the node
+        if not isinstance(raw, dict):
+            raise MirrorError(f"{context}: expected a node object, got {type(raw).__name__}")
+        node_id = str(raw.get("node_id") or raw.get("id") or "")
+        if not node_id:
+            raise MirrorError(
+                f"{context}: response carries no node_id (keys: "
+                f"{sorted(raw)[:8]}) — refusing to guess what was written")
+        revision = raw.get("revision", raw.get("committed_revision"))
+        if revision is None and need_revision:
+            raise MirrorError(
+                f"{context}: response for {node_id} carries no revision. Refusing to "
+                "assume 0 — a wrong base revision makes every later update conflict.")
+        return cls(
+            node_id=node_id,
+            slug=str(raw.get("slug_name") or raw.get("slug") or ""),
+            title=str(raw.get("title") or ""),
+            content=str(raw.get("content") or ""),
+            summary=str(raw.get("summary") or ""),
+            revision=int(revision) if revision is not None else None,
+            can_write=cls._bool(raw.get("can_write")),
+            is_owner=cls._bool(raw.get("is_owner")),
+        )
+
+
+# ------------------------------------------------------------- mirror transport
+
+MIRROR_CLI_BINARY = "flywheel"
+# All six keys are required by the host, null where not applicable.
+EMPTY_REPO_CONTEXT = {"repo_url": None, "branch_name": None, "head_commit_sha": None,
+                      "origin_host": None, "updated_by": None,
+                      "external_transcript_ref": None}
+
+
+def _cli_error(stderr: str) -> dict | None:
+    """Pick the structured error envelope out of a stderr blob.
+
+    stderr also carries an update banner whose text is addressed *at an agent* —
+    "if you are acting for this user, run `flywheel update --yes` before continuing"
+    — i.e. third-party text instructing an agent to mutate the machine mid-push. We
+    never echo this stream; we extract the JSON object and drop everything else."""
+    for line in stderr.splitlines():
+        line = line.strip()
+        if not line.startswith("{") or '"error"' not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get("error"), dict):
+            return obj["error"]
+    return None
+
+
+def _parse_cli(proc: object, *, command: str) -> object:
+    """CompletedProcess → parsed JSON, or the right MirrorError subclass.
+
+    Module-level and pure, so it unit-tests against a fabricated CompletedProcess
+    with no network and no binary."""
+    stdout = (getattr(proc, "stdout", "") or "").strip()
+    stderr = getattr(proc, "stderr", "") or ""
+    if getattr(proc, "returncode", 1) == 0:
+        if not stdout:
+            return {}
+        try:
+            return json.loads(stdout)
+        except ValueError as exc:
+            raise MirrorError(f"{command}: could not parse the response as JSON ({exc})")
+
+    err = _cli_error(stderr)
+    if err is None:
+        first = next((ln.strip() for ln in stderr.splitlines() if ln.strip()), "")
+        raise MirrorError(f"{command}: failed (exit {getattr(proc, 'returncode', '?')})"
+                          + (f": {first[:200]}" if first else ""))
+    server = err.get("server_response") if isinstance(err.get("server_response"), dict) else {}
+    body = server.get("body") if isinstance(server.get("body"), dict) else {}
+    detail = body.get("detail")
+    status = server.get("status")
+    # message + server detail only — never the surrounding stream
+    message = str(err.get("message") or err.get("code") or "request failed")
+    if detail:
+        message = f"{message}: {detail}"
+    message = f"{command}: {message}"
+
+    if status in (401, 403):
+        raise MirrorAuthError(
+            f"{message}. The key authenticated but this operation was refused — check "
+            "it owns the mirror roots (`hypergraph mirror doctor`).")
+    if status == 409:
+        raise MirrorConflict(message)
+    if status == 429:
+        retry_after = body.get("retry_after") or server.get("retry_after")
+        try:
+            retry_after = float(retry_after) if retry_after is not None else None
+        except (TypeError, ValueError):
+            retry_after = None
+        raise MirrorRateLimited(message, retry_after)
+    raise MirrorError(message)
+
+
+class FlywheelCliTransport:
+    """Shells out to the `flywheel` CLI.
+
+    Preferred over REST because the CLI owns authentication — including OS-keychain
+    keys, which an in-process HTTP client cannot read at all — resolves the `/v1`
+    path segment absent from the configured base URL, and handles the undocumented
+    idempotency key. Keeps this file stdlib-only."""
+
+    name = "cli"
+
+    def __init__(self, run_dir: Path, binary: str = MIRROR_CLI_BINARY,
+                 env_profile: str | None = None):
+        self.binary = binary
+        self.env_profile = env_profile
+        self.run_dir = Path(run_dir)
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._payload_seq = 0
+
+    @staticmethod
+    def available(binary: str = MIRROR_CLI_BINARY) -> bool:
+        return shutil.which(binary) is not None
+
+    def version(self) -> str:
+        """Logged for the record, never acted on."""
+        try:
+            proc = subprocess.run([self.binary, "--version"], capture_output=True,
+                                  text=True, timeout=30)
+            return (proc.stdout or proc.stderr or "").strip().splitlines()[0][:60]
+        except (OSError, subprocess.SubprocessError, IndexError):
+            return "unknown"
+
+    def _run(self, command: str, *, payload: dict | None = None,
+             extra: list[str] | None = None, **flags) -> object:
+        argv = [self.binary, command, "--format=json"]
+        if self.env_profile:
+            argv += [f"--env={self.env_profile}"]
+        for key, value in flags.items():
+            if value is None:
+                continue
+            argv += [f"--{key}={value}"]
+        if payload is not None:
+            # Always a file, never inline: node bodies are multi-KB, argv limits are
+            # platform-dependent, and a leftover payload is free forensics on a crash.
+            self._payload_seq += 1
+            path = self.run_dir / f"payload-{self._payload_seq:05d}.json"
+            path.write_text(json.dumps(payload, ensure_ascii=False))
+            argv += [f"--payload_json=@{path}"]
+        argv += extra or []
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+        except FileNotFoundError:
+            raise MirrorUnavailable(
+                f"`{self.binary}` is not on PATH. Install it (npm i -g "
+                "@paradigma-inc/flywheel) or run with --transport rest, which needs "
+                "FLYWHEEL_BASE_URL and FLYWHEEL_API_KEY in the environment.")
+        except subprocess.TimeoutExpired:
+            raise MirrorError(f"{command}: timed out after 600s")
+        return _parse_cli(proc, command=command)
+
+    # --- the seven operations ------------------------------------------------
+    def auth_status(self) -> dict:
+        raw = self._run("auth:status")
+        return raw if isinstance(raw, dict) else {}
+
+    def get_node(self, node_id: str) -> MirrorNode:
+        raw = self._run("nodes:get", node_id=node_id, projection="core")
+        return MirrorNode.from_raw(raw, context=f"nodes:get {node_id}")
+
+    def children(self, node_id: str):
+        """Yield every direct child, paging to exhaustion.
+
+        The cursor loop is not optional: a record root with more than one page of
+        children silently misses an existing legend node without it, and then
+        creates a second one on every push (backend/mirror.md)."""
+        after = None
+        seen = 0
+        while True:
+            raw = self._run("nodes:children", node_id=node_id, first=500,
+                            projection="core", after=after)
+            if not isinstance(raw, dict):
+                raise MirrorError(f"nodes:children {node_id}: unexpected response shape")
+            edges = raw.get("edges") or []
+            for edge in edges:
+                node = edge.get("node") if isinstance(edge, dict) else None
+                if isinstance(node, dict):
+                    seen += 1
+                    yield MirrorNode.from_raw(node, context=f"nodes:children {node_id}",
+                                              need_revision=False)
+            page = raw.get("page_info") if isinstance(raw.get("page_info"), dict) else {}
+            if MirrorNode._bool(page.get("has_next_page")) is not True:
+                return
+            after = page.get("end_cursor")
+            if not after:
+                return
+
+    def commit_new(self, *, parent_ids: list[str], title: str, content: str,
+                   summary: str = "", repo_context: dict | None = None,
+                   temp_id: str | None = None) -> MirrorNode:
+        payload = {
+            "local_temp_node_id": temp_id or f"hypergraph-{uuid.uuid4()}",
+            "parent_ids": [p for p in parent_ids if p],
+            "staged_payload": {
+                "title": title, "content": content, "summary": summary,
+                "repo_context": dict(repo_context or EMPTY_REPO_CONTEXT),
+            },
+        }
+        raw = self._run("nodes:commit-new", payload=payload)
+        return MirrorNode.from_raw(raw, context="nodes:commit-new", need_revision=False)
+
+    def commit(self, *, node_id: str, base_revision: int, title: str, content: str,
+               summary: str = "", repo_context: dict | None = None) -> MirrorNode:
+        """acquire → commit → release, with the release in a `finally`.
+
+        The whole lease dance lives here so 409 semantics exist in exactly one
+        place."""
+        session = f"hypergraph-{uuid.uuid4()}"
+        self._run("nodes:stage:lease:acquire", node_id=node_id,
+                  stage_session_id=session, base_committed_revision=base_revision)
+        try:
+            raw = self._run("nodes:commit", node_id=node_id, payload={
+                "stage_session_id": session,
+                "base_committed_revision": base_revision,
+                "staged_payload": {
+                    "title": title, "content": content, "summary": summary,
+                    "repo_context": dict(repo_context or EMPTY_REPO_CONTEXT),
+                },
+            })
+        finally:
+            try:
+                self._run("nodes:stage:lease:release", node_id=node_id,
+                          stage_session_id=session)
+            except MirrorError:
+                pass  # the commit's outcome is what matters; leases expire on their own
+        return MirrorNode.from_raw(raw, context=f"nodes:commit {node_id}",
+                                   need_revision=False)
+
+    def export_subgraph(self, node_ids: list[str], out: Path, *,
+                        include_descendants: bool = True, max_nodes: int = 5000) -> Path:
+        out = Path(out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        self._run("export:subgraph", node_ids=",".join(node_ids),
+                  include_descendants="true" if include_descendants else "false",
+                  max_nodes=max_nodes, extra=[f"--out={out}"])
+        if not out.exists():
+            raise MirrorError(f"export:subgraph wrote no file at {out}")
+        return out
+
+    def delete_node(self, node_id: str, *, mode: str = "detach_shared") -> None:
+        self._run("nodes:delete", node_id=node_id, delete_mode=mode, extra=["--yes"])
+
+
+class FlywheelRestTransport(FlywheelCliTransport):
+    """Explicit fallback for machines without the npm binary.
+
+    Same seven operations over `urllib`. It cannot read OS-keychain keys, so it
+    requires FLYWHEEL_BASE_URL and FLYWHEEL_API_KEY in the environment."""
+
+    name = "rest"
+
+    def __init__(self, run_dir: Path, base_url: str, api_key: str):
+        self.run_dir = Path(run_dir)
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self._payload_seq = 0
+
+    @staticmethod
+    def from_env(run_dir: Path) -> "FlywheelRestTransport":
+        import os  # deferred: nothing off the mirror path reads the environment
+        base = os.environ.get("FLYWHEEL_BASE_URL", "").strip()
+        key = os.environ.get("FLYWHEEL_API_KEY", "").strip()
+        if not base or not key:
+            raise MirrorUnavailable(
+                "--transport rest needs FLYWHEEL_BASE_URL and FLYWHEEL_API_KEY in the "
+                "environment (a key held only in the OS keychain is unreadable here — "
+                "use the CLI transport for that).")
+        return FlywheelRestTransport(run_dir, base, key)
+
+    def version(self) -> str:
+        return f"rest {self.base_url}"
+
+    def _request(self, method: str, path: str, *, body: dict | None = None,
+                 query: dict | None = None) -> object:
+        import urllib.error  # deferred: keeps the non-mirror path network-module-free
+        import urllib.parse
+        import urllib.request
+
+        # the configured base URL ends at /api; the runtime lives under /v1
+        url = f"{self.base_url}/v1{path}"
+        if query:
+            clean = {k: v for k, v in query.items() if v is not None}
+            if clean:
+                url += "?" + urllib.parse.urlencode(clean)
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method, headers={
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Idempotency-Key": str(uuid.uuid4()),
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                raw = resp.read().decode() or "{}"
+            return json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                payload = json.loads(exc.read().decode())
+                detail = str(payload.get("detail") or "")
+            except Exception:
+                pass
+            message = f"{method} {path}: HTTP {exc.code}" + (f": {detail}" if detail else "")
+            if exc.code in (401, 403):
+                raise MirrorAuthError(message)
+            if exc.code == 409:
+                raise MirrorConflict(message)
+            if exc.code == 429:
+                retry = exc.headers.get("Retry-After") if exc.headers else None
+                try:
+                    retry = float(retry) if retry else None
+                except ValueError:
+                    retry = None
+                raise MirrorRateLimited(message, retry)
+            raise MirrorError(message)
+        except urllib.error.URLError as exc:
+            raise MirrorUnavailable(f"{method} {path}: {exc.reason}")
+
+    def auth_status(self) -> dict:
+        raw = self._request("GET", "/auth/status")
+        return raw if isinstance(raw, dict) else {}
+
+    def get_node(self, node_id: str) -> MirrorNode:
+        raw = self._request("GET", f"/nodes/{node_id}", query={"projection": "core"})
+        return MirrorNode.from_raw(raw, context=f"GET /nodes/{node_id}")
+
+    def children(self, node_id: str):
+        after = None
+        while True:
+            raw = self._request("GET", f"/nodes/{node_id}/children",
+                                query={"first": 500, "projection": "core", "after": after})
+            if not isinstance(raw, dict):
+                raise MirrorError(f"GET /nodes/{node_id}/children: unexpected shape")
+            for edge in raw.get("edges") or []:
+                node = edge.get("node") if isinstance(edge, dict) else None
+                if isinstance(node, dict):
+                    yield MirrorNode.from_raw(node, context="children", need_revision=False)
+            page = raw.get("page_info") if isinstance(raw.get("page_info"), dict) else {}
+            if MirrorNode._bool(page.get("has_next_page")) is not True:
+                return
+            after = page.get("end_cursor")
+            if not after:
+                return
+
+    def commit_new(self, *, parent_ids, title, content, summary="",
+                   repo_context=None, temp_id=None) -> MirrorNode:
+        raw = self._request("POST", "/nodes/commit-new", body={
+            "local_temp_node_id": temp_id or f"hypergraph-{uuid.uuid4()}",
+            "parent_ids": [p for p in parent_ids if p],
+            "staged_payload": {"title": title, "content": content, "summary": summary,
+                               "repo_context": dict(repo_context or EMPTY_REPO_CONTEXT)},
+        })
+        return MirrorNode.from_raw(raw, context="POST /nodes/commit-new",
+                                   need_revision=False)
+
+    def commit(self, *, node_id, base_revision, title, content, summary="",
+               repo_context=None) -> MirrorNode:
+        session = f"hypergraph-{uuid.uuid4()}"
+        self._request("POST", f"/nodes/{node_id}/stage/lease/acquire", body={
+            "stage_session_id": session, "base_committed_revision": base_revision})
+        try:
+            raw = self._request("POST", f"/nodes/{node_id}/commit", body={
+                "stage_session_id": session, "base_committed_revision": base_revision,
+                "staged_payload": {"title": title, "content": content,
+                                   "summary": summary,
+                                   "repo_context": dict(repo_context or EMPTY_REPO_CONTEXT)}})
+        finally:
+            try:
+                self._request("POST", f"/nodes/{node_id}/stage/lease/release",
+                              body={"stage_session_id": session})
+            except MirrorError:
+                pass
+        return MirrorNode.from_raw(raw, context=f"POST /nodes/{node_id}/commit",
+                                   need_revision=False)
+
+    def export_subgraph(self, node_ids, out, *, include_descendants=True,
+                        max_nodes=5000) -> Path:
+        raw = self._request("POST", "/export", body={
+            "node_ids": list(node_ids), "include_descendants": include_descendants,
+            "max_nodes": max_nodes})
+        out = Path(out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(raw, indent=2, ensure_ascii=False))
+        return out
+
+    def delete_node(self, node_id: str, *, mode: str = "detach_shared") -> None:
+        self._request("DELETE", f"/nodes/{node_id}", query={"delete_mode": mode})
+
+
+def make_transport(config: dict, *, run_dir: Path, prefer: str = "auto"):
+    """The single injection seam. Tests monkeypatch this, nothing else."""
+    profile = str((config.get("mirror_profile") or "")) or None
+    if prefer == "rest":
+        return FlywheelRestTransport.from_env(run_dir)
+    if prefer == "cli":
+        if not FlywheelCliTransport.available():
+            raise MirrorUnavailable(
+                f"`{MIRROR_CLI_BINARY}` is not on PATH (npm i -g @paradigma-inc/flywheel).")
+        return FlywheelCliTransport(run_dir, env_profile=profile)
+    if FlywheelCliTransport.available():
+        return FlywheelCliTransport(run_dir, env_profile=profile)
+    return FlywheelRestTransport.from_env(run_dir)
+
+
+# ---------------------------------------------------------------- crash journal
+
+class PushJournal:
+    """Local idempotency for mirror writes.
+
+    Duplicate mirror nodes are the only unrecoverable failure in this feature
+    (backend/local-adapter.md: duplicates cannot be cleanly merged), and the CLI
+    transport cannot inject an Idempotency-Key header — so idempotency is owned
+    here. An *intent* is written and fsynced **before** each request, a `done`
+    after it. On the next run, any intent without a `done` is resolved **by
+    looking**: page the intended parent's children and match title + body sha256.
+    Blind retry is never an option."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _append(self, entry: dict) -> None:
+        import os  # deferred: only the mirror path fsyncs
+        with self.path.open("a") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+
+    def entries(self) -> list[dict]:
+        if not self.path.exists():
+            return []
+        out = []
+        for line in self.path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict):
+                out.append(entry)
+        return out
+
+    def intent(self, op: dict, *, parent_id: str | None) -> str:
+        intent_id = str(uuid.uuid4())
+        self._append({"t": "intent", "id": intent_id, "op": op["op"],
+                      "slug": op["slug"], "graph": op["graph"], "title": op["title"],
+                      "content_sha256": op["content_sha256"], "parent_id": parent_id,
+                      "flywheel_node_id": op.get("flywheel_node_id"),
+                      "at": utc_now()})
+        return intent_id
+
+    def done(self, intent_id: str, *, slug: str, node: MirrorNode,
+             content_sha256: str) -> None:
+        self._append({"t": "done", "id": intent_id, "slug": slug,
+                      "flywheel": {"node_id": node.node_id, "slug_name": node.slug,
+                                   "revision": node.revision},
+                      "content_sha256": content_sha256, "pushed_at": utc_now()})
+
+    def abandon(self, intent_id: str, reason: str) -> None:
+        """The intended write demonstrably never landed; it is safe to replan."""
+        self._append({"t": "abandoned", "id": intent_id, "reason": reason,
+                      "at": utc_now()})
+
+    def pending(self) -> list[dict]:
+        settled = {e["id"] for e in self.entries()
+                   if e.get("t") in ("done", "abandoned") and e.get("id")}
+        return [e for e in self.entries()
+                if e.get("t") == "intent" and e.get("id") not in settled]
+
+    def results(self) -> list[dict]:
+        """Exactly the shape `apply_push_results` already eats."""
+        return [{"slug": e["slug"], "flywheel": e["flywheel"],
+                 "content_sha256": e.get("content_sha256"),
+                 "pushed_at": e.get("pushed_at")}
+                for e in self.entries() if e.get("t") == "done" and e.get("slug")]
+
+    def reconcile_pending(self, transport, *, out=print) -> int:
+        """Resolve every intent-without-done by looking, never by retrying."""
+        pending = self.pending()
+        if not pending:
+            return 0
+        out(f"push: {len(pending)} unfinished write(s) from a previous run — resolving "
+            "by inspection")
+        resolved = 0
+        for entry in pending:
+            slug = entry.get("slug")
+            if entry.get("op") == "update":
+                node_id = entry.get("flywheel_node_id")
+                if not node_id:
+                    self.abandon(entry["id"], "update intent carries no node id")
+                    continue
+                live = transport.get_node(node_id)
+                if live.sha256 == entry.get("content_sha256"):
+                    self.done(entry["id"], slug=slug, node=live,
+                              content_sha256=live.sha256)
+                    resolved += 1
+                    out(f"  {slug}: update had landed — adopting revision {live.revision}")
+                else:
+                    self.abandon(entry["id"], "update did not land")
+                    out(f"  {slug}: update never landed — will be replanned")
+                continue
+            parent_id = entry.get("parent_id")
+            if not parent_id:
+                self.abandon(entry["id"], "create intent carries no parent to search")
+                continue
+            match = None
+            for child in transport.children(parent_id):
+                if child.title == entry.get("title") \
+                        and child.sha256 == entry.get("content_sha256"):
+                    match = child
+                    break
+            if match is not None:
+                # the create landed and we crashed before recording it
+                live = transport.get_node(match.node_id)
+                self.done(entry["id"], slug=slug, node=live, content_sha256=live.sha256)
+                resolved += 1
+                out(f"  {slug}: create had landed as {live.node_id} — adopted, not repeated")
+            else:
+                self.abandon(entry["id"], "create never landed")
+                out(f"  {slug}: create never landed — will be replanned")
+        return resolved
+
+
+# ----------------------------------------------------------------------- pacing
+
+class Pacer:
+    """A minimum interval between writes, not a token bucket.
+
+    A burst bucket spends itself instantly and then eats 429s; there is exactly one
+    writer by protocol, so smoothing strictly dominates bursting. 100/min against
+    the host's 120/min ceiling leaves headroom for the legend and lineage writes."""
+
+    def __init__(self, per_minute: float = 100.0, *, sleep=None, clock=None):
+        import time  # deferred: nothing off the mirror path needs a clock
+        self.sleep = sleep or time.sleep
+        self.clock = clock or time.monotonic
+        self.interval = 60.0 / per_minute if per_minute > 0 else 0.0
+        self._last: float | None = None
+
+    def wait(self) -> None:
+        if self.interval <= 0:
+            return
+        now = self.clock()
+        if self._last is not None:
+            gap = self.interval - (now - self._last)
+            if gap > 0:
+                self.sleep(gap)
+        self._last = self.clock()
+
+    def slow_down(self, factor: float = 2.0) -> None:
+        """The server disagrees with our model of the budget — believe the server."""
+        self.interval = max(self.interval, 0.05) * factor
+
+    def backoff(self, attempt: int, retry_after: float | None) -> float:
+        delay = retry_after if retry_after is not None else min(2.0 ** attempt, 60.0)
+        delay = min(float(delay), 120.0)
+        # deterministic jitter: no Math.random-style nondeterminism in tests
+        self.sleep(delay)
+        return delay
+
+
+MIRROR_MAX_ATTEMPTS = 4  # the CLI already retries 3x internally → 12 real requests
+
+
+def mirror_call(fn, *, pacer: Pacer, what: str, retry_conflict=None, out=print):
+    """Run one mirror write with pacing, 429 backoff, and no blind 409 retry."""
+    last: Exception | None = None
+    for attempt in range(MIRROR_MAX_ATTEMPTS):
+        pacer.wait()
+        try:
+            return fn()
+        except MirrorRateLimited as exc:
+            last = exc
+            pacer.slow_down()
+            if attempt == MIRROR_MAX_ATTEMPTS - 1:
+                break
+            delay = pacer.backoff(attempt, exc.retry_after)
+            out(f"  rate limited on {what}; slowing down and retrying in {delay:.0f}s")
+        except MirrorConflict as exc:
+            # One structured re-read, then abort. Under I3 there is one writer.
+            if retry_conflict is not None:
+                resolved = retry_conflict(exc)
+                if resolved is not None:
+                    return resolved
+            raise MirrorConflict(
+                f"{what}: {exc}. The mirror moved under us, which means a second "
+                "writer touched it — SPEC I3 says reconcile is the only writer. "
+                "Investigate before re-pushing; local files stay canonical.")
+    raise last if last else MirrorError(f"{what}: exhausted retries")
+
+# --------------------------------------------------------------- push executor
+
+def mirror_configured(config: dict) -> bool:
+    """A project that never asked for a mirror never enters this path.
+
+    This is what lets the reconcile skill say `hypergraph push` unconditionally
+    instead of making the agent evaluate a config test."""
+    return bool(config.get("mirror"))
+
+
+def mirror_root_ids(config: dict) -> dict:
+    """{kind: mirror root node_id}, with the archive assertion made mechanical.
+
+    Falls back to the configured record/state roots, which is right for a re-homed
+    project that mirrors to the graph it was imported from (this repo has no
+    `mirror_roots:` and must still push)."""
+    roots: dict[str, str] = {}
+    configured = config.get("mirror_roots") or {}
+    for kind in GRAPH_KINDS:
+        node_id = ""
+        entry = configured.get(kind) if isinstance(configured, dict) else None
+        if isinstance(entry, dict):
+            node_id = str(entry.get("node_id") or "")
+        elif isinstance(entry, str):
+            node_id = entry
+        if not node_id:
+            fallback = config.get(f"{kind}_root") or {}
+            if isinstance(fallback, dict):
+                node_id = str(fallback.get("node_id") or "")
+        if not node_id:
+            raise MirrorError(
+                f"no mirror root for the {kind} graph — set `mirror_roots.{kind}.node_id` "
+                f"in the config (mint them with `hypergraph mirror roots --mint`)")
+        roots[kind] = node_id
+
+    archive_ids = {str(r.get("node_id")) for r in (config.get("archive") or {}).get("roots", [])
+                   if isinstance(r, dict) and r.get("node_id")}
+    clash = archive_ids & set(roots.values())
+    if clash:
+        raise MirrorError(
+            f"mirror root {sorted(clash)[0]} is also an `archive:` root. The archive is "
+            "frozen and this project never writes to it; splicing it in makes "
+            "`push --verify` pass while the mirror holds almost none of the graph "
+            "(backend/mirror.md).")
+    return roots
+
+
+def _repo_context_for(node: LocalNode) -> dict:
+    """`## Repo` lines → the host's repo_context. All six keys, null where unknown."""
+    ctx = dict(EMPTY_REPO_CONTEXT)
+    for line in node.content.splitlines():
+        m = re.match(r"^-\s*(repo|branch|commit):\s*(.+?)\s*$", line)
+        if not m:
+            continue
+        key = {"repo": "repo_url", "branch": "branch_name", "commit": "head_commit_sha"}[m.group(1)]
+        value = m.group(2).strip()
+        if value and value.lower() not in ("none", "n/a", "-"):
+            ctx[key] = value
+    return ctx
+
+
+def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJournal,
+                 pacer: Pacer, batch: int = 20, limit: int | None = None,
+                 dry_run: bool = False, do_legend: bool = True, out=print) -> dict:
+    """Plan → execute → fold, resumable at every point.
+
+    `push_plan()` is a pure diff against each file's `flywheel:` frontmatter, so it
+    *is* the idempotent resume primitive: everything already stamped is invisible to
+    the next plan. Nothing here reimplements it."""
+    roots = mirror_root_ids(config)
+
+    # 1. resolve anything a previous run left ambiguous, before planning new work
+    if journal.reconcile_pending(transport, out=out):
+        applied = apply_push_results(graph_dir, journal.results())
+        out(f"push: folded {applied} recovered write(s) into the node files")
+
+    # 2. plan *after* the fold — the fold changed what the plan is a diff against
+    plan = push_plan(graph_dir)
+    if plan["violations"]:
+        for violation in plan["violations"]:
+            out(f"VIOLATION {violation}")
+        raise MirrorError(
+            "refusing to push: the record graph is append-only and the plan carries "
+            f"{len(plan['violations'])} body change(s) to already-pushed record "
+            "node(s). Fix the local edit — a correction is a new child node, not an "
+            "edit (SPEC: record nodes are immutable).")
+
+    ops = plan["ops"]
+    if limit is not None:
+        ops = ops[:limit]
+    creates = sum(1 for o in ops if o["op"] == "create")
+    out(f"push: {creates} create(s), {len(ops) - creates} update(s)")
+    if not ops:
+        out("push: mirror already matches the node files — nothing to do")
+        return {"created": 0, "updated": 0, "ops": 0}
+
+    if dry_run:
+        for op in ops:
+            out(f"  would {op['op']:6} {op['graph']:6} {op['slug']}")
+        return {"created": creates, "updated": len(ops) - creates, "ops": len(ops),
+                "dry_run": True}
+
+    nodes = {}
+    for kind in GRAPH_KINDS:
+        nodes.update(load_local_nodes(graph_dir, kind, missing_ok=True))
+
+    minted: dict[str, str] = {}   # local slug → mirror node_id, for null-parent substitution
+    pending_results: list[dict] = []
+    created = updated = 0
+
+    def settled(node: MirrorNode, what: str) -> MirrorNode:
+        """A write's response may omit the revision; read the live one rather than
+        stamp a guess. `revision: 0` is real, so a default would poison every later
+        update with a permanent conflict."""
+        if node.revision is None:
+            node = transport.get_node(node.node_id)
+        if node.revision is None:
+            raise MirrorError(
+                f"{what}: the mirror never reported a revision for {node.node_id} — "
+                "refusing to stamp a guess into the node file")
+        return node
+
+    def flush() -> None:
+        nonlocal pending_results
+        if not pending_results:
+            return
+        apply_push_results(graph_dir, pending_results, nodes=nodes)
+        out(f"  recorded {len(pending_results)} result(s) into the node files")
+        pending_results = []
+
+    for op in ops:
+        slug = op["slug"]
+        local = nodes.get(slug)
+        repo_ctx = _repo_context_for(local) if local is not None else None
+
+        if op["op"] == "create":
+            parent_ids = []
+            for parent_slug, parent_id in zip(op["parent_slugs"], op["parent_flywheel_ids"]):
+                if parent_id:
+                    parent_ids.append(str(parent_id))
+                    continue
+                # push_plan orders parents first, so the minted id must already exist
+                substituted = minted.get(parent_slug)
+                if not substituted:
+                    raise MirrorError(
+                        f"{slug}: parent `{parent_slug}` has no mirror id yet. The plan "
+                        "is ordered parents-first, so this cannot happen — refusing to "
+                        "guess a parent and silently reshape the mirror.")
+                parent_ids.append(substituted)
+            if not parent_ids:
+                parent_ids = [roots[op["graph"]]]   # a local root hangs off the mirror root
+
+            intent = journal.intent(op, parent_id=parent_ids[0])
+            node = mirror_call(
+                lambda: transport.commit_new(
+                    parent_ids=parent_ids, title=op["title"], content=op["content"],
+                    summary=op["summary"], repo_context=repo_ctx),
+                pacer=pacer, what=f"create {slug}", out=out)
+            node = settled(node, f"create {slug}")
+            journal.done(intent, slug=slug, node=node, content_sha256=op["content_sha256"])
+            minted[slug] = node.node_id
+            created += 1
+        else:
+            node_id = str(op["flywheel_node_id"])
+            base = op.get("base_revision")
+            if base is None:
+                # imported graphs carry no revision — read the live one, never assume 0
+                base = transport.get_node(node_id).revision
+            intent = journal.intent(op, parent_id=None)
+
+            def _resolved(_exc, _op=op, _node_id=node_id):
+                live = transport.get_node(_node_id)
+                return live if live.sha256 == _op["content_sha256"] else None
+
+            node = mirror_call(
+                lambda: transport.commit(
+                    node_id=node_id, base_revision=int(base), title=op["title"],
+                    content=op["content"], summary=op["summary"], repo_context=repo_ctx),
+                pacer=pacer, what=f"update {slug}", retry_conflict=_resolved, out=out)
+            node = settled(node, f"update {slug}")
+            journal.done(intent, slug=slug, node=node, content_sha256=op["content_sha256"])
+            updated += 1
+
+        pending_results.append({
+            "slug": slug,
+            "flywheel": {"node_id": node.node_id, "slug_name": node.slug,
+                         "revision": node.revision},
+            "content_sha256": op["content_sha256"]})
+        if len(pending_results) >= batch:
+            flush()
+    flush()
+
+    if do_legend:
+        push_legend(graph_dir, roots["record"], transport, pacer=pacer, out=out)
+    return {"created": created, "updated": updated, "ops": len(ops)}
+
+
+def push_legend(graph_dir: Path, record_root_id: str, transport, *, pacer: Pacer,
+                out=print) -> str:
+    """Create or update the mirror-only slug legend under the mirror record root.
+
+    Two traps, both closed here: children are paged to exhaustion (a root with more
+    than one page silently misses the legend and creates a second one on every push,
+    which is a duplicate-node generator), and the body hash decides whether the
+    write happens at all."""
+    body = legend_content(graph_dir)
+    existing = None
+    for child in transport.children(record_root_id):
+        if child.title == LEGEND_TITLE:
+            existing = child
+            break
+    if existing is None:
+        mirror_call(lambda: transport.commit_new(
+            parent_ids=[record_root_id], title=LEGEND_TITLE, content=body,
+            summary="Mirror-only: maps local slugs to the slugs this mirror minted."),
+            pacer=pacer, what="create legend", out=out)
+        out("  legend: created")
+        return "created"
+    live = transport.get_node(existing.node_id)
+    if live.sha256 == body_sha256(body):
+        out("  legend: unchanged")
+        return "unchanged"
+    mirror_call(lambda: transport.commit(
+        node_id=live.node_id, base_revision=live.revision, title=LEGEND_TITLE,
+        content=body,
+        summary="Mirror-only: maps local slugs to the slugs this mirror minted."),
+        pacer=pacer, what="update legend", out=out)
+    out("  legend: updated")
+    return "updated"
+
+
+def push_lineage(graph_dir: Path, config: dict, record_root_id: str, transport, *,
+                 pacer: Pacer, out=print) -> str:
+    """Write the archive-lineage body onto the mirror record root (adopted projects)."""
+    body = lineage_content(graph_dir, config)
+    live = transport.get_node(record_root_id)
+    if live.sha256 == body_sha256(body):
+        out("  lineage: unchanged")
+        return "unchanged"
+    mirror_call(lambda: transport.commit(
+        node_id=record_root_id, base_revision=live.revision, title=live.title,
+        content=body, summary=live.summary), pacer=pacer, what="lineage", out=out)
+    out("  lineage: updated")
+    return "updated"
+
+
+def verify_against_mirror(graph_dir: Path, config: dict, transport, *,
+                          cache_dir: Path, out=print) -> Report:
+    """Export this project's own mirror roots and diff them against the node files."""
+    roots = mirror_root_ids(config)   # also asserts no archive root is spliced in
+    export = transport.export_subgraph(list(roots.values()),
+                                       cache_dir / "mirror-verify.json")
+    data = json.loads(Path(export).read_text())
+    if isinstance(data, dict) and data.get("truncated"):
+        raise MirrorError(
+            "the mirror export was truncated at max_nodes — every node past the cut "
+            "would read as drift. Raise the bound rather than trusting this result.")
+    exempt = set(roots.values())
+    exempt |= {str(v.get("node_id"))
+               for v in (config.get("mirror_roots") or {}).values()
+               if isinstance(v, dict) and v.get("node_id")}
+    report = verify_mirror(graph_dir, export, exempt)
+    for finding in report.violations():
+        out(f"DRIFT {finding}")
+    out(f"push --verify: {len(report.violations())} drift finding(s)")
+    return report
+
+# -------------------------------------------------------------- mirror plumbing
+
+def mirror_paths(config: dict, args: argparse.Namespace) -> tuple[Path, Path, Path]:
+    """(cache_dir, journal path, transport run dir) — all under the gitignored cache."""
+    cache_dir = Path(config.get("cache_dir") or DEFAULT_CACHE_DIR)
+    journal = Path(getattr(args, "journal", None) or cache_dir / "push-journal.jsonl")
+    return cache_dir, journal, cache_dir / "push-run"
+
+
+def mirror_session(config: dict, args: argparse.Namespace):
+    """Build (transport, journal, pacer). The one place the mirror path starts."""
+    cache_dir, journal_path, run_dir = mirror_paths(config, args)
+    transport = make_transport(config, run_dir=run_dir,
+                               prefer=getattr(args, "transport", "auto") or "auto")
+    pacer = Pacer(float(getattr(args, "rate", None) or 100.0))
+    return transport, PushJournal(journal_path), pacer, cache_dir
+
+
 def cmd_push(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+
+    # --- the offline modes, unchanged: plan / record-result / legend / lineage ---
     if args.record_result:
         count = apply_push_results(graph_dir, json.loads(Path(args.record_result).read_text()))
-        print(f"push: stamped Flywheel identity onto {count} node file(s)")
+        print(f"push: stamped mirror identity onto {count} node file(s)")
         return 0
-    if args.verify:
-        if not args.against:
-            raise LocalGraphError("push --verify needs --against <flywheel-export.json>")
-        exempt = {str(v.get("node_id"))
-                  for v in (config.get("mirror_roots") or {}).values()
-                  if isinstance(v, dict) and v.get("node_id")}
-        report = verify_mirror(graph_dir, args.against, exempt)
-        for f in report.violations():
-            print(f"DRIFT {f}")
-        print(f"\npush --verify: {len(report.violations())} drift finding(s)")
-        return 1 if report.violations() else 0
     if args.legend:
         text = legend_content(graph_dir)
         if args.output:
@@ -2045,24 +3010,362 @@ def cmd_push(args: argparse.Namespace) -> int:
         else:
             print(text, end="")
         return 0
-    plan = push_plan(graph_dir)
-    text = json.dumps(plan, indent=2, ensure_ascii=False) + "\n"
-    if args.output:
-        Path(args.output).write_text(text)
-        print(f"wrote {args.output}")
-    else:
-        print(text, end="")
+    if args.plan:
+        # Deliberately network-free: this is the fallback for anyone without the
+        # binary, and constructs no transport at all.
+        plan = push_plan(graph_dir)
+        text = json.dumps(plan, indent=2, ensure_ascii=False) + "\n"
+        if args.output:
+            Path(args.output).write_text(text)
+            print(f"wrote {args.output}")
+        else:
+            print(text, end="")
+        creates = sum(1 for o in plan["ops"] if o["op"] == "create")
+        print(f"push plan: {creates} create(s), {len(plan['ops']) - creates} update(s)",
+              file=sys.stderr)
+        if creates > PUSH_CREATE_WARN:
+            print(f"WARNING {creates} creates is one mirror write each — expect rate limits "
+                  f"(429 backoff) and record results in batches so a partial run stays "
+                  f"resumable. To mirror less history, split the adoption epoch later so "
+                  f"fewer nodes are imported (SPEC: Adoption epochs).", file=sys.stderr)
+        for violation in plan["violations"]:
+            print(f"VIOLATION {violation}", file=sys.stderr)
+        return 1 if plan["violations"] else 0
+
+    if args.verify and not args.against and not mirror_configured(config):
+        print("push --verify: no mirror configured — nothing to verify")
+        return 0
+    if args.verify and args.against:
+        # explicit export supplied: stay offline, exactly as before
+        exempt = {str(v.get("node_id"))
+                  for v in (config.get("mirror_roots") or {}).values()
+                  if isinstance(v, dict) and v.get("node_id")}
+        report = verify_mirror(graph_dir, args.against, exempt)
+        for f in report.violations():
+            print(f"DRIFT {f}")
+        print(f"\npush --verify: {len(report.violations())} drift finding(s)")
+        return 1 if report.violations() else 0
+
+    # --- the executing path -------------------------------------------------
+    if not mirror_configured(config):
+        # Exit 0, never 2. This is what lets the reconcile skill run `push`
+        # unconditionally instead of making the agent evaluate a config test.
+        print("push: no mirror configured — nothing to publish")
+        return 0
+
+    transport, journal, pacer, cache_dir = mirror_session(config, args)
+    if not args.skip_preflight:
+        report = mirror_doctor(config, graph_dir, transport, probe_write=False)
+        for finding in report.violations():
+            print(f"PREFLIGHT {finding}", file=sys.stderr)
+        if report.violations():
+            raise MirrorError("preflight failed — run `hypergraph mirror doctor` for detail")
+
+    if args.verify:
+        report = verify_against_mirror(graph_dir, config, transport, cache_dir=cache_dir)
+        return 1 if report.violations() else 0
+
+    if not args.yes and not args.dry_run:
+        plan = push_plan(graph_dir)
+        creates = sum(1 for o in plan["ops"] if o["op"] == "create")
+        if creates > PUSH_CREATE_WARN:
+            raise MirrorError(
+                f"{creates} creates in one run is above the {PUSH_CREATE_WARN} warning "
+                "threshold. Re-run with --yes if that is intended, or --limit N to go "
+                "in chunks.")
+
+    summary = execute_push(graph_dir, config, transport, journal=journal, pacer=pacer,
+                           batch=args.batch, limit=args.limit, dry_run=args.dry_run,
+                           do_legend=not args.no_legend)
+    if summary.get("dry_run"):
+        return 0
+    if config.get("archive"):
+        push_lineage(graph_dir, config, mirror_root_ids(config)["record"], transport,
+                     pacer=pacer)
+    print(f"push: {summary['created']} created, {summary['updated']} updated")
+    if not args.no_verify:
+        report = verify_against_mirror(graph_dir, config, transport, cache_dir=cache_dir)
+        if report.violations():
+            return 1
+    return 0
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """export → render → check → push. The one new verb an agent learns, and it
+    says nothing about any hosted service."""
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    cache_dir = args.out_dir or Path(config.get("cache_dir") or DEFAULT_CACHE_DIR)
+
+    cmd_export(argparse.Namespace(config=args.config, graph_dir=graph_dir,
+                                  out_dir=cache_dir))
+    record_json, state_json = cache_dir / "record.json", cache_dir / "state.json"
+
+    state_md = args.state_md or config.get("state_md") or "STATE.md"
+    render_args = argparse.Namespace(state=state_json, config=args.config,
+                                     output=Path(state_md))
+    cmd_render(render_args)
+
+    check_args = argparse.Namespace(record=record_json, state=state_json,
+                                    config=args.config)
+    code = cmd_check(check_args)
+    if code != 0:
+        print("sync: `check` reported violations — not publishing", file=sys.stderr)
+        return code
+    if args.no_push:
+        return 0
+    push_args = argparse.Namespace(
+        config=args.config, graph_dir=graph_dir, plan=False, record_result=None,
+        verify=False, against=None, legend=False, lineage=False, output=None,
+        dry_run=args.dry_run, batch=args.batch, limit=None, yes=args.yes,
+        no_legend=False, no_verify=args.no_verify, skip_preflight=args.skip_preflight,
+        transport=args.transport, rate=args.rate, journal=args.journal)
+    return cmd_push(push_args)
+
+
+# ---------------------------------------------------------------- mirror doctor
+
+def mirror_doctor(config: dict, graph_dir: Path, transport, *,
+                  probe_write: bool = True) -> Report:
+    """Preflight, reported in `check`'s own shape so the output reads the same."""
+    report = Report()
+    if not mirror_configured(config):
+        report.add("info", "mirror", "-", "no mirror configured — push is a no-op")
+        return report
+
+    report.add("info", "mirror", "-", f"transport: {transport.name} ({transport.version()})")
+
+    try:
+        status = transport.auth_status()
+    except MirrorError as exc:
+        report.add("violation", "mirror", "auth", str(exc))
+        return report
+    if not status.get("authenticated"):
+        report.add("violation", "mirror", "auth",
+                   "not authenticated — run `flywheel auth:login`")
+        return report
+    user_id = str(status.get("user_id") or "")
+    report.add("info", "mirror", "auth",
+               f"authenticated as {user_id or '(unknown user)'} "
+               f"via {status.get('auth_method') or '?'}")
+
+    # Account match. This retires an incident that cost two rounds: a mirror that
+    # looked deleted and was not — the key simply belonged to a different account.
+    expected = str(config.get("mirror_account_id") or "")
+    if expected and user_id and expected != user_id:
+        report.add("violation", "mirror", "account",
+                   f"this key belongs to account {user_id}, but the config's "
+                   f"`mirror_account_id:` says {expected}. The mirror is not missing — "
+                   "you are looking at it from the wrong account.")
+    elif not expected and user_id:
+        report.add("warning", "mirror", "account",
+                   f"config has no `mirror_account_id:` — add {user_id} so a "
+                   "wrong-key run reports the account rather than a missing graph")
+
+    try:
+        roots = mirror_root_ids(config)
+    except MirrorError as exc:
+        report.add("violation", "mirror", "roots", str(exc))
+        return report
+    for kind, node_id in roots.items():
+        try:
+            node = transport.get_node(node_id)
+        except MirrorError as exc:
+            report.add("violation", "mirror", f"{kind}-root",
+                       f"{node_id} does not resolve: {exc}")
+            continue
+        report.add("info", "mirror", f"{kind}-root",
+                   f"{node.slug or node_id} — {node.title!r} (revision {node.revision})")
+        if node.can_write is False:
+            report.add("violation", "mirror", f"{kind}-root",
+                       "the authenticated key cannot write this root")
+
+    if probe_write:
+        # Not optional. A key can authenticate cleanly, list hundreds of nodes and
+        # 403 every write; there is no scope introspection, so only a real write
+        # detects it. Parentless on purpose — under the mirror record root this
+        # probe would immediately show up in `verify` as "no local counterpart".
+        # The mirror is not scratch space.
+        probe = None
+        try:
+            probe = transport.commit_new(
+                parent_ids=[], title="hypergraph write probe",
+                content="Transient probe written by `hypergraph mirror doctor`.\n"
+                        "If you are reading this, a probe failed to clean up; "
+                        "deleting it is safe.\n",
+                summary="transient")
+            report.add("info", "mirror", "write-probe",
+                       f"write accepted (probe {probe.node_id})")
+        except MirrorError as exc:
+            report.add("violation", "mirror", "write-probe",
+                       f"the key authenticated but cannot write: {exc}")
+        finally:
+            if probe is not None:
+                try:
+                    transport.delete_node(probe.node_id)
+                    report.add("info", "mirror", "write-probe", "probe deleted")
+                except MirrorError as exc:
+                    report.add("warning", "mirror", "write-probe",
+                               f"probe {probe.node_id} could not be deleted ({exc}) — "
+                               "delete it by hand; it is parentless, so nothing else "
+                               "points at it")
+
+    try:
+        plan = push_plan(graph_dir)
+    except LocalGraphError as exc:
+        report.add("violation", "mirror", "plan", str(exc))
+        return report
     creates = sum(1 for o in plan["ops"] if o["op"] == "create")
-    print(f"push plan: {creates} create(s), {len(plan['ops']) - creates} update(s)",
-          file=sys.stderr)
+    updates = len(plan["ops"]) - creates
+    report.add("info", "mirror", "plan",
+               f"{creates} create(s), {updates} update(s) pending")
     if creates > PUSH_CREATE_WARN:
-        print(f"WARNING {creates} creates is one mirror write each — expect rate limits "
-              f"(429 backoff) and record results in batches so a partial run stays "
-              f"resumable. To mirror less history, split the adoption epoch later so "
-              f"fewer nodes are imported (SPEC: Adoption epochs).", file=sys.stderr)
+        report.add("warning", "mirror", "plan",
+                   f"{creates} creates at 120 writes/min is roughly "
+                   f"{creates // 100 + 1} minute(s) of paced writing")
     for violation in plan["violations"]:
-        print(f"VIOLATION {violation}", file=sys.stderr)
-    return 1 if plan["violations"] else 0
+        report.add("violation", "mirror", "plan", violation)
+    return report
+
+
+def cmd_mirror(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+
+    if args.action == "doctor":
+        if not mirror_configured(config):
+            print("mirror doctor: no mirror configured — `push` is a no-op here")
+            return 0
+        transport, _journal, _pacer, _cache = mirror_session(config, args)
+        report = mirror_doctor(config, graph_dir, transport,
+                               probe_write=not args.no_write_probe)
+        for finding in report.findings:
+            print(f"{finding.level:9} {finding}")
+        print(f"\nmirror doctor: {len(report.violations())} violation(s), "
+              f"{len(report.warnings())} warning(s)")
+        return 1 if report.violations() else 0
+
+    if args.action == "roots":
+        if not args.mint:
+            roots = mirror_root_ids(config)
+            for kind, node_id in roots.items():
+                print(f"{kind}: {node_id}")
+            return 0
+        return mint_mirror_roots(config, args)
+
+    if args.action == "pull":
+        transport, _journal, _pacer, cache_dir = mirror_session(config, args)
+        return mirror_pull(transport, args, out_dir=args.out_dir or cache_dir)
+
+    raise LocalGraphError(f"unknown mirror action: {args.action}")
+
+
+def mint_mirror_roots(config: dict, args: argparse.Namespace) -> int:
+    """Mint both mirror roots and append them to the config, idempotently.
+
+    Titles stay plain — `<project> — record` / `<project> — state`. Any lineage
+    belongs in the root's body, never in its title (SPEC: a continuing graph is not
+    a copy of the graph it forked from)."""
+    existing = config.get("mirror_roots") or {}
+    if existing and not args.force:
+        raise LocalGraphError(
+            "the config already declares `mirror_roots:` — re-minting would orphan the "
+            "existing mirror. Pass --force only if you mean to abandon it.")
+    transport, _journal, pacer, _cache = mirror_session(config, args)
+    project = str(config.get("project") or "project")
+    minted = {}
+    for kind in GRAPH_KINDS:
+        node = mirror_call(lambda kind=kind: transport.commit_new(
+            parent_ids=[], title=f"{project} — {kind}",
+            content=f"{'Append-only record' if kind == 'record' else 'Distilled state'} "
+                    f"graph for {project}.\n\nThis graph is a one-way mirror of the "
+                    "markdown node files committed in the repo, which stay canonical.\n",
+            summary=f"{kind} graph mirror root for {project}."),
+            pacer=pacer, what=f"mint {kind} root")
+        minted[kind] = node
+        print(f"minted {kind} root: {node.node_id} ({node.slug})")
+
+    if args.config:
+        # Surgical append, never a yaml round-trip: safe_dump would destroy 40 of
+        # config.example.yml's 68 lines of comments.
+        path = Path(args.config)
+        text = path.read_text()
+        block = ["", "# Mirror roots minted by `hypergraph mirror roots --mint`.",
+                 "mirror_roots:"]
+        for kind, node in minted.items():
+            block += [f"  {kind}:", f"    node_id: {node.node_id}",
+                      f"    slug: {node.slug}"]
+        path.write_text(text.rstrip("\n") + "\n" + "\n".join(block) + "\n")
+        print(f"appended mirror_roots: to {path}")
+    return 0
+
+
+def mirror_pull(transport, args: argparse.Namespace, *, out_dir: Path) -> int:
+    """One export over every anchor, split locally into record.json / state.json.
+
+    No `--import` flag: two commands, each inspectable. The split is a BFS from each
+    graph's anchors — a node reachable from both is an error, because the two graphs
+    are disjoint by construction (SPEC: pointers are markdown, never edges)."""
+    record_ids = list(args.record_node_id or []) + list(args.node_id or [])
+    state_ids = list(args.state_node_id or [])
+    if not record_ids and not state_ids:
+        raise LocalGraphError(
+            "mirror pull needs at least one anchor: --record-node-id and/or "
+            "--state-node-id (--node-id is an alias for the record graph)")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    combined = transport.export_subgraph(record_ids + state_ids,
+                                         out_dir / "mirror-pull.json")
+    data = json.loads(Path(combined).read_text())
+    raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
+    if isinstance(raw_nodes, dict):
+        raw_nodes = list(raw_nodes.values())
+    by_id = {str(n.get("node_id") or n.get("id")): n for n in raw_nodes
+             if isinstance(n, dict) and (n.get("node_id") or n.get("id"))}
+    children: dict[str, list[str]] = {nid: [] for nid in by_id}
+    for nid, raw in by_id.items():
+        for parent in (raw.get("incoming_ids") or raw.get("parent_ids") or []):
+            if str(parent) in children:
+                children[str(parent)].append(nid)
+
+    def reachable(anchors: list[str]) -> set[str]:
+        seen, queue = set(), [a for a in anchors if a in by_id]
+        while queue:
+            nid = queue.pop()
+            if nid in seen:
+                continue
+            seen.add(nid)
+            queue.extend(children.get(nid, []))
+        return seen
+
+    record_set, state_set = reachable(record_ids), reachable(state_ids)
+    overlap = record_set & state_set
+    if overlap:
+        raise LocalGraphError(
+            f"{len(overlap)} node(s) are reachable from both the record and state "
+            f"anchors (e.g. {sorted(overlap)[0]}). The two graphs must stay disjoint — "
+            "check the anchors before importing.")
+
+    for kind, ids in (("record", record_set), ("state", state_set)):
+        if not ids:
+            continue
+        path = out_dir / f"{kind}.json"
+        path.write_text(json.dumps(
+            {"version": EXPORT_VERSION, "graph": kind, "exported_at": utc_now(),
+             "nodes": [by_id[i] for i in sorted(
+                 ids, key=lambda i: (str(by_id[i].get("created_at") or ""), i))]},
+            indent=2, ensure_ascii=False))
+        print(f"wrote {path} ({len(ids)} node(s))")
+
+    print("\n# Paste into .hypergraph/config.yml if this graph becomes a frozen archive:",
+          file=sys.stderr)
+    print("archive:\n  backend: flywheel\n  roots:", file=sys.stderr)
+    for nid in record_ids + state_ids:
+        raw = by_id.get(nid) or {}
+        title = str(raw.get("title") or "").replace("'", "''")
+        print(f"    - slug: {raw.get('slug_name') or raw.get('slug') or '?'}\n"
+              f"      node_id: {nid}\n      title: '{title}'", file=sys.stderr)
+    return 0
 
 
 # Self-contained page: no network requests, no JS dependencies. All SVG styling is
@@ -5331,9 +6634,37 @@ def main(argv: list[str] | None = None) -> int:
                                "an installed wheel should hand out)")
     p_skills.set_defaults(func=cmd_skills)
 
-    p_push = sub.add_parser("push", help="plan/record a Flywheel mirror push (no network)")
+    # ---- optional one-way mirror: backend/mirror.md. Nothing below here runs on a
+    # project whose config declares no `mirror:` — `push` exits 0 as a no-op, which
+    # is what lets the reconcile skill call it unconditionally.
+    def mirror_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--transport", choices=["auto", "cli", "rest"], default="auto",
+                       help="auto: the `flywheel` CLI if present, else REST (default)")
+        p.add_argument("--rate", type=float, metavar="PER_MIN", default=100.0,
+                       help="minimum write pacing (default 100/min vs a 120/min ceiling)")
+        p.add_argument("--journal", type=Path, metavar="FILE",
+                       help="crash journal path (default: <cache_dir>/push-journal.jsonl)")
+
+    p_push = sub.add_parser("push", help="publish committed node files to the mirror")
     graph_args(p_push)
-    p_push.add_argument("--plan", action="store_true", help="emit the ordered push plan")
+    mirror_args(p_push)
+    p_push.add_argument("--dry-run", action="store_true",
+                        help="print what would be written and stop")
+    p_push.add_argument("--batch", type=int, default=20, metavar="N",
+                        help="fold results into the node files every N writes (default 20)")
+    p_push.add_argument("--limit", type=int, metavar="N",
+                        help="execute at most N ops this run (resumable)")
+    p_push.add_argument("--yes", action="store_true",
+                        help=f"proceed without confirming a plan above {PUSH_CREATE_WARN} creates")
+    p_push.add_argument("--no-legend", action="store_true",
+                        help="skip refreshing the mirror-only slug legend")
+    p_push.add_argument("--no-verify", action="store_true",
+                        help="skip the drift check after publishing")
+    p_push.add_argument("--skip-preflight", action="store_true",
+                        help="skip the reachability/roots/account checks")
+    p_push.add_argument("--plan", action="store_true",
+                        help="emit the ordered push plan and exit — network-free, the "
+                             "fallback for machines without the CLI binary")
     p_push.add_argument("--record-result", type=Path, metavar="RESULTS.JSON",
                         help="fold executed-push ids back into the node frontmatter")
     p_push.add_argument("--verify", action="store_true",
@@ -5348,10 +6679,46 @@ def main(argv: list[str] | None = None) -> int:
     p_push.add_argument("-o", "--output", type=Path, help="plan output path (default: stdout)")
     p_push.set_defaults(func=cmd_push)
 
+    p_sync = sub.add_parser("sync", help="export → render → check → push, in one step")
+    graph_args(p_sync)
+    mirror_args(p_sync)
+    p_sync.add_argument("--out-dir", type=Path,
+                        help=f"where to write the exports (default: {DEFAULT_CACHE_DIR})")
+    p_sync.add_argument("--state-md", type=Path, help="STATE.md path (default: from config)")
+    p_sync.add_argument("--no-push", action="store_true",
+                        help="stop after export/render/check")
+    p_sync.add_argument("--no-verify", action="store_true",
+                        help="skip the drift check after publishing")
+    p_sync.add_argument("--skip-preflight", action="store_true")
+    p_sync.add_argument("--dry-run", action="store_true")
+    p_sync.add_argument("--batch", type=int, default=20, metavar="N")
+    p_sync.add_argument("--yes", action="store_true")
+    p_sync.set_defaults(func=cmd_sync)
+
+    p_mirror = sub.add_parser("mirror", help="mirror diagnostics, roots and pulls")
+    p_mirror.add_argument("action", choices=["doctor", "roots", "pull"],
+                          help="doctor: preflight the mirror. roots: show or --mint "
+                               "them. pull: export a hosted graph to importable JSON")
+    graph_args(p_mirror)
+    mirror_args(p_mirror)
+    p_mirror.add_argument("--no-write-probe", action="store_true",
+                          help="doctor: skip the write probe (scope is not otherwise "
+                               "introspectable — a key can authenticate and still 403)")
+    p_mirror.add_argument("--mint", action="store_true",
+                          help="roots: mint both mirror roots and append them to config")
+    p_mirror.add_argument("--force", action="store_true",
+                          help="roots: re-mint even though `mirror_roots:` already exists")
+    p_mirror.add_argument("--node-id", action="append", metavar="ID",
+                          help="pull: record-graph anchor (repeatable)")
+    p_mirror.add_argument("--record-node-id", action="append", metavar="ID",
+                          help="pull: record-graph anchor (repeatable)")
+    p_mirror.add_argument("--state-node-id", action="append", metavar="ID",
+                          help="pull: state-graph anchor (repeatable)")
+    p_mirror.add_argument("--out-dir", type=Path,
+                          help="pull: where to write record.json/state.json")
+    p_mirror.set_defaults(func=cmd_mirror)
+
     args = parser.parse_args(argv)
-    if getattr(args, "command", None) == "push" and not (
-            args.plan or args.record_result or args.verify or args.legend or args.lineage):
-        parser.error("push needs --plan, --record-result, --verify, --legend, or --lineage")
     if getattr(args, "command", None) == "import" and not (args.record or args.state):
         parser.error("import needs --record and/or --state")
     if getattr(args, "command", None) == "update" and not args.print_sha:

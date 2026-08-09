@@ -16,6 +16,11 @@ state_md: STATE.md
 # Backend adapter the skills dispatch on (backend/INTERFACE.md).
 # local: the node files under graph_dir are the source of truth (offline, in-repo).
 # mirror: Flywheel stays a regenerable projection, refreshed after each reconcile.
-backend: local
 graph_dir: .hypergraph/graph
+
+# Optional one-way mirror (backend/mirror.md). Absent → `push` is a no-op, exit 0.
+# `mirror_account_id` is the account that owns the mirror roots: without it, a run
+# with a key from a different account reports "the graph is missing" instead of
+# "wrong account", which cost this project two rounds [rec: solemn-dawn-6752].
 mirror: flywheel
+mirror_account_id: be9833b0-502f-477a-ad2d-07dd5c871e10

@@ -33,6 +33,11 @@ dev = [
     "playwright>=1.62.0",
 ]
 
+# `live` marks tests that write to a real hosted mirror. They are double
+# env-gated on top of this marker; CI runs `pytest -m "not live"`.
+[tool.pytest.ini_options]
+markers = ["live: writes to a real hosted mirror (double env-gated)"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
