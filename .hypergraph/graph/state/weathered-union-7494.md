@@ -31,6 +31,8 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - **Parked by Operator directive** (2026-08-08): the 0.1.0 release and the spec-first announcement are both pending Operator decisions with **no date**, and no agent work proceeds on either. Recorded for when it resumes — the v0.1 gate (git-native backend) is met, and four changes are shipped but unreleased: MIT/PEP 639 metadata (absent from the published 0.0.2), fork-import, the `verify` mirror_roots exemption, and the mode-B epoch marker fix. The evidence for the announcement is being built first, as the protocol benchmark (protocol-benchmark-4417) [rec: southern-ridge-1802].
 - The distribution/repo boundary is measured rather than assumed: publishing is an **allow-list**, not the repo. Both artifacts were built — the wheel is 40 files / 415 KB (`hypergraph_protocol.py` + skills + templates + dist-info), the sdist 14 files — so `tests/`, `.hypergraph/`, `STATE.md`, `AGENTS.md` and the new `research/` tree all ship nothing, and `tests/test_packaging.py` fails if any is added to either hatchling include list. Incidentally re-verified: the published 0.0.2 installs on a bare cloud box via `uv tool install hypergraph-protocol` + `hypergraph skills install --user` [rec: twilight-wood-1934].
 
+- Version **0.0.3** in the tree, unreleased: the two `check` fixes (missing-config error, root-inference warning) and `--version` [rec: staid-field-2723]. `tests/test_packaging.py` now holds `tools/hypergraph.py`'s `__version__` in step with pyproject, because the benchmark's arm-C boxes install `hypergraph-protocol==0.0.3` pinned and assert the reported version on the box — `uv tool install` reuses a cached tool, and would otherwise leave a box silently running an older build while the write-up named this one [rec: staid-field-2723].
+
 ## Negative knowledge
 
 - [scope: naming/distribution of this project | confidence: high | evidence: damp-mountain-8757] Bare `hypergraph` is taken on PyPI; `hg*` names read as Mercurial (its CLI is `hg`); clone/fork distribution rejected — the protocol is an overlay on adopters' repos, not a template.
@@ -46,3 +48,4 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - lawful-birch-4414 — main pushed, repo flipped public after gitleaks-clean re-scan; MIT auto-detected
 - southern-ridge-1802 — Operator directive parking the release and the announcement
 - twilight-wood-1934 — packaging boundary measured empirically; published 0.0.2 re-verified on a fresh box
+- staid-field-2723 — 0.0.3 in tree (checker fixes + `--version`); version parity pinned by test
