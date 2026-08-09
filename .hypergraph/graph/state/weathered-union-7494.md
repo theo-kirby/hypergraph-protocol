@@ -9,9 +9,9 @@ summary: Parked by Operator (no date); v0.1 gate met with four unreleased change
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
-  revision: 8
-  pushed_at: '2026-08-09T13:26:53+00:00'
-  content_sha256: 962f7765dc13aced97936fa95e202f1722b33e3714b48aa7c48d6977bd1f52df
+  revision: 9
+  pushed_at: '2026-08-09T13:36:00+00:00'
+  content_sha256: 32f3489b6f547a1d5a5d095273b2a48940d4e9c4c2590be48dcac4e8485987cb
 ---
 Status: open
 
@@ -36,6 +36,8 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - The release had a dependency running the other way: the shipped adopter CI template calls `check --since`, which does not exist before 0.0.5, so until this release anyone copying it got a workflow that could not run [rec: long-peak-1620].
 - The repository's main branch now matches the release — 14 local commits pushed, closing a window where a published artifact's source was not public [rec: long-peak-1620].
 - Still parked on an Operator decision with no date: the spec-first announcement, and the npm placeholder still pointing at PyPI 0.0.2 [rec: southern-ridge-1802] [rec: long-peak-1620].
+- **Release 0.0.6 is live on PyPI and verified from the public index** [rec: sleepy-vine-2805]. It carries the adoption fixes, which is what made it urgent rather than routine: 0.0.5 handed every adopter the step order that hard-errors, so the only working path was a checkout of this repo — the distribution shape this project rejected at the start. Verified with the published CLI alone in a scratch repo: five skills installed, the installed adopt skill carries the staged interview, `--survey` printed Timeline signals, and authoring a root then running `adopt --init` printed `(adopted existing)` and checked 0/0.
+- Version parity is guarded in three places now, and the third fired on this release: `test_spec_header_matches_pyproject` failed with `SPEC.md says v0.0.5, pyproject says 0.0.6` on a release where SPEC.md itself did not change [rec: sleepy-vine-2805].
 - **The README front door now matches the distribution.** Quickstart opened with `./install.sh — symlink the skills into ~/.claude/skills`, which requires cloning this repo — the one thing this node has said since the shape was decided that adopters never do; the real path (`uv tool install hypergraph-protocol` + `hypergraph skills install`) appeared nowhere, and adopt was prose after the quickstart. There is now an `## Install` section before Quickstart, two labelled routes (new project → init, existing → adopt), bare `hypergraph` in every adopter-facing command block, and `./install.sh` demoted to a dev-checkout note. A doc test asserts the install lines, because that is the claim that went stale [rec: patient-sail-0175].
 
 ## Negative knowledge
@@ -56,3 +58,4 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - staid-field-2723 — 0.0.3 in tree (checker fixes + `--version`); version parity pinned by test
 - long-peak-1620 — 0.0.5 released to PyPI and verified from the public index
 - patient-sail-0175 — README front door corrected to the PyPI path; adopt promoted to a first-class quickstart route
+- sleepy-vine-2805 — 0.0.6 released and index-verified; the adoption fixes reach adopters
