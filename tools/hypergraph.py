@@ -2753,6 +2753,16 @@ def side_from_export(path_or_data: object, *, key: str = "node_id",
     return _index(side)
 
 
+def plan_op_counts(plan: dict) -> tuple[int, int, int]:
+    """(creates, body updates, tag assignments). Counted by op, never by subtraction —
+    a tag assignment is not an update, and reporting it as one overstates what the
+    push does to the record graph."""
+    ops = plan.get("ops") or []
+    creates = sum(1 for o in ops if o.get("op") == "create")
+    tags = sum(1 for o in ops if o.get("op") == "tags")
+    return creates, len(ops) - creates - tags, tags
+
+
 def _load_export_nodes(path: Path) -> dict[str, dict]:
     """Export JSON → {node_id: raw node dict}. Thin wrapper over `side_from_export`,
     kept because callers outside this section still speak in raw dicts."""
@@ -3386,6 +3396,22 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
               f"merge what you want:\n  {block_path}")
     if not args.dry_run and touched:
         print("Commit the result — these files travel with the repo.")
+
+    # `upgrade` refreshes *copies*; it never touches graph content. But it is the one
+    # command an adopter runs after a release, so it is the only place that will
+    # reliably tell them a *graph* repair is now available. Computed offline from each
+    # healer's `blocked_by` — and deliberately not keyed off `hypergraph_version:`,
+    # which SPEC calls "not a compatibility floor". Stamping it here would falsely
+    # assert the heals had run.
+    config = load_config(config_path) if config_path.exists() else {}
+    applicable = [h for h, reason in applicable_heals(config, repo) if reason is None]
+    if applicable:
+        print(f"\n{len(applicable)} retroactive graph repair(s) apply to this project.")
+        for healer in applicable:
+            print(f"  heal {healer.name:<10} {healer.summary} (since {healer.since})")
+        print("\nThese rewrite graph content, not copies, so they are a separate "
+              "command\nand detect-only by default:\n"
+              f"  hypergraph heal {applicable[0].name}")
     return 0
 
 
@@ -3572,6 +3598,527 @@ def stamp_config_version(text: str, version: str) -> str:
     if match:
         return f"{text[:match.end()]}\n\n{comment}{line}{text[match.end():]}"
     return text.rstrip("\n") + f"\n\n{comment}{line}\n"
+
+
+# ---------------------------------------------------------------------- healing
+# `upgrade` answers "are this repo's *copies* current". `heal` answers "is this
+# repo's *graph content* current" — and they are separate commands because the
+# answers cost different things. Every effect of `upgrade` is a file we shipped and
+# `git checkout` undoes it. `heal` rewrites the graph itself and spends an
+# irreversible mirror-write budget, so it cannot share `upgrade`'s "just run it"
+# posture.
+#
+# The framework exists because tags will not be the last capability to land after
+# somebody's adoption. Healer number two must cost **one registry entry and one
+# comparator** — that is the whole extensibility claim, and
+# `test_registry_names_unique_ordering_acyclic_archive_readers_never_write` is what
+# holds it honest.
+#
+# **Nothing is persisted.** No "have I run?" flag, no journal, no version stamp. The
+# written data *is* the state and `detect` re-derives it from the files — the same
+# property that makes `push_plan` a safe resume primitive. A heal that recorded its
+# own completion could lie; one that re-derives cannot.
+
+@dataclass(frozen=True)
+class Change:
+    """One thing a healer did, or declined to do, to one target."""
+    state: str        # healed | unchanged | skipped | blocked | refused
+    target: object
+    note: str = ""
+
+
+@dataclass
+class HealContext:
+    """Everything a healer may read. Deliberately not a grab-bag: a healer that needs
+    something not in here is a healer whose blast radius nobody has thought about."""
+    repo: Path
+    graph_dir: Path
+    config: dict
+    args: argparse.Namespace
+    out: object = print
+    offline: bool = True
+    session: object = None     # (transport, journal, pacer, cache_dir), built lazily
+    source: object = None      # the archive export, read once per run
+    vocab: object = None       # the source vocabulary, transliterated once per run
+
+
+@dataclass(frozen=True)
+class Healer:
+    """One retroactive repair: what it reads, what it writes, and why it may not run."""
+    name: str
+    summary: str
+    since: str                       # the release the capability landed in
+    reads: str                       # archive | mirror | local
+    writes: tuple                    # ("frontmatter", "mirror")
+    detect: object                   # (HealContext) -> list[Drift]
+    apply: object                    # (HealContext, list[Drift]) -> list[Change]
+    blocked_by: object               # (config, repo) -> a REASON string, or None
+    after: tuple = ()                # healer names that must run first
+
+
+def heal_write_targets(graph_dir: Path, config: dict) -> dict[str, str]:
+    """{slug: mirror node id}, read from `flywheel:` and **never** from `origin:`.
+
+    This mechanizes a guardrail hypergraph-adopt has only ever stated in prose:
+    *never write, tag, or re-parent archive nodes.* In an adopted repo every
+    `origin.node_id` is an id on the frozen archive — the same shape as a mirror id,
+    resolvable by the same credentials, and one attribute lookup away in the same
+    dict. A healer reaching for the wrong one would write the archive with the
+    mirror's key and nothing else in this file would stop it.
+
+    So there is exactly one sanctioned way to obtain a write target, and it refuses
+    when the two have been confused."""
+    archive_ids = {str(r.get("node_id")) for r in (config.get("archive") or {}).get("roots", [])
+                   if isinstance(r, dict) and r.get("node_id")}
+    targets: dict[str, str] = {}
+    for kind in GRAPH_KINDS:
+        for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
+            node_id = str((node.meta.get("flywheel") or {}).get("node_id") or "")
+            if not node_id:
+                continue
+            origin_id = str((node.meta.get("origin") or {}).get("node_id") or "")
+            if origin_id and node_id == origin_id:
+                raise LocalGraphError(
+                    f"{node.path}: `flywheel.node_id` and `origin.node_id` are the same "
+                    f"id ({node_id}). On an adopted project the origin is the frozen "
+                    "archive, so writing there would edit history this project promised "
+                    "never to touch. Refusing to treat it as a write target.")
+            if node_id in archive_ids:
+                raise LocalGraphError(
+                    f"{node.path}: `flywheel.node_id` is a declared `archive:` root "
+                    f"({node_id}). The archive is frozen; this project never writes to it.")
+            targets[node.slug] = node_id
+    return targets
+
+
+def heal_source_export(ctx: HealContext) -> tuple[object, str]:
+    """Where a healer reads the archive from: `--source`, the pull cache, or a live
+    read-only export. → (parsed export, a human description of where it came from).
+
+    The cache is tried before the network on purpose: a repo that adopted through
+    `mirror pull` already has every source node on disk, so the common repair needs no
+    credentials at all. Read once per run: `detect` and `apply` both need it, and the
+    live path would otherwise export the archive twice."""
+    if ctx.source is not None:
+        return ctx.source
+    ctx.source = _heal_source_export(ctx)
+    return ctx.source
+
+
+def _heal_source_export(ctx: HealContext) -> tuple[object, str]:
+    explicit = getattr(ctx.args, "source", None)
+    if explicit:
+        return json.loads(Path(explicit).read_text()), str(explicit)
+    cache_dir = Path(ctx.config.get("cache_dir") or (ctx.graph_dir.parent / "cache"))
+    cached = cache_dir / "mirror-pull.json"
+    if cached.exists():
+        return json.loads(cached.read_text()), str(cached)
+    if ctx.offline:
+        raise LocalGraphError(
+            f"no source graph to read: pass --source PATH, or drop --offline so the "
+            f"archive can be exported live. Looked for {cached}.")
+    roots = [str(r.get("node_id")) for r in (ctx.config.get("archive") or {}).get("roots", [])
+             if isinstance(r, dict) and r.get("node_id")]
+    if not roots:
+        raise LocalGraphError(
+            "no `archive:` roots in the config and no cached pull — nothing to read "
+            "the original tags from. Pass --source PATH.")
+    transport, _journal, _pacer, cache = heal_session(ctx)
+    # Read-only. The archive is frozen and this is the one place a heal touches it.
+    export = transport.export_subgraph(roots, cache / "heal-source.json")
+    return json.loads(Path(export).read_text()), str(export)
+
+
+def heal_session(ctx: HealContext):
+    if ctx.session is None:
+        if ctx.offline:
+            raise LocalGraphError("this step needs the mirror, and --offline was passed")
+        ctx.session = mirror_session(ctx.config, ctx.args)
+    return ctx.session
+
+
+# --------------------------------------------------------------- healer 1: tags
+
+def tags_blocked_by(config: dict, repo: Path) -> str | None:
+    """→ why `heal tags` does not apply here, or None when it does."""
+    graph_dir = Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    if not (repo / graph_dir).is_dir() and not graph_dir.is_dir():
+        return "no graph directory — this is not a hypergraph project"
+    root = repo / graph_dir if (repo / graph_dir).is_dir() else graph_dir
+    imported = 0
+    for kind in GRAPH_KINDS:
+        for node in load_local_nodes(root, kind, missing_ok=True).values():
+            if (node.meta.get("origin") or {}).get("node_id"):
+                imported += 1
+    if not imported:
+        return ("no node carries `origin:` — nothing was imported from another graph, "
+                "so there are no original tags to recover")
+    return None
+
+
+def heal_tag_vocabulary(ctx: HealContext) -> tuple[dict[str, str], list[dict]]:
+    """({archive tag_id: local name}, definitions), transliterated exactly as `import`
+    would have done.
+
+    Not a detail. A repo healed today and a repo imported tomorrow must end up with
+    the *same* names, or `★ studio-baseline` and `studio-baseline` become two tags
+    that mean one thing — which is the duplicate-definition failure by another route.
+
+    Cached on the context: `detect` and `apply` both need it, and every rename it
+    reports must be said once, not once per caller."""
+    if ctx.vocab is not None:
+        return ctx.vocab
+    data, _where = heal_source_export(ctx)
+    raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
+    if isinstance(raw_nodes, dict):
+        raw_nodes = list(raw_nodes.values())
+    raw_nodes = [r for r in (raw_nodes or []) if isinstance(r, dict)]
+    ctx.vocab = import_tag_vocabulary(
+        raw_nodes, fork=True, pushed_at=str(utc_now()),
+        out=lambda m: ctx.out(m.replace("import:", "heal tags:")))
+    return ctx.vocab
+
+
+def tags_detect(ctx: HealContext) -> list[Drift]:
+    """The archive's tags against ours, matched on `origin.node_id`.
+
+    Every match is exact: an imported node's `origin.node_id` **is** its archive id,
+    so there is no fuzzy matching anywhere in this healer and no case where it has to
+    guess which node it is looking at."""
+    data, where = heal_source_export(ctx)
+    ctx.out(f"heal tags: reading the source graph from {where}")
+    by_id, _defs = heal_tag_vocabulary(ctx)
+    local = side_from_local(ctx.graph_dir, key="origin", name="repo")
+    archive = side_from_export(data, key="node_id", name="archive")
+    for record in archive.records:
+        record["tags"] = sorted({by_id[str(t)]
+                                 for t in ((record["raw"] or {}).get("tag_ids") or [])
+                                 if str(t) in by_id})
+    drifts = diff_graphs(local, archive, fields=("tags",))
+    # Only tag drift is this healer's business. A node with no `origin:` (authored
+    # after the adoption) and a node the archive no longer holds are both normal.
+    return [d for d in drifts if d.kind == "field" and d.field == "tags"]
+
+
+def tags_apply(ctx: HealContext, drifts: list[Drift]) -> list[Change]:
+    """Two separable phases: frontmatter offline, then the mirror."""
+    changes: list[Change] = []
+    tags_path = tags_file_for(ctx.config, ctx.graph_dir)
+    vocab = load_tag_vocab(tags_path)
+
+    # --- phase 1: the repo, offline --------------------------------------------
+    _by_id, tag_defs = heal_tag_vocabulary(ctx)
+    local = {}
+    for kind in GRAPH_KINDS:
+        for slug, node in load_local_nodes(ctx.graph_dir, kind, missing_ok=True).items():
+            local[slug] = (kind, node)
+
+    names_by_kind: dict[str, set[str]] = {k: set() for k in GRAPH_KINDS}
+    for drift in drifts:
+        slug = drift.left_ref
+        entry = local.get(slug)
+        if entry is None:
+            changes.append(Change("skipped", slug, "no longer a node in this repo"))
+            continue
+        kind, node = entry
+        theirs = sorted(str(t) for t in (drift.right or []))
+        if node.tags and sorted(node.tags) != theirs:
+            # Never overwrite an authored tag set. A repair that can destroy work
+            # is not a repair, and this is the only case where the two disagree.
+            changes.append(Change("skipped", slug,
+                                  f"local tags {sorted(node.tags)} differ from the "
+                                  f"archive's {theirs} — heal never overwrites an "
+                                  "authored tag set"))
+            continue
+        if not theirs:
+            changes.append(Change("unchanged", slug, "no tags on the archive node"))
+            continue
+        names_by_kind[kind].update(theirs)
+        meta = dict(node.meta)
+        meta["tags"] = theirs
+        text = render_node_file(meta, node.content)
+        # Byte-compare before writing: a no-op heal must touch zero files, or every
+        # run leaves a diff and the idempotence claim is unverifiable.
+        if text == node.path.read_text():
+            changes.append(Change("unchanged", node.path, ""))
+            continue
+        if ctx.args.apply:
+            node.path.write_text(text)
+        changes.append(Change("healed", node.path, f"{len(theirs)} tag(s)"))
+
+    # The vocabulary is declared per graph kind, so a name is declared under exactly
+    # the graphs whose nodes carry it — `tags:create` is per graph root.
+    declared = 0
+    for entry in tag_defs:
+        for kind, names in names_by_kind.items():
+            if str(entry["name"]) in names:
+                merge_tag_def(vocab, kind, entry)
+                declared += 1
+    if declared:
+        if ctx.args.apply:
+            write_tag_vocab(tags_path, vocab)
+        changes.append(Change("healed", tags_path, f"{declared} tag definition(s)"))
+
+    # --- phase 2: the mirror ----------------------------------------------------
+    if ctx.offline:
+        changes.append(Change("skipped", "mirror",
+                              "--offline: the vocabulary and assignments were not "
+                              "published. Commit the frontmatter, then re-run without "
+                              "--offline (or just `hypergraph push`)."))
+        return changes
+    if not mirror_configured(ctx.config):
+        changes.append(Change("skipped", "mirror", "no mirror configured"))
+        return changes
+    if blocked := publish_branch_block(ctx.config, cwd=ctx.repo):
+        changes.append(Change("blocked", "mirror", blocked))
+        return changes
+    # The one sanctioned way to obtain a write target. Raises rather than returns if
+    # `origin:` and `flywheel:` have been confused anywhere in the graph.
+    targets = heal_write_targets(ctx.graph_dir, ctx.config)
+    if not targets:
+        changes.append(Change("skipped", "mirror",
+                              "no node carries `flywheel:` — nothing has been pushed "
+                              "yet, so `hypergraph push` is the right command"))
+        return changes
+    if not ctx.args.apply:
+        changes.append(Change("healed", "mirror",
+                              f"would publish tags for up to {len(targets)} node(s)"))
+        return changes
+    transport, _journal, pacer, _cache = heal_session(ctx)
+    if reason := mirror_not_ours(ctx.config, transport):
+        changes.append(Change("blocked", "mirror", reason))
+        return changes
+    assigned = push_tags(ctx.graph_dir, ctx.config, mirror_root_ids(ctx.config),
+                         transport, pacer=pacer, out=ctx.out)
+    changes.append(Change("healed", "mirror", f"{assigned} node(s) tagged on the mirror"))
+    return changes
+
+
+HEAL_TAGS = Healer(
+    name="tags",
+    summary="carry the original graph's tag names into node frontmatter, "
+            ".hypergraph/tags.yml, and the mirror",
+    since="0.0.9",
+    reads="archive",
+    writes=("frontmatter", "mirror"),
+    detect=tags_detect,
+    apply=tags_apply,
+    blocked_by=tags_blocked_by,
+)
+
+# The registry. A new healer is one entry here plus, if it compares a new field, one
+# entry in FIELD_COMPARATORS. Nothing else.
+HEALERS: tuple = (HEAL_TAGS,)
+
+
+def healer_by_name(name: str) -> Healer:
+    for healer in HEALERS:
+        if healer.name == name:
+            return healer
+    raise LocalGraphError(
+        f"no healer named `{name}` (have: {', '.join(h.name for h in HEALERS)})")
+
+
+def healers_in_order(names: list[str]) -> list[Healer]:
+    """Requested healers, with each one's `after:` dependencies respected."""
+    wanted = [healer_by_name(n) for n in names]
+    ordered: list[Healer] = []
+    for healer in HEALERS:            # registry order is the tie-break, and is stable
+        if healer in wanted:
+            ordered.append(healer)
+    for healer in ordered:
+        for dependency in healer.after:
+            if dependency in names and \
+                    [h.name for h in ordered].index(dependency) > ordered.index(healer):
+                raise LocalGraphError(
+                    f"healer `{healer.name}` must run after `{dependency}`, but the "
+                    "registry orders them the other way round")
+    return ordered
+
+
+def applicable_heals(config: dict, repo: Path) -> list[tuple]:
+    """[(healer, reason-or-None)] — computed **offline**, so `upgrade` can print it.
+
+    Not keyed off `hypergraph_version:`. SPEC calls that stamp "not a compatibility
+    floor", and letting `upgrade` bump it would falsely assert that heals had run."""
+    out = []
+    for healer in HEALERS:
+        try:
+            reason = healer.blocked_by(config, repo)
+        except LocalGraphError as exc:
+            reason = str(exc)
+        out.append((healer, reason))
+    return out
+
+
+def heal_dirty_block(graph_dir: Path, repo: Path) -> str | None:
+    """→ why the graph directory is not safe to rewrite, or None.
+
+    Scoped to `graph_dir`, not the repo: heal rewrites node files, and an unrelated
+    dirty file elsewhere is not this command's business.
+
+    This deliberately does **not** copy `push`'s stance of having no dirty-tree guard.
+    That exemption exists because reconcile publishes *before* it commits, so a dirty
+    graph is the expected state at push time. Nothing about heal is inside that flow —
+    it rewrites ~188 files at once, outside any commit, and an uncommitted edit
+    underneath it has no diff to recover from."""
+    if not _git(repo, "rev-parse", "--is-inside-work-tree").strip():
+        return None
+    dirty = _git(repo, "status", "--porcelain", "--", str(graph_dir)).strip()
+    if not dirty:
+        return None
+    count = len(dirty.splitlines())
+    return (f"{count} uncommitted change(s) under {graph_dir}. Heal rewrites node "
+            "files in place, and an uncommitted edit underneath has no committed diff "
+            "to recover from. Commit or stash first, or pass --allow-dirty.")
+
+
+def cmd_heal(args: argparse.Namespace) -> int:
+    """Carry a capability backwards into a repo that adopted before it existed.
+
+    **Dry run is the default here, and opt-in everywhere else in this CLI.** That
+    inversion is deliberate and worth stating rather than leaving as folklore: heal is
+    human-initiated, sits in no commit flow, rewrites the whole graph at once, and
+    spends mirror writes that cannot be un-spent. `--apply` is the word that makes it
+    act."""
+    repo = Path(args.repo or ".").resolve()
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+
+    names = [h.name for h in HEALERS] if args.all else list(args.healer or [])
+    if not names:
+        return heal_list(config, repo, json_out=args.json)
+
+    root = skills_data_root()
+    if is_source_checkout(repo, root):
+        raise LocalGraphError(
+            f"{repo} is the protocol's own checkout. Its graph was authored under this "
+            "release, so there is nothing retroactive to repair — and a heal here would "
+            "rewrite the reference graph the tests read. Run `heal` in an adopted repo, "
+            "or pass --repo.")
+
+    healers = healers_in_order(names)
+    if args.apply and not args.allow_dirty:
+        if blocked := heal_dirty_block(graph_dir, repo):
+            raise LocalGraphError(f"refusing to heal: {blocked}")
+
+    ctx = HealContext(repo=repo, graph_dir=graph_dir, config=config, args=args,
+                      offline=args.offline,
+                      out=lambda m: print(m) if not args.json else None)
+
+    exit_code = 0
+    payload: dict = {"repo": str(repo), "apply": bool(args.apply), "healers": []}
+    for healer in healers:
+        reason = healer.blocked_by(config, repo)
+        if reason:
+            if args.json:
+                payload["healers"].append({"name": healer.name, "blocked_by": reason})
+            else:
+                print(f"\n{healer.name}: does not apply — {reason}")
+            continue
+
+        drifts = healer.detect(ctx)
+        if args.limit is not None:
+            if len(drifts) > args.limit:
+                # Never a silent cap: a truncated run that reads as "all clear" is
+                # worse than no run at all.
+                print(f"heal {healer.name}: --limit {args.limit} of "
+                      f"{len(drifts)} finding(s); the rest are NOT addressed",
+                      file=sys.stderr)
+            drifts = drifts[:args.limit]
+
+        report = Report()
+        for drift in drifts:
+            report.add("warning", "heal", drift.ref,
+                       f"{healer.name}: {drift.field} differs — "
+                       f"repo {drift.left!r}, {healer.reads} {drift.right!r}")
+        entry = {"name": healer.name, "drift": len(drifts),
+                 "findings": [{"node": f.node, "message": f.message}
+                              for f in report.findings]}
+
+        if not args.apply:
+            if not args.json:
+                for finding in report.findings:
+                    print(f"  drift     {finding}")
+                changes = healer.apply(ctx, drifts) if drifts else []
+                print(f"\nheal {healer.name}: {len(drifts)} node(s) would change "
+                      f"({healer.since}, reads {healer.reads}, writes "
+                      f"{'/'.join(healer.writes)})")
+                _print_changes(changes, repo, dry_run=True)
+                if drifts:
+                    print("\nThis was a dry run — nothing was written. "
+                          f"`hypergraph heal {healer.name} --apply` acts.")
+            entry["changes"] = []
+            payload["healers"].append(entry)
+            # Detected drift alone is **exit 0**. Unhealed drift is a capability that
+            # landed after your adoption, not a broken invariant — the same reasoning
+            # as `check_version_skew`, which is a warning for the same reason.
+            if drifts and args.fail_on_drift:
+                exit_code = 1
+            continue
+
+        changes = healer.apply(ctx, drifts)
+        entry["changes"] = [{"state": c.state, "target": str(c.target), "note": c.note}
+                            for c in changes]
+        if not args.json:
+            _print_changes(changes, repo, dry_run=False)
+        # The registry rule, checked at runtime as well as in the tests: every effect
+        # a healer claims must be visible to the next detect. What it skipped stays
+        # drifted, and that is fine; what it healed must not.
+        skipped = {str(c.target) for c in changes if c.state == "skipped"}
+        residual = [d for d in healer.detect(ctx)
+                    if d.ref not in skipped and d.left_ref not in skipped]
+        entry["residual"] = len(residual)
+        if residual:
+            if not args.json:
+                print(f"\nheal {healer.name}: {len(residual)} finding(s) survived the "
+                      "repair — the heal did not do what it reported")
+            exit_code = 1
+        payload["healers"].append(entry)
+
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    return exit_code
+
+
+def _print_changes(changes: list, repo: Path, *, dry_run: bool) -> None:
+    verb = {"healed": "would heal", "unchanged": "unchanged", "skipped": "skipped",
+            "blocked": "blocked", "refused": "refused"} if dry_run else {}
+    for change in changes:
+        try:
+            shown = Path(change.target).relative_to(repo)
+        except (ValueError, TypeError):
+            shown = change.target
+        label = verb.get(change.state, change.state)
+        print(f"  {label:<14} {shown}" + (f"   ({change.note})" if change.note else ""))
+
+
+def heal_list(config: dict, repo: Path, *, json_out: bool = False) -> int:
+    """`hypergraph heal` with no healer named: the registry and what applies here."""
+    rows = applicable_heals(config, repo)
+    if json_out:
+        print(json.dumps({"healers": [
+            {"name": h.name, "summary": h.summary, "since": h.since, "reads": h.reads,
+             "writes": list(h.writes), "blocked_by": reason}
+            for h, reason in rows]}, indent=2, ensure_ascii=False))
+        return 0
+    print("Retroactive repairs. Each carries a capability backwards into a repo that\n"
+          "adopted before it existed. Detection is read-only; nothing writes without\n"
+          "--apply.\n")
+    for healer, reason in rows:
+        mark = "applies" if reason is None else "n/a"
+        print(f"  {healer.name:<10} [{mark}]  {healer.summary}")
+        print(f"  {'':<10}         since {healer.since}, reads the {healer.reads}, "
+              f"writes {' + '.join(healer.writes)}")
+        if reason:
+            print(f"  {'':<10}         → {reason}")
+    applicable = [h for h, reason in rows if reason is None]
+    if applicable:
+        print(f"\n  hypergraph heal {applicable[0].name}            # detect only "
+              "(the default)\n"
+              f"  hypergraph heal {applicable[0].name} --apply    # rewrite the graph "
+              "and publish")
+    return 0
 
 
 # ---------------------------------------------------------------- mirror errors
@@ -4875,9 +5422,9 @@ def cmd_push(args: argparse.Namespace) -> int:
             print(f"wrote {args.output}")
         else:
             print(text, end="")
-        creates = sum(1 for o in plan["ops"] if o["op"] == "create")
-        print(f"push plan: {creates} create(s), {len(plan['ops']) - creates} update(s)",
-              file=sys.stderr)
+        creates, updates, tags = plan_op_counts(plan)
+        print(f"push plan: {creates} create(s), {updates} update(s)"
+              + (f", {tags} tag assignment(s)" if tags else ""), file=sys.stderr)
         if creates > PUSH_CREATE_WARN:
             print(f"WARNING {creates} creates is one mirror write each — expect rate limits "
                   f"(429 backoff) and record results in batches so a partial run stays "
@@ -5094,10 +5641,10 @@ def mirror_doctor(config: dict, graph_dir: Path, transport, *,
     except LocalGraphError as exc:
         report.add("violation", "mirror", "plan", str(exc))
         return report
-    creates = sum(1 for o in plan["ops"] if o["op"] == "create")
-    updates = len(plan["ops"]) - creates
+    creates, updates, tags = plan_op_counts(plan)
     report.add("info", "mirror", "plan",
-               f"{creates} create(s), {updates} update(s) pending")
+               f"{creates} create(s), {updates} update(s), "
+               f"{tags} tag assignment(s) pending")
     if creates > PUSH_CREATE_WARN:
         report.add("warning", "mirror", "plan",
                    f"{creates} creates at 120 writes/min is roughly "
@@ -9549,6 +10096,7 @@ def main(argv: list[str] | None = None) -> int:
                            help="print what would change and write nothing")
     p_upgrade.set_defaults(func=cmd_upgrade)
 
+
     # ---- optional one-way mirror: backend/mirror.md. Nothing below here runs on a
     # project whose config declares no `mirror:` — `push` exits 0 as a no-op, which
     # is what lets the reconcile skill call it unconditionally.
@@ -9646,6 +10194,45 @@ def main(argv: list[str] | None = None) -> int:
     p_mirror.add_argument("--out-dir", type=Path,
                           help="pull: where to write record.json/state.json")
     p_mirror.set_defaults(func=cmd_mirror)
+
+    def heal_args(p: argparse.ArgumentParser) -> None:
+        # Dry run is the DEFAULT here and opt-in everywhere else in this CLI. Heal is
+        # human-initiated, sits in no commit flow, rewrites the whole graph at once,
+        # and spends mirror writes that cannot be un-spent — `upgrade`'s effects are
+        # all `git checkout`-reversible and heal's are not.
+        p.add_argument("--apply", action="store_true",
+                       help="actually write. Without it heal detects and reports only")
+        p.add_argument("--all", action="store_true", help="every applicable healer")
+        p.add_argument("--offline", action="store_true",
+                       help="repo only: no mirror reads and no mirror writes")
+        p.add_argument("--source", type=Path, metavar="PATH",
+                       help="the source graph export to repair against (default: the "
+                            "cached mirror pull, else a live read-only export)")
+        p.add_argument("--repo", type=Path, help="repo root (default: cwd)")
+        p.add_argument("--allow-dirty", action="store_true",
+                       help="heal even with uncommitted changes under the graph dir")
+        p.add_argument("--limit", type=int, metavar="N",
+                       help="address at most N finding(s); the rest are reported as "
+                            "left alone, never silently dropped")
+        p.add_argument("--json", action="store_true", help="machine-readable output")
+        p.add_argument("--fail-on-drift", action="store_true",
+                       help="exit 1 when drift is found. Off by default: unhealed "
+                            "drift is a capability that landed after your adoption, "
+                            "not a broken invariant")
+        p.add_argument("--yes", action="store_true",
+                       help="proceed without confirming a large repair")
+
+    p_heal = sub.add_parser(
+        "heal", help="carry a capability backwards into a repo that adopted before it "
+                     "existed (detect-only unless --apply)")
+    p_heal.add_argument("healer", nargs="*",
+                        help=f"which repair(s) to run (have: "
+                             f"{', '.join(h.name for h in HEALERS)}). "
+                             "With none named, lists the registry and exits 0")
+    graph_args(p_heal)
+    mirror_args(p_heal)
+    heal_args(p_heal)
+    p_heal.set_defaults(func=cmd_heal)
 
     # ---- adoption: compute the facts an adopting agent would otherwise gather by
     # hand. Never the claims — see the module comment above `cmd_adopt`.
