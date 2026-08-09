@@ -9,11 +9,11 @@ summary: ''
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 0
-  pushed_at: '2026-08-09T15:54:56+00:00'
-  content_sha256: 34a10d890cd6c0419643273c0cfcd2c2bd40c9b44107b258bd4d0d7c79c1c08b
+  revision: 1
+  pushed_at: '2026-08-09T16:30:11+00:00'
+  content_sha256: a4ed4bd58449afebf5e7b712d5b93a1bde8848c411fd109f1d3a0d7abff9b267
 ---
-Status: open
+Status: working
 
 ## Current
 
@@ -39,8 +39,7 @@ a compatibility floor. `check` compares it to the running CLI and names the reme
 whichever half is behind; a missing stamp is an info, not a warning, because every repo
 adopted before the stamp lacks one [rec: ancient-bluff-9706].
 
-Status `open`, and precisely because of what it is: an adopter cannot run `hypergraph
-upgrade` until a release carries it, and 0.0.6 does not [rec: ancient-bluff-9706]. Two
+Shipped in **0.0.7** and verified from PyPI with published artifacts only: a repo installed from 0.0.6 — old skills, an old sentinel block, a 0.0.6 stamp — took the two documented commands (`uv tool install`, then `hypergraph upgrade`) and came out with 0.0.7's skills, a refreshed block with its own prose intact, and a re-stamped config [rec: humble-rain-0304]. That is the thing that was impossible before: a fix to a skill reaching a repo that already adopted, without anyone re-running adopt. Two
 prior burns say the same gap bites in both directions — a shipped CI template once
 called `check --since` before that flag existed [rec: long-peak-1620], and the 0.0.5
 high-water-mark change needed a migration nobody could have known to run without
@@ -53,4 +52,5 @@ None yet.
 ## Provenance
 
 - ancient-bluff-9706 — hypergraph upgrade and the version stamp, with both compatibility directions measured
+- humble-rain-0304 — 0.0.7 published; the two-command update verified end-to-end from PyPI
 - long-peak-1620 — the CI-template/CLI skew that showed copied artifacts drift out of step with the CLI
