@@ -9,9 +9,18 @@
 # public repo: nothing reaches the mirror until it is merged, and no contributor
 # or cloud agent ever needs the credentials.
 #
-# `--require-mirror` turns "cannot publish" into a red build. That is deliberate:
-# everywhere else a stand-down is correct, but in CI a silent no-op is a deploy
-# that quietly stopped working.
+# ## Transport
+#
+# `--transport rest` talks to the HTTP API directly with `urllib`, so CI needs no
+# npm and no `flywheel` binary — just the two environment variables. (On a laptop
+# the default `auto` prefers the `flywheel` CLI when it is on PATH, because it can
+# read a key held in the OS keychain, which a REST client cannot. In CI the key
+# comes from a secret, so that advantage does not apply.)
+#
+# Set one repository secret: FLYWHEEL_API_KEY. It must belong to the account named
+# in the config's `mirror_account_id:` — a key from a different account is not an
+# error, it is a *stand-down*, and `--require-mirror` is what turns that back into
+# a red build. Without it a wrong key would silently publish nothing.
 
 name: hypergraph-publish
 
@@ -26,6 +35,9 @@ concurrency:
   group: hypergraph-publish
   cancel-in-progress: false
 
+permissions:
+  contents: write        # the commit below writes back the published node identity
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -35,20 +47,22 @@ jobs:
       - uses: astral-sh/setup-uv@v5
 
       - name: Install
-        run: |
-          uv tool install hypergraph-protocol
-          npm install -g @paradigma-inc/flywheel
+        run: uv tool install hypergraph-protocol
 
       - name: Publish
         env:
+          FLYWHEEL_BASE_URL: https://flywheel.paradigma.inc/api
           FLYWHEEL_API_KEY: ${{ secrets.FLYWHEEL_API_KEY }}
         run: |
-          hypergraph push --config .hypergraph/config.yml --require-mirror
+          hypergraph push --config .hypergraph/config.yml \
+            --transport rest --require-mirror
 
       - name: Commit the mirror identity written back into the node files
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .hypergraph/graph
-          git diff --cached --quiet || git commit -m "Mirror: stamp published node identity"
-          git push
+          git diff --cached --quiet || {
+            git commit -m "Mirror: stamp published node identity"
+            git push
+          }

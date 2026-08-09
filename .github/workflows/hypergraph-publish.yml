@@ -1,0 +1,51 @@
+# This repo dogfoods its own publish workflow.
+#
+# It differs from `templates/github-actions/hypergraph-publish.yml` in one way: it
+# runs the CLI out of this checkout rather than installing the published release,
+# so the mirror is written by the code in the tree it describes.
+#
+# Requires the FLYWHEEL_API_KEY repository secret, belonging to the account named
+# in `.hypergraph/config.yml` as `mirror_account_id:`. A key from another account
+# makes `push` stand down at exit 0 — `--require-mirror` is what turns that back
+# into a red build instead of a deploy that silently publishes nothing.
+
+name: hypergraph-publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # The state graph has one writer by protocol (SPEC I3).
+  group: hypergraph-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Publish
+        env:
+          FLYWHEEL_BASE_URL: https://flywheel.paradigma.inc/api
+          FLYWHEEL_API_KEY: ${{ secrets.FLYWHEEL_API_KEY }}
+        run: |
+          uv run tools/hypergraph.py push --config .hypergraph/config.yml \
+            --transport rest --require-mirror
+
+      - name: Commit the mirror identity written back into the node files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .hypergraph/graph
+          git diff --cached --quiet || {
+            git commit -m "Mirror: stamp published node identity"
+            git push
+          }
