@@ -13,6 +13,15 @@
            background:var(--surface); }
   header h1 { font-size:14px; font-weight:650; white-space:nowrap; margin-right:auto; }
   header h1 span { color:var(--muted); font-weight:500; }
+  /* live indicator: present only when `viz --live` built the page */
+  #live { display:flex; align-items:center; gap:6px; font-size:11px;
+          color:var(--ink2); padding:3px 9px; border-radius:999px;
+          border:1px solid var(--grid); margin-right:4px; white-space:nowrap; }
+  #live[hidden] { display:none; }
+  #live i { width:7px; height:7px; border-radius:50%; background:var(--muted); }
+  #live[data-tone=ok] i { background:#0ca30c; }
+  #live[data-tone=new] i { background:var(--accent); }
+  #live[data-tone=warn] i { background:#fab219; }
   .iconbtn { display:flex; align-items:center; justify-content:center; width:30px;
              height:30px; border:0; border-radius:8px; background:transparent;
              color:var(--ink2); cursor:pointer; padding:0; }

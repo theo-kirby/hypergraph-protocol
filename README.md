@@ -149,6 +149,24 @@ excaligraph build graph.yaml -o graph.excalidraw     # then open it in excalidra
 excaligraph preview graph.excalidraw -o graph.svg    # …or render it headlessly
 ```
 
+### Live mode
+
+`--live` writes `viz.html` *plus* a sibling `viz.data.json`, and the page polls
+that file, redrawing and pulsing whatever appeared since the last poll — a status
+board for a run in progress. It is the one output that is deliberately **not**
+self-contained, which is why it is a flag and not the default:
+
+```bash
+uv run tools/hypergraph.py viz --live --record .hypergraph/cache/record.json \
+    --state .hypergraph/cache/state.json --config .hypergraph/config.yml \
+    -o .hypergraph/viz.html
+python3 -m http.server -d .hypergraph      # browsers block fetch from file://
+```
+
+Re-run `export` and `viz --live` (from a watcher, a commit hook, or a loop) and
+the open page catches up on its own. If the data file cannot be reached, the
+indicator in the header says so and polling stops rather than failing silently.
+
 Nodes are coloured by the same status palette the page uses, so a figure and the
 page never disagree, and each one carries a `link:` back to its markdown source.
 Each state node's impact set becomes a hyperedge blob. Cross-graph edges are off

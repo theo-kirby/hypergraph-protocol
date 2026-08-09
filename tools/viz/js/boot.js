@@ -9,3 +9,4 @@ const bootView = VIEW_ALIASES[boot] || boot;
 applyPreset(PRESETS[bootView] ? bootView : "clusters");
 if (bySlug[boot]) jumpTo(boot);
 renderPanel();
+startLive();   // no-op unless `viz --live` set DATA.live

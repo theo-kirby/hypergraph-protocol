@@ -15,6 +15,7 @@
     "js/panel.js",
     "js/controls.js",
     "js/export.js",
+    "js/live.js",
     "js/boot.js"
   ]
 }

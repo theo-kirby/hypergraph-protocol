@@ -11,11 +11,21 @@ saved to .hypergraph/cache/{record,state}.json). No network, no auth, determinis
     hypergraph.py check  --record record.json --state state.json [--config config.yml]
     hypergraph.py render --state state.json [--config config.yml] [-o STATE.md]
     hypergraph.py viz    --record record.json --state state.json [--config config.yml] [-o viz.html]
+                         [--format html|excaligraph] [--live] [--dev]
 
 check exits 1 on any I2/I4/I5/I6/I7 violation (see SPEC.md). Warnings (I1 proxies)
-and info lines never affect the exit code. viz emits a self-contained interactive
-HTML file (no network, no JS dependencies) with record, state, and combined
-hypergraph views; open it directly in a browser.
+and info lines never affect the exit code.
+
+viz emits a self-contained interactive HTML file (no network, no JS dependencies)
+with four views — Timeline (record graph as git-log lanes), Frontier (state graph
+as a status board), Provenance (both graphs with cross-graph links) and Clusters
+(impact sets as distance-field blobs). Open it straight from file://. The page is
+authored under tools/viz/ and bundled into VIZ_TEMPLATE by tools/bundle_viz.py;
+`--dev` reads those sources instead. `--format excaligraph` emits a graph spec for
+`excaligraph build` instead, for hand-editable figures. `--live` additionally
+writes a sibling <output>.data.json and has the page poll it — the one output that
+is deliberately not a single file, which is why it takes a flag and needs the
+directory served over http.
 
 The local (git-native) backend keeps both graphs as committed markdown files under
 .hypergraph/graph/{record,state}/<slug>.md and produces the very same export JSON
@@ -1010,11 +1020,8 @@ def assemble_viz_template(viz_dir: Path = VIZ_SRC_DIR) -> str:
     return VIZ_PART_RE.sub(lambda m: parts[m.group(0)], (viz_dir / manifest["html"]).read_text())
 
 
-def render_viz(record_path: Path, state_path: Path, config: dict | None = None,
-               template: str | None = None) -> str:
-    record = load_graph(record_path)
-    state = load_graph(state_path)
-    data = build_viz_data(record, state, config)
+def viz_payload(record_path: Path, state_path: Path, config: dict | None = None) -> dict:
+    data = build_viz_data(load_graph(record_path), load_graph(state_path), config)
     for path, key in ((record_path, "record"), (state_path, "state")):
         try:
             raw = json.loads(Path(path).read_text())
@@ -1022,6 +1029,14 @@ def render_viz(record_path: Path, state_path: Path, config: dict | None = None,
                 data[key]["exported_at"] = raw.get("exported_at")
         except (OSError, json.JSONDecodeError):
             pass
+    return data
+
+
+def render_viz(record_path: Path, state_path: Path, config: dict | None = None,
+               template: str | None = None, live: dict | None = None) -> str:
+    data = viz_payload(record_path, state_path, config)
+    if live:
+        data["live"] = live
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     return ((template if template is not None else VIZ_TEMPLATE)
             .replace("__TITLE__", _esc_html(data["project"]))
@@ -1045,10 +1060,31 @@ def cmd_viz(args: argparse.Namespace) -> int:
             print(f"error: --dev needs the viz sources at {VIZ_SRC_DIR}", file=sys.stderr)
             return 2
         template = assemble_viz_template(VIZ_SRC_DIR)
-    output = render_viz(args.record, args.state, config, template)
+
+    # --live is the one output that is deliberately not self-contained: the page
+    # polls a sibling JSON file. It therefore needs a real path to be a sibling
+    # of, and it needs to be served over http (browsers refuse cross-file fetch
+    # from file://). Both are said out loud rather than discovered.
+    live = None
+    if getattr(args, "live", False):
+        if not args.output:
+            print("error: --live needs -o (it writes a sibling .data.json)",
+                  file=sys.stderr)
+            return 2
+        data_path = Path(args.output).with_suffix(".data.json")
+        live = {"url": data_path.name, "interval_ms": args.live_interval * 1000}
+
+    output = render_viz(args.record, args.state, config, template, live)
     if args.output:
         Path(args.output).write_text(output)
         print(f"wrote {args.output}")
+        if live:
+            data = viz_payload(args.record, args.state, config)
+            data_path.write_text(json.dumps(data, separators=(",", ":")))
+            print(f"wrote {data_path} — the page polls it every "
+                  f"{args.live_interval}s and pulses what is new")
+            print(f"serve it: python3 -m http.server -d {data_path.parent or '.'} "
+                  "(browsers block fetch from file://)")
     else:
         print(output)
     return 0
@@ -1955,6 +1991,15 @@ VIZ_TEMPLATE = r"""<!doctype html>
            background:var(--surface); }
   header h1 { font-size:14px; font-weight:650; white-space:nowrap; margin-right:auto; }
   header h1 span { color:var(--muted); font-weight:500; }
+  /* live indicator: present only when `viz --live` built the page */
+  #live { display:flex; align-items:center; gap:6px; font-size:11px;
+          color:var(--ink2); padding:3px 9px; border-radius:999px;
+          border:1px solid var(--grid); margin-right:4px; white-space:nowrap; }
+  #live[hidden] { display:none; }
+  #live i { width:7px; height:7px; border-radius:50%; background:var(--muted); }
+  #live[data-tone=ok] i { background:#0ca30c; }
+  #live[data-tone=new] i { background:var(--accent); }
+  #live[data-tone=warn] i { background:#fab219; }
   .iconbtn { display:flex; align-items:center; justify-content:center; width:30px;
              height:30px; border:0; border-radius:8px; background:transparent;
              color:var(--ink2); cursor:pointer; padding:0; }
@@ -2059,6 +2104,7 @@ VIZ_TEMPLATE = r"""<!doctype html>
 <body>
 <header>
   <h1>__TITLE__ <span>· hypergraph</span></h1>
+  <div id="live" hidden title="This page is polling a sibling data file"><i></i><span>live</span></div>
   <button class="iconbtn" id="fitBtn" title="Fit graph to window">
     <svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4"/></svg>
   </button>
@@ -4483,6 +4529,107 @@ document.getElementById("svgBtn").addEventListener("click", () => {
   URL.revokeObjectURL(a.href);
 });
 
+// -------------------------------------------------------------------- live
+// `viz --live` writes a sibling JSON file and sets DATA.live. The page then
+// re-reads that file on an interval and pulses whatever is new.
+//
+// This is the one feature that breaks the page's self-contained property, which
+// is why it exists only when the flag asked for it: without DATA.live not a byte
+// of network code runs, and the default output still fetches nothing.
+//
+// Browsers refuse cross-file fetch from file://, so a live page has to be served
+// over http. Rather than fail silently, the indicator says so and polling stops.
+
+const LIVE_MAX_FAILS = 3;
+const PULSE_MS = 1800;
+
+function liveSignature(data) {
+  // Cheap and sufficient: what exists, and when the graphs were exported.
+  return [data.record.nodes.length, data.state.nodes.length, data.links.length,
+          data.record.exported_at, data.state.exported_at,
+          data.reconciliation.high_water_mark].join("|");
+}
+
+function liveStatus(text, tone) {
+  const box = document.getElementById("live");
+  if (!box) return;
+  box.hidden = false;
+  box.dataset.tone = tone;
+  box.querySelector("span").textContent = text;
+}
+
+// A ring drawn around the node and faded out with SMIL — no CSS, so it works the
+// same way in the exported SVG, and no timers that could outlive a re-render.
+function pulseNode(slug) {
+  const g = nodeEls[slug];
+  if (!g) return;
+  const d = dimsOf(slug), pad = 7;
+  const circle = styleFor(bySlug[slug]) === "circle";
+  const ring = el("rect", {
+    x: (circle ? -d.w / 2 : 0) - pad, y: (circle ? -d.h / 2 : 0) - pad,
+    width: d.w + pad * 2, height: d.h + pad * 2, rx: 12,
+    fill: "none", stroke: T().status.open, "stroke-width": 3,
+    "pointer-events": "none",
+  });
+  ring.appendChild(el("animate", { attributeName: "opacity", from: 0.95, to: 0,
+    dur: (PULSE_MS / 1000) + "s", fill: "freeze" }));
+  g.appendChild(ring);
+  setTimeout(() => ring.remove(), PULSE_MS + 200);
+}
+
+// Swap in a fresh payload. Everything derived from DATA has to be dropped, and
+// the list is the point: a cache that survives a data swap is a stale drawing
+// that looks live.
+function adoptData(fresh) {
+  const before = new Set(Object.keys(bySlug));
+  DATA.record = fresh.record;
+  DATA.state = fresh.state;
+  DATA.links = fresh.links;
+  DATA.reconciliation = fresh.reconciliation;
+  for (const slug in bySlug) delete bySlug[slug];
+  DATA.record.nodes.forEach(n => bySlug[n.slug] = { graph: "record", node: n });
+  DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
+  _hyper = null;
+  _spineRank = null;
+  blobCache.clear();
+  for (const k in positions) delete positions[k];   // layouts depend on the data
+  if (selected && !bySlug[selected]) selected = null;
+  hovered = null;
+  renderAll();
+  renderPanel();
+  const added = Object.keys(bySlug).filter(s => !before.has(s));
+  added.forEach(pulseNode);
+  return added.length;
+}
+
+function startLive() {
+  if (!DATA.live) return;
+  let signature = liveSignature(DATA), fails = 0, timer = null;
+  liveStatus("live", "ok");
+
+  const poll = () => {
+    // Cache-bust with the signature we already have: no clock is read, so the
+    // page stays deterministic under test.
+    fetch(DATA.live.url + "?v=" + encodeURIComponent(signature), { cache: "no-store" })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+      .then(fresh => {
+        fails = 0;
+        const next = liveSignature(fresh);
+        if (next === signature) { liveStatus("live", "ok"); return; }
+        signature = next;
+        const added = adoptData(fresh);
+        liveStatus(added ? "+" + added + " new" : "updated", "new");
+      })
+      .catch(err => {
+        if (++fails < LIVE_MAX_FAILS) { liveStatus("live · retrying", "warn"); return; }
+        clearInterval(timer);
+        liveStatus("live off — serve over http", "warn");
+        console.warn("[hypergraph] live polling stopped:", err.message);
+      });
+  };
+  timer = setInterval(poll, Math.max(1000, DATA.live.interval_ms || 5000));
+}
+
 // -------------------------------------------------------------------- boot
 // Deep links: #timeline | #frontier | #provenance | #clusters selects that view
 // (the pre-rename hashes #record #state #combo #combination #hyper still work,
@@ -4494,6 +4641,7 @@ const bootView = VIEW_ALIASES[boot] || boot;
 applyPreset(PRESETS[bootView] ? bootView : "clusters");
 if (bySlug[boot]) jumpTo(boot);
 renderPanel();
+startLive();   // no-op unless `viz --live` set DATA.live
 })();
 </script>
 </body>
@@ -4536,6 +4684,14 @@ def main(argv: list[str] | None = None) -> int:
                             "Default none — the impact relation is already the blob "
                             "membership, and 177 edges over 51 nodes is a hairball "
                             "in a figure just as it is on the page")
+    p_viz.add_argument("--live", action="store_true",
+                       help="also write a sibling <output>.data.json and have the page "
+                            "poll it, pulsing nodes that appeared since the last poll. "
+                            "This deliberately breaks the single-file property, which "
+                            "is why it is a flag: serve the directory over http, "
+                            "because browsers block fetch from file://")
+    p_viz.add_argument("--live-interval", type=int, default=5, metavar="SECONDS",
+                       help="how often the live page re-reads the data (default: 5)")
     p_viz.add_argument("--dev", action="store_true",
                        help="assemble the page from tools/viz/ instead of the bundled "
                             "constant (repo checkout only; no rebundle needed to iterate)")
