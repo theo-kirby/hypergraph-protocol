@@ -616,6 +616,12 @@ function neighborhood(slug) {
 }
 
 function matches(node) {
+  // Tags narrow by OR within the selection: clicking two clusters asks for either,
+  // which is what a reader clicking a second chip means. Search narrows on top (AND).
+  if (activeTags.size) {
+    const tags = node.tags || [];
+    if (!tags.some(t => activeTags.has(t))) return false;
+  }
   if (!query) return true;
   return (node.slug + " " + node.title + " " + node.content).toLowerCase().includes(query);
 }

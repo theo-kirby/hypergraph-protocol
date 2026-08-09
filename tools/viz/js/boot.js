@@ -5,6 +5,7 @@
 document.body.dataset.theme = theme;
 applySide();
 registerPucks();   // synthetic entries for collapsed hyperedges
+buildTagChips();   // no-op on a graph that carries no tags
 initTuning();      // BLOB gets its config/stored values before anything is drawn
 const boot = decodeURIComponent(location.hash.slice(1));
 const bootView = VIEW_ALIASES[boot] || boot;

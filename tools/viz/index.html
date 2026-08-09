@@ -44,6 +44,9 @@
         <button data-preset="clusters" title="Which work belongs to the same claim">Clusters</button>
         <button data-preset="everything" title="Everything on">Everything</button>
       </div>
+      <!-- Tag chips. Only rendered when the graph carries tags; a project that
+           tags nothing sees no control at all. -->
+      <div id="tagchips" hidden></div>
       <div id="toggles">
         <div class="seg" data-key="graphs">
           <span class="lbl">Graphs</span>

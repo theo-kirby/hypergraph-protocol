@@ -1235,6 +1235,7 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
             "is_hwm": node.node_id in hwm_ids,
             "unreconciled": unreconciled,
             "impacts": impacts, "impact_none": none_reason,
+            "tags": list(node.tags),
             "layer": ly, "order": od, "seq": seq,
             # timeline view: real chronological rank, and the `git log` lane
             "chrono": chrono_index[node.node_id], "lane": lanes[node.node_id],
@@ -1275,6 +1276,7 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
                         if p in id_to_slug["state"]],
             "content": node.content, "is_root": is_root,
             "status": status, "frontier": bool(status in FRONTIER),
+            "tags": list(node.tags),
             "layer": ly, "order": od, "seq": seq,
             "prov_count": len(prov_slugs),
             "last_record_at": max(touched) if touched else None,
@@ -1285,11 +1287,28 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
     project = (config.get("project")
                or (state_root.title.split(" — ")[0].strip() if state_root else "")
                or "project")
+    # Tag chips: the declared vocabulary where there is one, synthesized from the
+    # name's digest where there is not, so an undeclared name still renders and two
+    # machines agree on its colour without coordinating.
+    used: dict[str, int] = {}
+    for group in (record_nodes, state_nodes):
+        for entry in group:
+            for name in entry["tags"]:
+                used[name] = used.get(name, 0) + 1
+    try:
+        vocab = load_tag_vocab(tags_file_for(config, Path(
+            config.get("graph_dir") or DEFAULT_GRAPH_DIR)))
+    except LocalGraphError:
+        vocab = {}          # a broken vocabulary must not stop the page rendering
+    tag_defs = [{"name": name, "count": count,
+                 **{k: v for k, v in tag_def(name, vocab).items() if k != "name"}}
+                for name, count in sorted(used.items())]
     return {
         "project": project,
         "record": {"root": record_root.ref if record_root else None, "nodes": record_nodes},
         "state": {"root": state_root.ref if state_root else None, "nodes": state_nodes},
         "links": links,
+        "tag_defs": tag_defs,
         "reconciliation": {"high_water_mark": hwm, "reconciled_at": ts,
                            "high_water_frontier": frontier},
         # Page settings, not graph data — the `viz:` block of the config, baked in
@@ -6387,6 +6406,16 @@ VIZ_TEMPLATE = r"""<!doctype html>
   #presets button:hover { color:var(--ink); border-color:var(--muted); }
   #presets button.active { background:var(--page); color:var(--ink);
                            font-weight:600; border-color:var(--muted); }
+  /* tag chips: annotation, so they filter and never restyle a node — a tag has no
+     standing in the protocol and the drawing must not imply it has one */
+  #tagchips { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
+  #tagchips[hidden] { display:none; }
+  #tagchips button { border:1px solid transparent; font:inherit; font-size:11px;
+                     padding:2px 8px; border-radius:999px; cursor:pointer;
+                     opacity:.55; white-space:nowrap; }
+  #tagchips button:hover { opacity:.85; }
+  #tagchips button.active { opacity:1; border-color:var(--ink); font-weight:600; }
+  #tagchips button i { font-style:normal; opacity:.7; margin-left:5px; }
   #toggles { margin-top:12px; display:flex; flex-direction:column; gap:8px; }
   .seg { display:flex; align-items:center; gap:8px; }
   .seg[hidden] { display:none; }  /* layout-specific controls — see syncControls */
@@ -6531,6 +6560,9 @@ VIZ_TEMPLATE = r"""<!doctype html>
         <button data-preset="clusters" title="Which work belongs to the same claim">Clusters</button>
         <button data-preset="everything" title="Everything on">Everything</button>
       </div>
+      <!-- Tag chips. Only rendered when the graph carries tags; a project that
+           tags nothing sees no control at all. -->
+      <div id="tagchips" hidden></div>
       <div id="toggles">
         <div class="seg" data-key="graphs">
           <span class="lbl">Graphs</span>
@@ -6785,6 +6817,10 @@ function activePreset() {
 
 let theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 let selected = null, query = "";
+// Active tag chips. Empty means "no tag filter", which is not the same as "no tags
+// selected" — a filter that hid everything by default would make the control a
+// mode rather than a lens.
+const activeTags = new Set();
 const tf = {}, positions = {}, fitDone = {};
 function posFor() {
   const k = layoutKey();
@@ -9096,6 +9132,12 @@ function neighborhood(slug) {
 }
 
 function matches(node) {
+  // Tags narrow by OR within the selection: clicking two clusters asks for either,
+  // which is what a reader clicking a second chip means. Search narrows on top (AND).
+  if (activeTags.size) {
+    const tags = node.tags || [];
+    if (!tags.some(t => activeTags.has(t))) return false;
+  }
   if (!query) return true;
   return (node.slug + " " + node.title + " " + node.content).toLowerCase().includes(query);
 }
@@ -9249,6 +9291,13 @@ function renderPanel() {
     if (node.unreconciled) chips += chip("unreconciled", T().unrec);
     if (node.impact_none != null) chips += chip("impact: none");
   }
+  // Tags last, and in their own colours: they are annotation beside the protocol
+  // facts above, not another one of them.
+  (node.tags || []).forEach(name => {
+    const def = (DATA.tag_defs || []).find(d => d.name === name);
+    chips += `<span class="chip" style="background:${esc((def && def.bg_color) || "")};` +
+             `color:${esc((def && def.text_color) || "")}">${esc(name)}</span>`;
+  });
   let html = `
     <div class="meta">${graph} graph · created ${esc((node.created_at || "").slice(0, 16).replace("T", " "))}</div>
     <h2>${esc(node.title)}</h2>
@@ -9491,6 +9540,26 @@ searchBox.addEventListener("input", e => {
   query = e.target.value.trim().toLowerCase();
   updateDim();
 });
+
+// Tag chips. A filter and nothing else: a tag is annotation, no invariant reads
+// one, so it must never change how a node is *drawn* — that would give a tag the
+// standing in the picture that it does not have in the protocol.
+function buildTagChips() {
+  const box = document.getElementById("tagchips");
+  const defs = DATA.tag_defs || [];
+  if (!defs.length) { box.hidden = true; return; }   // a repo that tags nothing
+  box.hidden = false;
+  box.innerHTML = defs.map(d =>
+    `<button data-tag="${esc(d.name)}" title="${d.count} node${d.count === 1 ? "" : "s"}"` +
+    ` style="background:${esc(d.bg_color)};color:${esc(d.text_color)}">` +
+    `${esc(d.name)}<i>${d.count}</i></button>`).join("");
+  box.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => {
+    const name = btn.dataset.tag;
+    if (activeTags.has(name)) activeTags.delete(name); else activeTags.add(name);
+    btn.classList.toggle("active", activeTags.has(name));
+    updateDim();
+  }));
+}
 
 // The layout's own scenery is content, not decoration: an empty `broken` column
 // is a real answer, and cropping it because it holds no cards would be a lie.
@@ -9892,6 +9961,7 @@ function startLive() {
 document.body.dataset.theme = theme;
 applySide();
 registerPucks();   // synthetic entries for collapsed hyperedges
+buildTagChips();   // no-op on a graph that carries no tags
 initTuning();      // BLOB gets its config/stored values before anything is drawn
 const boot = decodeURIComponent(location.hash.slice(1));
 const bootView = VIEW_ALIASES[boot] || boot;

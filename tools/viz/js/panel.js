@@ -57,6 +57,13 @@ function renderPanel() {
     if (node.unreconciled) chips += chip("unreconciled", T().unrec);
     if (node.impact_none != null) chips += chip("impact: none");
   }
+  // Tags last, and in their own colours: they are annotation beside the protocol
+  // facts above, not another one of them.
+  (node.tags || []).forEach(name => {
+    const def = (DATA.tag_defs || []).find(d => d.name === name);
+    chips += `<span class="chip" style="background:${esc((def && def.bg_color) || "")};` +
+             `color:${esc((def && def.text_color) || "")}">${esc(name)}</span>`;
+  });
   let html = `
     <div class="meta">${graph} graph · created ${esc((node.created_at || "").slice(0, 16).replace("T", " "))}</div>
     <h2>${esc(node.title)}</h2>

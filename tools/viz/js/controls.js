@@ -117,6 +117,26 @@ searchBox.addEventListener("input", e => {
   updateDim();
 });
 
+// Tag chips. A filter and nothing else: a tag is annotation, no invariant reads
+// one, so it must never change how a node is *drawn* — that would give a tag the
+// standing in the picture that it does not have in the protocol.
+function buildTagChips() {
+  const box = document.getElementById("tagchips");
+  const defs = DATA.tag_defs || [];
+  if (!defs.length) { box.hidden = true; return; }   // a repo that tags nothing
+  box.hidden = false;
+  box.innerHTML = defs.map(d =>
+    `<button data-tag="${esc(d.name)}" title="${d.count} node${d.count === 1 ? "" : "s"}"` +
+    ` style="background:${esc(d.bg_color)};color:${esc(d.text_color)}">` +
+    `${esc(d.name)}<i>${d.count}</i></button>`).join("");
+  box.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => {
+    const name = btn.dataset.tag;
+    if (activeTags.has(name)) activeTags.delete(name); else activeTags.add(name);
+    btn.classList.toggle("active", activeTags.has(name));
+    updateDim();
+  }));
+}
+
 // The layout's own scenery is content, not decoration: an empty `broken` column
 // is a real answer, and cropping it because it holds no cards would be a lie.
 function furnitureBounds(pos) {

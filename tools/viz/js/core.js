@@ -165,6 +165,10 @@ function activePreset() {
 
 let theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 let selected = null, query = "";
+// Active tag chips. Empty means "no tag filter", which is not the same as "no tags
+// selected" — a filter that hid everything by default would make the control a
+// mode rather than a lens.
+const activeTags = new Set();
 const tf = {}, positions = {}, fitDone = {};
 function posFor() {
   const k = layoutKey();

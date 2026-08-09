@@ -69,6 +69,16 @@
   #presets button:hover { color:var(--ink); border-color:var(--muted); }
   #presets button.active { background:var(--page); color:var(--ink);
                            font-weight:600; border-color:var(--muted); }
+  /* tag chips: annotation, so they filter and never restyle a node — a tag has no
+     standing in the protocol and the drawing must not imply it has one */
+  #tagchips { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
+  #tagchips[hidden] { display:none; }
+  #tagchips button { border:1px solid transparent; font:inherit; font-size:11px;
+                     padding:2px 8px; border-radius:999px; cursor:pointer;
+                     opacity:.55; white-space:nowrap; }
+  #tagchips button:hover { opacity:.85; }
+  #tagchips button.active { opacity:1; border-color:var(--ink); font-weight:600; }
+  #tagchips button i { font-style:normal; opacity:.7; margin-left:5px; }
   #toggles { margin-top:12px; display:flex; flex-direction:column; gap:8px; }
   .seg { display:flex; align-items:center; gap:8px; }
   .seg[hidden] { display:none; }  /* layout-specific controls — see syncControls */
