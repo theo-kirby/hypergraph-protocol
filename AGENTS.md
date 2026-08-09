@@ -34,8 +34,14 @@ record of this project itself, and your work must land in it.
 ## Map
 
 - `SPEC.md` — the protocol (invariants I1–I8 + conventions).
-- `skills/hypergraph-{init,record,reconcile,orient}/` — the workflows (also
-  installed in `~/.claude/skills`).
+- `skills/hypergraph-{init,record,reconcile,orient,adopt}/` — the workflows.
+  **They are not installed by default.** Claude Code loads skills from
+  `~/.claude/skills` or a project-level `.claude/skills`, and this repo ships
+  neither — so `/hypergraph-record` is an unknown skill until you run
+  `hypergraph skills install` (project) or `--user` (global). Until then, read
+  `skills/<name>/SKILL.md` directly and follow it; the workflow is the file, not
+  the installation. Under a harness that does not read `.claude/skills` at all
+  (pi, for one) that is the only option.
 - `backend/flywheel-adapter.md` — Flywheel MCP call recipes (payload shapes,
   lease → commit → release, 409/429 handling).
 - `tools/hypergraph.py` — `check` / `render` / `viz`; tests in `tests/`.

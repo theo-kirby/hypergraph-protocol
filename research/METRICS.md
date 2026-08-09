@@ -272,9 +272,40 @@ the arm name, never this document.
   two force-pushed over it, one `reset --hard`ed onto another arm's tree and read
   its graph, and all three arm-B seeds shared one Flywheel account holding 458
   nodes from unrelated projects. Repository names are now assigned by the harness
-  from (experiment, arm, seed), the publish helper takes no argument and never
-  force-pushes, and each arm-B seed gets its own Flywheel account, verified empty
-  before launch. `research/boxlab/preflight.py` refuses to launch otherwise.
+  from (experiment, arm, seed), and the publish helper takes no argument and never
+  force-pushes. `research/boxlab/preflight.py` refuses to launch otherwise.
+
+### **[rev-1] DECLARED CONFOUND: arm B's three seeds share one Flywheel account**
+
+The fix above calls for one Flywheel account per arm-B seed, verified empty. **It
+was not available.** Three accounts could not be created, and the Operator's
+decision (2026-08-09) is to run with one, rotated, and accept the consequence.
+
+Stated plainly, because this is the thing a reader is entitled to discount the
+arm-B result over:
+
+- **Arm B is not isolated.** Its three seeds can list, read and overwrite each
+  other's nodes, exactly as on the first run. Arms A and C *are* isolated — their
+  memory is per-box files and a per-run repository — so **the confound is
+  asymmetric and applies to arm B alone.**
+- **Cross-arm contamination within arm B is not ruled out.** If arm B's seeds
+  look correlated, a shared account is a live explanation and must be offered
+  alongside any other.
+- **The account is not empty.** It carries the first run's nodes plus 458 from
+  unrelated past projects. Preflight therefore captures the account's full node-id
+  set immediately before launch, to `research/runs/flywheel-baseline.json`, so
+  every node created during the run window is attributable even though it is not
+  isolated. Attribution is what survives; isolation is what was lost.
+- **`had_prior_state` (§2) reads only nodes created after the baseline**, so the
+  cold-start eligibility gate is not satisfied by another seed's writes or by a
+  football campaign from June.
+- The launch requires an explicit `--shared-flywheel`. Without it preflight still
+  hard-fails, so this can never become the accidental default.
+
+Remaining mitigations, **not implemented**, for whoever picks this up: a
+harness-seeded per-run root node in Flywheel, and a per-run tag applied to every
+node the run creates. Both narrow attribution further; neither restores isolation.
+Only separate accounts do that.
 - **[rev-1] Both protocol arms get their skill layer, or neither does.** The
   Flywheel skill and the hypergraph skills bundle are both host-agent conventions
   that pi does not read. Under pi neither arm gets one; under Claude Code both

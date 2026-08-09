@@ -876,3 +876,67 @@ def test_the_driver_probes_prior_state_before_it_kills_the_session():
     from boxlab import experiment
     src = inspect.getsource(experiment._run_one)
     assert src.index("_had_prior_state(") < src.index("cold-start cut: killing")
+
+
+# ---- the shared-Flywheel confound (METRICS.md rev-1) --------------------------
+
+def test_a_shared_flywheel_account_is_refused_by_default():
+    """It must never become the accidental default — it is opt-in only."""
+    from boxlab.config import LabConfig
+    from boxlab.preflight import Report, check_flywheel_isolation
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
+    report = Report(label="t")
+    check_flywheel_isolation(cfg, [1, 2, 3], report)  # allow_shared defaults False
+    assert not report.ok
+    assert any("per-run Flywheel key" in c.name or "distinct key" in c.name
+               for c in report.failures)
+
+
+def test_opting_into_a_shared_account_records_it_as_a_confound(monkeypatch):
+    """Accepted, but never silently: it lands in the report as its own line."""
+    from boxlab import preflight as pf
+    from boxlab.config import LabConfig
+    monkeypatch.setattr(pf, "flywheel_node_ids", lambda url, key: ["a", "b", "a"])
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
+    report = pf.Report(label="t")
+    pf.check_flywheel_isolation(cfg, [1, 2, 3], report, allow_shared=True)
+    assert report.ok, [c.name for c in report.failures]
+    names = " ".join(c.name for c in report.checks)
+    assert "CONFOUND ACCEPTED" in names
+    assert "baseline captured" in names
+
+
+def test_an_unreadable_shared_account_still_fails(monkeypatch):
+    """Unattributable is as disqualifying as unisolated — None is not zero."""
+    from boxlab import preflight as pf
+    from boxlab.config import LabConfig
+    monkeypatch.setattr(pf, "flywheel_node_ids", lambda url, key: None)
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
+    report = pf.Report(label="t")
+    pf.check_flywheel_isolation(cfg, [1, 2, 3], report, allow_shared=True)
+    assert not report.ok
+
+
+def test_the_baseline_is_written_so_the_run_stays_attributable(monkeypatch, tmp_path):
+    """Isolation was lost; attribution is what the baseline preserves."""
+    import json
+    from boxlab import preflight as pf
+    from boxlab.config import LabConfig
+    monkeypatch.setattr(pf, "flywheel_node_ids",
+                        lambda url, key: ["n1", "n2", "n2", "n3"])
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
+    out = tmp_path / "flywheel-baseline.json"
+    pf.check_flywheel_isolation(cfg, [1, 2, 3], pf.Report(label="t"),
+                                allow_shared=True, baseline_path=out)
+    saved = json.loads(out.read_text())
+    assert saved["node_ids"] == ["n1", "n2", "n3"]  # deduped and sorted
+    assert saved["count"] == 3
+    assert saved["captured_for_seeds"] == [1, 2, 3]
+
+
+def test_metrics_declares_the_shared_account_confound():
+    """A confound that is not written down is not declared."""
+    text = (ROOT / "research" / "METRICS.md").read_text(encoding="utf-8")
+    assert "DECLARED CONFOUND" in text
+    assert "applies to arm B alone" in text
+    assert "--shared-flywheel" in text

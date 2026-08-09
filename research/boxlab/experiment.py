@@ -437,7 +437,8 @@ def run_experiment(config: LabConfig, *, arms: List[str], seeds: List[int],
                    outdir: Path = Path("research/runs"),
                    budget_usd: Optional[float] = None,
                    experiment: str = EXPERIMENT_SLUG,
-                   skip_preflight: bool = False) -> Dict[str, RunResult]:
+                   skip_preflight: bool = False,
+                   allow_shared_flywheel: bool = False) -> Dict[str, RunResult]:
     """Run every (arm, seed) concurrently and return the results by run id."""
     harness = harness or get_harness()
     for arm in arms:
@@ -448,8 +449,11 @@ def run_experiment(config: LabConfig, *, arms: List[str], seeds: List[int],
     # taken, a drifted primer — would have produced a completed run that could
     # not answer the question it was launched to answer.
     if not skip_preflight:
-        report = preflight.run_preflight(config, arms=arms, seeds=seeds,
-                                         harness=harness, experiment=experiment)
+        outdir.mkdir(parents=True, exist_ok=True)
+        report = preflight.run_preflight(
+            config, arms=arms, seeds=seeds, harness=harness,
+            experiment=experiment, allow_shared_flywheel=allow_shared_flywheel,
+            baseline_path=outdir / "flywheel-baseline.json")
         print(report.render(), flush=True)
         if not report.ok:
             raise RuntimeError(

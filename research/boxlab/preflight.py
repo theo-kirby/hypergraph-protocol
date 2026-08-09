@@ -35,6 +35,7 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import provision
@@ -120,6 +121,44 @@ def _github(path: str, token: str, *, method: str = "GET",
         return 0, {"message": str(exc)}
 
 
+def flywheel_node_ids(api_url: str, key: str, *, page_size: int = 100,
+                      max_pages: int = 40) -> Optional[List[str]]:
+    """Every node id visible to `key`, or None if the account cannot be read.
+
+    This is the **baseline** for a shared-account run. With one account across
+    three seeds the arms are not isolated — they can list and read each other's
+    nodes, and 458 unrelated nodes were already there — so isolation is
+    impossible. What is still recoverable is *attribution*: an id captured before
+    launch and absent after is not this experiment's, and every id that appears
+    later belongs to the run window. That turns an uninterpretable measure into a
+    weaker but honest one, and the confound is declared in METRICS.md rather than
+    quietly absorbed.
+    """
+    ids: List[str] = []
+    for page in range(1, max_pages + 1):
+        payload = {"jsonrpc": "2.0", "id": page, "method": "tools/call",
+                   "params": {"name": "flywheel_list_nodes",
+                              "arguments": {"owners": ["me"], "page": page,
+                                            "page_size": page_size}}}
+        request = urllib.request.Request(
+            api_url.rstrip("/") + "/mcp-server", data=json.dumps(payload).encode(),
+            method="POST",
+            headers={"Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream",
+                     "User-Agent": "boxlab-preflight"})
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                envelope = json.loads(response.read().decode("utf-8", "replace"))
+            body = json.loads(envelope["result"]["content"][0]["text"])
+        except Exception:
+            return None if not ids else ids
+        ids.extend(str(n.get("node_id")) for n in body.get("nodes") or [])
+        if not body.get("has_more"):
+            break
+    return ids
+
+
 def flywheel_node_count(api_url: str, key: str) -> Optional[int]:
     """Total nodes visible to `key`, or None when the account cannot be read.
 
@@ -191,8 +230,44 @@ def check_primer_invariants(arms: List[str], report: Report) -> None:
 
 
 def check_flywheel_isolation(config: LabConfig, seeds: List[int],
-                             report: Report) -> None:
-    """One account per arm-B seed, and every one of them empty."""
+                             report: Report, *, allow_shared: bool = False,
+                             baseline_path: Optional[Path] = None) -> None:
+    """One account per arm-B seed, and every one of them empty.
+
+    `allow_shared` is the Operator's explicit acceptance that this is not
+    available — three Flywheel accounts could not be created (2026-08-09). It
+    does not make the run isolated and does not pretend to: the arms can still
+    list and read each other's nodes. What it does is capture the account's node
+    ids **before** launch so every node created during the run is attributable,
+    and register the confound as a passing-but-loud check so it appears in the
+    report rather than in a footnote nobody reads.
+    """
+    if allow_shared and len(seeds) > 1:
+        key = config.flywheel_key_for("flywheel", seeds[0], allow_shared=True)
+        if not key:
+            report.add("flywheel · shared account reachable", False,
+                       "no FLYWHEEL_API_KEY at all")
+            return
+        ids = flywheel_node_ids(config.flywheel_api_url, key)
+        if ids is None:
+            report.add("flywheel · shared account reachable", False,
+                       "account unreadable — a run against it is unattributable")
+            return
+        if baseline_path is not None:
+            baseline_path.parent.mkdir(parents=True, exist_ok=True)
+            baseline_path.write_text(json.dumps(
+                {"captured_for_seeds": seeds, "node_ids": sorted(set(ids)),
+                 "count": len(set(ids))}, indent=2), encoding="utf-8")
+        report.add("flywheel · shared account baseline captured", True,
+                   f"{len(set(ids))} pre-existing node(s) recorded"
+                   + (f" → {baseline_path}" if baseline_path else "")
+                   + "; nodes created after this point are the run's")
+        report.add("flywheel · CONFOUND ACCEPTED (arms not isolated)", True,
+                   f"seeds {seeds} share one account by Operator decision — they "
+                   "can list and read each other's nodes. Declared in METRICS.md; "
+                   "cross-arm contamination is NOT ruled out for arm B.")
+        return
+
     problems = config.flywheel_isolation_problems("flywheel", seeds)
     if len(seeds) == 1 and problems:
         # A single run cannot contaminate a sibling. The shared key is allowed,
@@ -302,7 +377,9 @@ def check_version_pin(report: Report) -> None:
 def run_preflight(config: LabConfig, *, arms: List[str], seeds: List[int],
                   harness: Optional[Harness] = None,
                   experiment: str = EXPERIMENT_SLUG,
-                  create_repos: bool = True) -> Report:
+                  create_repos: bool = True,
+                  allow_shared_flywheel: bool = False,
+                  baseline_path: Optional[Path] = None) -> Report:
     """Everything checkable before a box exists. Costs nothing; gates the launch."""
     harness = harness or get_harness()
     report = Report(label=f"preflight · arms {','.join(arms)} · seeds {seeds}")
@@ -312,7 +389,9 @@ def run_preflight(config: LabConfig, *, arms: List[str], seeds: List[int],
     if "hypergraph" in arms:
         check_version_pin(report)
     if "flywheel" in arms:
-        check_flywheel_isolation(config, seeds, report)
+        check_flywheel_isolation(config, seeds, report,
+                                 allow_shared=allow_shared_flywheel,
+                                 baseline_path=baseline_path)
     ensure_repos(config, arms, seeds, report, experiment=experiment,
                  create=create_repos)
     return report

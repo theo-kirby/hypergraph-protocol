@@ -232,7 +232,9 @@ def cmd_preflight(args) -> int:
     seeds = list(range(1, args.seeds + 1))
     result = preflight.run_preflight(
         config, arms=arms, seeds=seeds, harness=harness,
-        experiment=args.experiment, create_repos=not args.no_create_repos)
+        experiment=args.experiment, create_repos=not args.no_create_repos,
+        allow_shared_flywheel=args.shared_flywheel,
+        baseline_path=Path(args.outdir) / "flywheel-baseline.json")
     print(result.render())
     if args.out:
         Path(args.out).write_text(json.dumps(result.to_dict(), indent=2),
@@ -275,7 +277,8 @@ def cmd_run(args) -> int:
         config, arms=arms, seeds=seeds, harness=harness,
         duration_s=hours * 3600, coldstart_frac=args.coldstart_frac,
         outdir=outdir, budget_usd=args.budget, experiment=args.experiment,
-        skip_preflight=args.skip_preflight)
+        skip_preflight=args.skip_preflight,
+        allow_shared_flywheel=args.shared_flywheel)
 
     print("\n== results ==")
     for rid in sorted(results):
@@ -494,6 +497,12 @@ def main(argv=None) -> int:
     pf.add_argument("--experiment", default=EXPERIMENT_SLUG)
     pf.add_argument("--no-create-repos", action="store_true",
                     help="check names without reserving them on GitHub")
+    pf.add_argument("--outdir", default="research/runs")
+    pf.add_argument("--shared-flywheel", action="store_true",
+                    help="accept ONE Flywheel account across arm-B seeds. The "
+                         "arms are then not isolated; the account's node ids are "
+                         "captured as a baseline so the run stays attributable, "
+                         "and the confound is declared in METRICS.md.")
     pf.add_argument("-o", "--out", help="write the report as JSON")
     pf.set_defaults(func=cmd_preflight)
 
@@ -525,6 +534,9 @@ def main(argv=None) -> int:
     pr.add_argument("--experiment", default=EXPERIMENT_SLUG)
     pr.add_argument("--skip-preflight", action="store_true",
                     help="launch without the pre-launch gate (you should not)")
+    pr.add_argument("--shared-flywheel", action="store_true",
+                    help="accept ONE Flywheel account across arm-B seeds "
+                         "(declared confound — see METRICS.md)")
     pr.add_argument("--yes", action="store_true")
     pr.set_defaults(func=cmd_run)
 
