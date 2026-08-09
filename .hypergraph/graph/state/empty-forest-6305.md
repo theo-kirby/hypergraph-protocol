@@ -28,10 +28,12 @@ Status: working
 
 - [scope: mirroring a local graph to Flywheel | confidence: high | evidence: old-dawn-8747, kind-valley-8040] Flywheel mints its own slug on create, so nodes authored locally after the switch live there under a different slug while the markdown still cites the local one — `check` against a Flywheel export reported 25 dangling-pointer violations (I4/I5/I7) on a graph that checks 0/0 from the node files. The mirror is a readable projection, never the thing you check; slugs cross the boundary only through each file's `flywheel:` block.
 - [scope: deferring slug translation on push | confidence: medium | evidence: kind-valley-8040] translation would make the mirror non-identical to source, breaking the byte-identical `content_sha256` change detector and forcing two-way translation on every update; the cost of *not* translating is now measured (above) rather than assumed.
+- [scope: reading command output over ssh in this codebase | confidence: high | evidence: northern-tree-5868] `BoxController.ssh_exec` returns stdout followed by stderr, so an ssh host-key banner lands *after* the payload, not before. Prefix-stripping a base64 blob therefore leaves trailing junk and fails with "Incorrect padding". Sentinel-frame both ends of any binary or structured payload.
 - [scope: executing mirror pushes by hand instead of from plan bytes | confidence: high | evidence: careful-harbor-3902] `push --plan` cannot detect manual-push byte deviations — frontmatter shas are stamped from local bytes, so a hand-transcribed mirror write that drifts (lost newline, dropped blank line) looks clean to the planner; only `push --verify` against a fresh export catches it. Always push content extracted verbatim from the plan JSON.
 
 ## Provenance
 
+- northern-tree-5868 — ssh stdout/stderr ordering, found while harvesting binary payloads from boxes
 - patient-limit-9007 — Operator directive opening this gap, with constraints and sequencing
 - old-dawn-8747 — the adapter, the CLI subcommands, and this repo's migration onto it
 - kind-valley-8040 — first live mirror push; measured mirror-consistency limits
