@@ -1,8 +1,8 @@
 # Hypergraph
 
 A protocol for keeping research projects legible to fresh agents. Hypergraph maintains
-**two graphs per project** on top of a graph store — [markdown files in your
-repo](backend/local-adapter.md), or a hosted one like [Flywheel](backend/flywheel-adapter.md):
+**two graphs per project**, kept as [markdown files committed in your
+repo](backend/local-adapter.md):
 
 - **Record graph** — the append-only log of everything that happened: decisions,
   experiments, evidence, dead ends. Optimized for audit, not orientation.
@@ -24,25 +24,26 @@ rule: new directions (including Operator directives) enter as decision record no
 whose impacts open `Status: open` state nodes — the frontier carries intent as claims
 about gaps, never as task lists.
 
-## Two backends
+## Where the graphs live
 
-The protocol is written against a [thin abstract backend
-interface](backend/INTERFACE.md) — ~10 operations — and two adapters implement it. Pick
-one at init time; `backend:` in `.hypergraph/config.yml` is what every skill dispatches
-on.
+In your repo. Each node is a committed markdown file under
+`.hypergraph/graph/<record|state>/<slug>.md` — frontmatter carrying identity and parent
+slugs, body carrying the content verbatim
+([local-adapter.md](backend/local-adapter.md)). Nothing to sign in to, nothing to
+install a server for: the graphs travel with the repo, work offline, merge through git,
+and check in CI.
 
-| | **`local`** ([adapter](backend/local-adapter.md)) | **`flywheel`** ([adapter](backend/flywheel-adapter.md)) |
-|---|---|---|
-| Source of truth | committed `.md` files in your repo | hosted graph store over MCP |
-| Requires | nothing (offline, no account) | Flywheel MCP |
-| Writes | `hypergraph new` / `update` | `flywheel_commit_new_node` / lease→commit |
-| Op 7 concurrency | body-hash CAS (`--expect`) + git | `base_committed_revision` (409) |
-| Good for | solo/offline work, the graph travelling with the repo, CI | hosting, cloud agents, a graph shared across repos |
+There is no backend to choose. The protocol is still *written* against a [thin abstract
+interface](backend/INTERFACE.md) — ~10 operations — but that is a portability property,
+not a setting: it is what a replacement store would have to satisfy, and why nothing in
+the spec above the Storage section mentions files.
 
-Flywheel is the **recommended** path when you want your graph reachable by agents that
-aren't sitting in your working tree. The local backend is fully independent of it, and
-the two compose: `backend: local` + `mirror: flywheel` keeps the files canonical and
-Flywheel a regenerable projection, refreshed at the end of each reconcile.
+**Optionally**, `hypergraph push` mirrors your committed node files to a hosted
+[Flywheel](https://flywheel.paradigma.dev) graph you own, so agents that aren't sitting
+in your working tree can read them. The mirror is a one-way, regenerable projection —
+your files stay canonical — and it is entirely a property of the CLI: the skills don't
+know it exists, and a project without it never touches that path
+([mirror.md](backend/mirror.md)).
 
 ## What ships
 
@@ -57,8 +58,8 @@ Flywheel a regenerable projection, refreshed at the end of each reconcile.
   below); `viz` emits a self-contained interactive HTML visualization — four views
   (Timeline, Frontier, Provenance, Clusters), each with a layout that fits its data
   (zero JS dependencies, no network; opens straight from `file://`), or an
-  excaligraph spec for hand-editable excalidraw figures; and
-  `export`/`import`/`new`/`update`/`push` implement the local backend.
+  excaligraph spec for hand-editable excalidraw figures; `export`/`import`/`new`/
+  `update` are the storage layer, and `push`/`sync`/`mirror` the optional mirror.
 - **[templates/](templates/)** — the exact markdown shapes the checker parses.
 
 ## Quickstart
@@ -73,7 +74,7 @@ Flywheel a regenerable projection, refreshed at the end of each reconcile.
 #   (fresh session) hypergraph-orient → frontier brief in ≤ ~6 tool calls
 ```
 
-The local backend, standalone — no MCP anywhere in this loop:
+The whole loop, in the repo — no account, no network:
 
 ```bash
 hypergraph new record --title "Fixed the streaming parser" --body body.md \
@@ -84,14 +85,14 @@ uv run tools/hypergraph.py check --record .hypergraph/cache/record.json \
 git add .hypergraph/graph                             # the memory travels with the repo
 ```
 
-Already on Flywheel — or adopting a repo with real history? Run the
+Adopting a repo with real history — or an existing hosted graph? Run the
 `hypergraph-adopt` skill: it imports the legacy graph verbatim (`hypergraph import
 --fork` preserves node_ids and slugs, so provenance and the high-water mark stay
 valid), draws an adoption epoch so legacy nodes are exempt from template compliance,
 and distills an honest state graph from what the project actually knows. The import
-is a **fork**: the source graph stays frozen as the archive, and the project
-re-publishes its *whole* imported history to a mirror it owns, with the original
-topology and a lineage pointer at the mirror root naming where it came from.
+is a **fork**: the source graph stays frozen as the archive, and the repo becomes the
+continuing graph, owning its whole history with the original topology. Artifacts do
+not travel — they stay on the archive, and the adopted project says so.
 
 Checker/renderer/visualizer, standalone:
 
@@ -178,12 +179,13 @@ drawing it again as edges says nothing new.
 
 ```
 SPEC.md                     the protocol (invariants + conventions)
-backend/INTERFACE.md        ~10 abstract backend operations
-backend/local-adapter.md    op → node files + hypergraph CLI (git-native)
-backend/flywheel-adapter.md op → Flywheel MCP call recipes
-skills/hypergraph-*/        the five skills (install.sh symlinks these)
+backend/INTERFACE.md        ~10 abstract operations — the portability contract
+backend/local-adapter.md    op → node files + hypergraph CLI (git-native; the one impl)
+backend/mirror.md           optional one-way mirroring — CLI internals, not agent-facing
+backend/flywheel-adapter.md the host's payload/lease contract, for the mirror code only
+skills/hypergraph-*/        the five skills (.claude/skills/ symlinks these)
 templates/                  record-node / state-node / config shapes
-tools/hypergraph.py         checker + renderer + visualizer + local backend (uv script)
+tools/hypergraph.py         checker + renderer + visualizer + storage + mirror (uv script)
 tools/bundle_viz.py         dev tool: bundles tools/viz/* into the page constant
 tools/viz/                  the viz page's sources (html + css + js parts)
 tools/fixtures/             test fixtures (clean, violations, local-graph, self)

@@ -1,8 +1,7 @@
 # Hypergraph Protocol — v0.0.2
 
-Hypergraph is a protocol for maintaining **two graphs per research project** on top of a
-graph store — either [markdown files in the repo](backend/local-adapter.md) or a hosted
-store such as [Flywheel](backend/flywheel-adapter.md):
+Hypergraph is a protocol for maintaining **two graphs per research project**, kept as
+[markdown files committed in the repo](backend/local-adapter.md):
 
 - **Record graph** — the append-only historical log of everything that happened:
   decisions, experiments, evidence, dead ends. Topology is causal/chronological.
@@ -24,10 +23,10 @@ handful of tool calls instead of traversing thousands of record nodes.
   for typo-level fixes that don't change meaning).
 - **State node** — a node in the state graph. Mutable, rewritten in place by
   reconciliation. Represents one component/capability/concern of the project.
-- **Slug** — the backend's immutable human-readable node handle. For Flywheel:
-  `adjective-noun-####` (e.g. `quiet-snow-3839`). Slugs are how the two graphs point at
-  each other; cross-graph pointers are **structured markdown, never graph edges** —
-  graph edges between the two DAGs would topologically merge them.
+- **Slug** — a node's immutable human-readable handle: `adjective-noun-####` (e.g.
+  `quiet-snow-3839`). Slugs are how the two graphs point at each other; cross-graph
+  pointers are **structured markdown, never graph edges** — graph edges between the two
+  DAGs would topologically merge them.
 - **Frontier** — the set of state nodes with status `open`, `broken`, or `blocked`.
   This is what a fresh agent should read first.
 - **High-water mark (HWM)** — the most recent record node whose declared state impact
@@ -156,14 +155,12 @@ I1) or reconcile hallucinated (fix: rewrite the state node from its citations).
 
 - **Record topology is causal.** Choose a record node's parent by causal relation —
   "this work followed from that result" — not recency, and never default to root-only
-  branching (per the backend's own topology guidance). Independent workstreams may
-  branch from the root.
+  branching. Independent workstreams may branch from the root.
 - **State topology mirrors architecture.** State children of the state root are the
   project's components/capabilities. Depth stays shallow (2–3 levels). Reorganizing
   state topology is a reconcile-only operation and needs a decision record node.
-- **Record nodes carry repo context.** When code is involved, record the commit SHA in
-  `## Repo` and in the backend's repo-context fields (`repo_url`, `branch_name`,
-  `head_commit_sha`).
+- **Record nodes carry repo context.** When code is involved, record the repo, branch
+  and commit SHA in `## Repo` (`hypergraph new record --repo-auto` fills it from git).
 - **Evidence lives on record nodes.** Artifacts (logs, plots, datasets) attach to
   record nodes, never state nodes. State nodes point at them via provenance slugs.
 - **State stays small.** The whole state graph should be readable in one sitting.
@@ -191,22 +188,24 @@ epoch:
   the newest legacy node; in a ground-up (mode-B) adoption it is the newest
   authored prehistory node — both resolve locally, and a graph has exactly one
   parentless root. Only in epoch-split mode (huge graphs; older history left on
-  the archive backend) is the marker itself the local record root, recording the
-  archive lineage in its content — the local backend rejects parent slugs that
-  don't resolve locally, so a cross-backend parent edge is not representable.
+  the archive) is the marker itself the local record root, recording the archive
+  lineage in its content — parent slugs that don't resolve locally are rejected,
+  so an edge pointing into the archive is not representable in the first place.
 - Legacy history is never truncated: it is either imported verbatim or referenced
   via the config's `archive:` block (see hypergraph-adopt).
 - **A full import is a fork.** The imported nodes keep the archive's ids as
-  provenance only (`origin:` in the node file), and the project **re-publishes its
-  whole imported history to a mirror it owns**, with the original topology. The
-  archive stays frozen and read-only: it is the artifact pointer and nothing more.
-  Artifacts do not travel — the local backend has no artifact operation — and the
-  mirror record root says so, in a body generated from the config `archive:` block.
-  Mirror verification runs against the project's own roots alone; splicing archive
-  anchors into the verify export hides exactly this gap.
-- **The mirror projects the repo, never the archive.** A continuing graph is not a
-  copy of the graph it forked from, so mirror root titles carry no "mirror of the
-  legacy graph" framing — the lineage belongs in the root's body.
+  provenance only (`origin:` in the node file); the repo becomes the continuing
+  graph and owns its whole history, with the original topology. The archive stays
+  frozen and read-only: it is the artifact pointer and nothing more.
+- **Artifacts do not travel.** The storage layer has no artifact operation, so
+  anything the archive holds as an attachment stays on the archive. A continuing
+  graph must say so explicitly rather than let its completeness be assumed.
+- **A continuing graph is not a copy of the graph it forked from.** Lineage is
+  content: it belongs in a node body that names the archive and states what did and
+  did not come across — never in a title, and never as a structural pretence that
+  the two graphs are one. (If the project also mirrors itself to a hosted store, the
+  mirror projects the repo and never the archive; mechanics live in
+  [backend/mirror.md](backend/mirror.md).)
 
 ## Forward work and Operator directives
 
@@ -256,12 +255,11 @@ Created by the `hypergraph-init` skill (day zero) or the `hypergraph-adopt` skil
 - `.hypergraph/config.yml` — project name, record root and state root (node_id + slug);
   adopted projects add `epoch:` and, for imported legacy graphs, `archive:` (which
   also feeds `push --lineage`). See [templates/config.example.yml](templates/config.example.yml).
-- `.hypergraph/graph/{record,state}/<slug>.md` — the node files, under the `local`
-  backend. Frontmatter carries identity and edges, plus two optional blocks that are
-  never confused with each other: **`origin:`** — where an imported node came from
-  (immutable provenance, written once by `import --fork`, read by nothing), and
-  **`flywheel:`** — this project's own mirror identity for the node (written only by
-  `push --record-result`). Neither is read by `check`.
+- `.hypergraph/graph/{record,state}/<slug>.md` — the node files: frontmatter carrying
+  identity and parent slugs, body carrying the content verbatim. One optional block is
+  protocol — **`origin:`**, where an imported node came from (immutable provenance,
+  written once by `import --fork`). A **`flywheel:`** block may also appear: mirror
+  bookkeeping that `push` writes and nothing else reads, `check` included.
 - `.hypergraph/cache/{record,state}.json` — graph exports consumed by the checker and
   renderer (gitignored; regenerated by reconcile).
 - `STATE.md` — generated snapshot of the state graph (regenerated by reconcile, never
@@ -288,24 +286,29 @@ state, columns, and force arrangements — where `## Provenance` citations and
 `## State Impact` declarations are drawn as cross-graph links — the markdown
 pointers made visible, still never graph edges.
 
-## Backend
+## Storage
 
-The protocol is written against ~10 abstract operations
-([backend/INTERFACE.md](backend/INTERFACE.md)) so the graph store is swappable. Two
-adapters ship, selected by `backend:` in `.hypergraph/config.yml`:
+The node files **are** the storage: `.hypergraph/graph/<kind>/<slug>.md`, committed to
+the repo ([backend/local-adapter.md](backend/local-adapter.md)). `hypergraph export`
+turns them into the same JSON the checker consumes, so nothing above this section
+depends on how they are kept. No network, no account, no service to be signed in to;
+the graphs travel with the repo, work offline, and merge through git.
 
-- **`local`** ([backend/local-adapter.md](backend/local-adapter.md)) — git-native:
-  each node is a committed markdown file under `.hypergraph/graph/<kind>/<slug>.md`,
-  frontmatter carrying identity and parent slugs, body carrying the content verbatim.
-  `hypergraph export` produces the same JSON the checker consumes, so nothing above
-  this section changes. No network, no account; the graphs travel with the repo.
-- **`flywheel`** ([backend/flywheel-adapter.md](backend/flywheel-adapter.md)) — hosted
-  graph store over MCP; recommended when cloud agents need the graph. It can also be a
-  mirror of a local graph (`mirror: flywheel`), refreshed after each reconcile.
+The protocol is nonetheless written against ~10 abstract operations
+([backend/INTERFACE.md](backend/INTERFACE.md)). That is a **portability property, not a
+choice to be made at init**: it states what a *replacement* store would have to
+satisfy, and it is why nothing above this section mentions files. One implementation
+ships.
 
-Both satisfy op 7's "refuse a stale write": Flywheel by revision, local by a body-hash
-compare-and-swap. Under `local`, `--reconcile` is the mechanical I3 gate — the only
-commands that write state nodes refuse to run without it.
+Op 7 ("refuse a stale write") is satisfied by a body-hash compare-and-swap, and
+`--reconcile` is the mechanical I3 gate — the only commands that write state nodes
+refuse to run without it.
+
+**Mirroring is optional, one-way, and out of band.** `hypergraph push` can publish
+committed node files to a hosted graph the project owns (Flywheel), so the mirror is a
+regenerable projection and the repo stays canonical. It is a property of the tool, not
+of the protocol: **the skills do not know it exists**, and a project with no mirror
+configured never touches that path. Mechanics: [backend/mirror.md](backend/mirror.md).
 
 ## Future work (out of scope for v0.0.2)
 
@@ -321,8 +324,8 @@ is speculative protocol machinery only, not yet worth a standing state claim:
   `check` reporting 0 unreconciled while the live graph is ahead.
 - Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
 - `provenance.json` machine-readable artifact per state node.
-- One-only `current-best` tags for competing approaches (Flywheel supports natively).
-- Local backend: artifacts (op 9) and tags (op 10); a bidirectional local↔Flywheel
-  sync (today git is the merge substrate and the mirror is a one-way projection —
-  with drift detection via `push --verify` and a mirror-only slug legend, but no
-  slug translation inside mirrored bodies).
+- One-only `current-best` tags for competing approaches.
+- Artifacts (op 9) and tags (op 10), which the shipped storage does not implement.
+- Bidirectional sync with a mirror. Today git is the merge substrate and the mirror is
+  a one-way projection — with drift detection via `push --verify` and a mirror-only
+  slug legend, but no slug translation inside mirrored bodies.

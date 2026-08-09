@@ -1,18 +1,22 @@
-# Backend Interface
+# Storage Interface
 
-The Hypergraph skills are written against these abstract operations, not against any
-concrete graph store. Two adapters implement this table:
+The protocol is defined over these abstract operations rather than over any concrete
+graph store. **One implementation ships** — [local-adapter.md](local-adapter.md),
+git-native: markdown node files committed in the repo, driven by
+`tools/hypergraph.py`, no network and no account.
 
-- [local-adapter.md](local-adapter.md) — git-native. Markdown node files committed in
-  the repo, driven by `tools/hypergraph.py`. No network, no account.
-- [flywheel-adapter.md](flywheel-adapter.md) — Flywheel MCP. Hosted, reachable by cloud
-  agents; also usable as a mirror of a local graph.
+So this table is not a menu. It is the **portability contract**: what a replacement
+store would have to satisfy for the rest of SPEC.md to hold unchanged, and the reason
+nothing in the protocol above the Storage section mentions files. There is no
+`backend:` selector to set — storage is not a decision a project makes at init.
 
-`backend:` in `.hypergraph/config.yml` selects which one the skills follow.
-
-Requirements on the backend: a DAG of nodes with markdown content, immutable node IDs,
+Requirements on a store: a DAG of nodes with markdown content, immutable node IDs,
 immutable human-readable slugs, optimistic-locking writes, and JSON export of a
-subgraph. Artifacts and tags are optional.
+subgraph. Artifacts and tags are optional, and the shipped implementation omits both.
+
+Mirroring committed node files to a hosted graph ([mirror.md](mirror.md)) is a separate
+concern and does **not** go through this table: a mirror is a projection the CLI
+writes, not a store the protocol reads.
 
 ## Operations
 
@@ -37,9 +41,9 @@ subgraph. Artifacts and tags are optional.
 - **Two roots, two disjoint DAGs.** No backend edge may ever connect the record graph
   to the state graph (SPEC: pointers are markdown, not edges).
 - **Append vs update.** Record graph uses only ops 1–2 for writes; state graph uses
-  ops 1–2 at init (seeding) and op 7 thereafter. An adapter must make op 7's
+  ops 1–2 at init (seeding) and op 7 thereafter. An implementation must make op 7's
   concurrency story explicit (lease, lock, CAS) — reconcile is single-writer by
-  protocol, but the backend should still refuse a stale write. Flywheel uses
-  `base_committed_revision`; the local backend uses a body-hash CAS (`--expect`).
+  protocol, but the store should still refuse a stale write. The shipped one uses a
+  body-hash CAS (`--expect`), with git as the merge substrate underneath.
 - **Export determinism.** Op 8 output for the same graph revision should be stable
   enough for diffing; ordering by `created_at` then `node_id` is recommended.
