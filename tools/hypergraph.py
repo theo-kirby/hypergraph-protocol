@@ -113,6 +113,7 @@ class Node:
     content: str
     parent_ids: list[str]
     created_at: str
+    tags: list[str] = field(default_factory=list)
 
     @property
     def ref(self) -> str:
@@ -203,6 +204,11 @@ def load_graph(path: Path) -> Graph:
                 raw.get("parent_ids") or raw.get("parents") or raw.get("incoming_ids")
             ),
             created_at=str(raw.get("created_at") or raw.get("committed_at") or ""),
+            # `tags` only — never a mirror export's `tag_ids`. Resolving those needs
+            # the vocabulary, which is not in this file, and a half-resolved list
+            # would read as "these nodes lost their tags".
+            tags=[str(t) for t in (raw.get("tags") or [])
+                  if isinstance(raw.get("tags"), list)],
         )
         if node.node_id:
             nodes[node.node_id] = node
@@ -774,6 +780,7 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
     check_legacy_backend_key(config, report)
     if config_given:
         check_version_skew(config, report)
+        check_tag_vocabulary(record, state, config, report)
     check_conflict_markers(record, report)
     check_conflict_markers(state, report)
     epoch_cutoff = resolve_epoch_cutoff(config, record, report)
@@ -781,6 +788,36 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
     check_state_nodes(record, state, state_root, report)
     check_hwm(record, state, record_root, state_root, report)
     return report
+
+
+def check_tag_vocabulary(record: Graph, state: Graph, config: dict, report: Report) -> None:
+    """The only thing `check` says about tags, and it is a warning.
+
+    A tag is annotation: no invariant reads one, so an undeclared name can never be a
+    violation — that would invent an obligation the spec does not carry. But a project
+    that committed a `tags.yml` has said out loud that it keeps a vocabulary, and a
+    name drifting outside it is worth one line. A project with no `tags.yml` hears
+    nothing at all.
+
+    This is the *only* brake on a taxonomy nothing enforces. Whether it is enough is
+    an open question [rec: simple-ocean-1716], not a settled one."""
+    graph_dir = Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    try:
+        vocab = load_tag_vocab(tags_file_for(config, graph_dir))
+    except LocalGraphError as exc:
+        report.add("warning", "-", "tags", str(exc))
+        return
+    if not any(vocab.get(k) for k in GRAPH_KINDS):
+        return
+    for kind, graph in (("record", record), ("state", state)):
+        declared = declared_tag_names(vocab, kind)
+        for node in sorted(graph.nodes.values(), key=lambda n: n.ref):
+            for name in node.tags:
+                if name not in declared:
+                    report.add("warning", "-", node.ref,
+                               f"tag `{name}` is not declared in this project's "
+                               f"vocabulary — `hypergraph tags add --graph {kind} "
+                               f"{name}` adds it, or drop the tag")
 
 
 def check_since(ref: str, config: dict, report: Report, *, cwd: Path | None = None) -> None:
@@ -1500,8 +1537,16 @@ EXPORT_VERSION = 1
 # Above this many creates in one plan, `push --plan` warns: each create is a mirror
 # write, so a plan this size is a rate-limit and partial-push risk (not a violation).
 PUSH_CREATE_WARN = 200
-FM_ORDER = ("node_id", "slug", "title", "created_at", "parents", "summary",
+# `tags` sits between `summary` and `origin`: it is annotation the author writes,
+# not provenance bookkeeping a tool stamps. Omitted entirely when empty — writing
+# `tags: []` into every node would rewrite every file in every adopting repo for
+# nothing.
+FM_ORDER = ("node_id", "slug", "title", "created_at", "parents", "summary", "tags",
             "origin", "flywheel")
+# Structural bounds on a tag name. Not an invariant — no invariant reads a tag
+# (SPEC: Per-project files). The comma is the one that matters: the CLI transport
+# joins `--tag_ids` with `,`, so a name carrying one is unshippable.
+TAG_NAME_MAX = 64
 
 # Two wordlists for slug minting; `adjective-noun-####` matches SLUG_RE, which every
 # provenance line, [rec:] citation, impact target and high-water mark depends on.
@@ -1565,6 +1610,15 @@ class LocalNode:
     def parents(self) -> list[str]:
         raw = self.meta.get("parents") or []
         return [str(p) for p in (raw if isinstance(raw, list) else [raw])]
+
+    @property
+    def tags(self) -> list[str]:
+        """Tag *names*, mirroring `parents` holding slugs rather than node ids.
+
+        A name is the portable identity: it survives a fork, a re-home and a mirror
+        that mints its own tag ids, exactly as a slug does for a node."""
+        raw = self.meta.get("tags") or []
+        return [str(t) for t in (raw if isinstance(raw, list) else [raw])]
 
     @property
     def sha256(self) -> str:
@@ -1653,6 +1707,8 @@ def load_local_nodes(graph_dir: Path, kind: str, missing_ok: bool = False) -> di
             raise LocalGraphError(
                 f"{path}: `created_at` missing or not ISO-8601 (got {node.created_at!r}) — "
                 "the unreconciled/high-water-mark partition is timestamp-ordered")
+        for problem in tag_name_problems(node.tags):
+            raise LocalGraphError(f"{path}: {problem}")
         seen_ids[node.node_id] = str(path)
         nodes[node.slug] = node
     return nodes
@@ -1670,7 +1726,7 @@ def local_graph(nodes: dict[str, LocalNode], kind: str) -> Graph:
             parent_ids.append(nodes[parent].node_id)
         out[node.node_id] = Node(node_id=node.node_id, slug=node.slug, title=node.title,
                                  content=node.content, parent_ids=parent_ids,
-                                 created_at=node.created_at)
+                                 created_at=node.created_at, tags=node.tags)
     return Graph(nodes=out, by_slug={n.slug: n for n in out.values() if n.slug})
 
 
@@ -1695,6 +1751,293 @@ def topo_order(nodes: dict[str, LocalNode]) -> list[LocalNode]:
     return out
 
 
+# ------------------------------------------------------------------------- tags
+# INTERFACE op 10. A tag is *annotation*: no invariant reads one, and `check` stays
+# tag-blind except for a single warning when a declared vocabulary exists. That is
+# deliberate — a claim that lives only as a tag is invisible to the protocol, and the
+# right home for a claim is a node body.
+#
+# Two files, two jobs. Per-node assignment is a `tags:` list of **names** in the node
+# frontmatter, for the same reason `parents:` holds slugs: a name survives a fork, a
+# re-home, and a mirror that mints its own tag ids. The vocabulary — colours, flags,
+# and whatever id a backend minted — lives in a committed `.hypergraph/tags.yml`,
+# keyed by graph kind because `tags:create` is per graph root and this protocol has
+# two roots.
+#
+# It is **not** in config.yml. `push` must *update* vocabulary entries in place to
+# stamp mirror tag ids, and config.yml is only ever appended to textually so its
+# hand-written comments survive a write (see `mint_mirror_roots`).
+
+DEFAULT_TAGS_FILE = Path(".hypergraph/tags.yml")
+TAG_VOCAB_VERSION = 1
+
+
+def tag_name_problems(names: list[str]) -> list[str]:
+    """Structural complaints about tag names, in order. Empty list = fine.
+
+    Shape only. This is not an invariant check — it is the set of names the
+    transport and the file format can carry at all."""
+    problems: list[str] = []
+    for name in names:
+        if not isinstance(name, str) or not name.strip():
+            problems.append(f"tag {name!r} is empty")
+            continue
+        if "," in name:
+            problems.append(
+                f"tag {name!r} contains a comma — the mirror transport joins tag ids "
+                "with `,`, so a comma in a name is unshippable")
+        if name != name.strip():
+            problems.append(f"tag {name!r} has leading or trailing whitespace")
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
+            problems.append(f"tag {name!r} contains a control character")
+        if len(name) > TAG_NAME_MAX:
+            problems.append(f"tag {name!r} is longer than {TAG_NAME_MAX} characters")
+    return problems
+
+
+def synth_tag(name: str) -> dict:
+    """A deterministic colour pair for an undeclared name.
+
+    So `tags.yml` stays *optional*: a repo that never declares a vocabulary still
+    renders and pushes its tags, and two machines agree on the colour without
+    coordinating. Hue comes from the name's digest; the pair is a dark chip with
+    light text, matching the palettes real graphs already use."""
+    digest = hashlib.sha256(name.encode("utf-8")).digest()
+    hue = digest[0] / 255.0
+    import colorsys  # deferred: only the tag palette needs it
+
+    def hexed(r: float, g: float, b: float) -> str:
+        return "#{:02X}{:02X}{:02X}".format(int(r * 255), int(g * 255), int(b * 255))
+
+    return {"bg_color": hexed(*colorsys.hsv_to_rgb(hue, 0.45, 0.37)),
+            "text_color": hexed(*colorsys.hsv_to_rgb(hue, 0.10, 0.96))}
+
+
+def tag_def(name: str, vocab: dict | None = None, kind: str | None = None) -> dict:
+    """The full definition for a name: declared if it is, synthesized if it is not."""
+    for entry in tag_vocab_entries(vocab or {}, kind):
+        if str(entry.get("name") or "") == name:
+            merged = dict(synth_tag(name))
+            merged.update({k: v for k, v in entry.items() if v is not None})
+            return merged
+    return {"name": name, **synth_tag(name)}
+
+
+def tag_vocab_entries(vocab: dict, kind: str | None = None) -> list[dict]:
+    """Declared tag definitions for one graph kind, or all of them when kind is None."""
+    kinds = [kind] if kind else list(GRAPH_KINDS)
+    out: list[dict] = []
+    for k in kinds:
+        for entry in vocab.get(k) or []:
+            if isinstance(entry, dict) and entry.get("name"):
+                out.append(entry)
+    return out
+
+
+def declared_tag_names(vocab: dict, kind: str | None = None) -> set[str]:
+    return {str(e["name"]) for e in tag_vocab_entries(vocab, kind)}
+
+
+def tags_file_for(config: dict, graph_dir: Path | None = None,
+                  explicit: Path | None = None) -> Path:
+    """Where this project's vocabulary lives: `--tags-file`, config, then the default
+    beside the graph directory."""
+    if explicit is not None:
+        return Path(explicit)
+    named = config.get("tags_file")
+    if named:
+        return Path(named)
+    if graph_dir is not None:
+        return Path(graph_dir).parent / "tags.yml"
+    return DEFAULT_TAGS_FILE
+
+
+def load_tag_vocab(path: Path | None) -> dict:
+    """`.hypergraph/tags.yml` → `{kind: [tagdef]}`. A missing file is `{}`, not an
+    error: the vocabulary is optional and `synth_tag` covers every undeclared name."""
+    if path is None:
+        return {}
+    path = Path(path)
+    if not path.exists():
+        return {}
+    import yaml
+
+    try:
+        loaded = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise LocalGraphError(f"{path} is not valid YAML: {exc}") from None
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise LocalGraphError(f"{path} must be a YAML mapping, got {type(loaded).__name__}")
+    out: dict = {}
+    for kind in GRAPH_KINDS:
+        entries = loaded.get(kind) or []
+        if not isinstance(entries, list):
+            raise LocalGraphError(f"{path}: `{kind}:` must be a list of tag definitions")
+        seen: set[str] = set()
+        clean: list[dict] = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("name"):
+                raise LocalGraphError(
+                    f"{path}: every `{kind}:` entry needs a `name:` (got {entry!r})")
+            name = str(entry["name"])
+            if name in seen:
+                raise LocalGraphError(
+                    f"{path}: `{name}` is declared twice under `{kind}:` — a duplicate "
+                    "definition is the one unrecoverable tag failure, exactly as a "
+                    "duplicate node is")
+            for problem in tag_name_problems([name]):
+                raise LocalGraphError(f"{path}: {problem}")
+            seen.add(name)
+            clean.append(dict(entry, name=name))
+        out[kind] = clean
+    return out
+
+
+def write_tag_vocab(path: Path, vocab: dict) -> Path:
+    """Write the vocabulary back, entries in place.
+
+    A full rewrite rather than an append, unlike config.yml: this file is generated
+    and machine-owned, and `push` has to *update* entries in place to stamp the tag
+    ids the mirror minted."""
+    import yaml
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict = {"version": TAG_VOCAB_VERSION}
+    for kind in GRAPH_KINDS:
+        payload[kind] = [dict(e) for e in (vocab.get(kind) or [])]
+    header = (
+        "# Tag vocabulary for this project (INTERFACE op 10).\n"
+        "#\n"
+        "# Generated and machine-owned — `hypergraph tags add|rm` edits it, and `push`\n"
+        "# stamps the ids the mirror minted into each `flywheel:` block. Commit it: the\n"
+        "# names in node frontmatter are resolved against this file, and it is what\n"
+        "# keeps a second `tags:create` from minting a duplicate definition.\n"
+        "#\n"
+        "# Keyed by graph kind because `tags:create` is per graph root, and this\n"
+        "# protocol has two roots. A name that is not declared here still works — it\n"
+        "# just gets a colour derived from its own digest.\n")
+    body = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True,
+                          default_flow_style=False, width=4096)
+    path.write_text(header + body)
+    return path
+
+
+def merge_tag_def(vocab: dict, kind: str, entry: dict) -> dict:
+    """Merge one definition into the vocabulary by name, in place, and return it.
+
+    Never clobbers a `flywheel:` stamp: that block records a tag this project already
+    created on its mirror, and losing it is how you get a second definition of the
+    same name."""
+    name = str(entry.get("name") or "")
+    if not name:
+        raise LocalGraphError("a tag definition needs a `name:`")
+    entries = vocab.setdefault(kind, [])
+    for existing in entries:
+        if str(existing.get("name") or "") != name:
+            continue
+        stamp = existing.get("flywheel")
+        existing.update({k: v for k, v in entry.items() if k != "flywheel"})
+        if stamp is not None:
+            existing["flywheel"] = stamp
+        elif entry.get("flywheel") is not None:
+            existing["flywheel"] = entry["flywheel"]
+        return existing
+    entries.append(dict(entry))
+    return entries[-1]
+
+
+def cmd_tags(args: argparse.Namespace) -> int:
+    """`hypergraph tags {list,add,rm}` — so nothing ever hand-edits the YAML.
+
+    The record skill teaches agents to tag; without a command they would edit a
+    generated file by hand, and a hand-merged duplicate name is the failure this
+    whole file exists to prevent."""
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    path = tags_file_for(config, graph_dir, args.tags_file)
+    vocab = load_tag_vocab(path)
+
+    if args.action == "list":
+        used: dict[str, int] = {}
+        for kind in GRAPH_KINDS:
+            for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
+                for name in node.tags:
+                    used[name] = used.get(name, 0) + 1
+        if args.json:
+            print(json.dumps({"path": str(path), "vocabulary": {
+                k: tag_vocab_entries(vocab, k) for k in GRAPH_KINDS},
+                "usage": used}, indent=2, ensure_ascii=False))
+            return 0
+        if not any(vocab.get(k) for k in GRAPH_KINDS):
+            print(f"no tag vocabulary at {path} — this project tags nothing yet.\n"
+                  "`hypergraph tags add <name>` starts one.")
+        for kind in GRAPH_KINDS:
+            entries = tag_vocab_entries(vocab, kind)
+            if not entries:
+                continue
+            print(f"{kind}:")
+            for entry in entries:
+                stamp = (entry.get("flywheel") or {}).get("tag_id")
+                notes = ["pointer"] if entry.get("one_only") else []
+                if stamp:
+                    notes.append(str(stamp))
+                print(f"    {str(entry['name']):<32} "
+                      f"{used.get(str(entry['name']), 0):>4} node(s)"
+                      + (f"   [{', '.join(notes)}]" if notes else ""))
+        undeclared = sorted(set(used) - declared_tag_names(vocab))
+        for name in undeclared:
+            print(f"  ? {name:<32} {used[name]:>4} node(s)   [not declared]")
+        return 0
+
+    if args.action == "add":
+        for problem in tag_name_problems([args.name]):
+            raise LocalGraphError(problem)
+        entry = {"name": args.name}
+        entry.update(synth_tag(args.name))
+        if args.bg_color:
+            entry["bg_color"] = args.bg_color
+        if args.text_color:
+            entry["text_color"] = args.text_color
+        if args.one_only:
+            entry["one_only"] = True
+        if args.track_history:
+            entry["track_history"] = True
+        merged = merge_tag_def(vocab, args.graph, entry)
+        write_tag_vocab(path, vocab)
+        print(f"tags: `{merged['name']}` declared under `{args.graph}:` in {path}")
+        return 0
+
+    if args.action == "rm":
+        entries = vocab.get(args.graph) or []
+        keep = [e for e in entries if str(e.get("name") or "") != args.name]
+        if len(keep) == len(entries):
+            raise LocalGraphError(
+                f"`{args.name}` is not declared under `{args.graph}:` in {path}")
+        still_used = sorted(
+            node.slug for kind in GRAPH_KINDS
+            for node in load_local_nodes(graph_dir, kind, missing_ok=True).values()
+            if args.name in node.tags)
+        if still_used and not args.force:
+            raise LocalGraphError(
+                f"`{args.name}` is still on {len(still_used)} node(s) "
+                f"({', '.join(still_used[:5])}{'…' if len(still_used) > 5 else ''}). "
+                "Undeclaring it leaves them tagged with a name nothing defines — pass "
+                "--force if that is what you mean.")
+        vocab[args.graph] = keep
+        write_tag_vocab(path, vocab)
+        # Deliberately local-only: `tags:delete` on the mirror un-tags every node that
+        # used the tag, which is a data loss no local edit asked for.
+        print(f"tags: `{args.name}` undeclared under `{args.graph}:` in {path}\n"
+              "      The mirror definition is left alone — `tags:delete` would un-tag "
+              "every node that used it.")
+        return 0
+
+    raise LocalGraphError(f"unknown tags action: {args.action}")
+
+
 # ---------------------------------------------------------------- export / import
 
 def export_graph_json(graph_dir: Path, kind: str) -> dict:
@@ -1708,6 +2051,7 @@ def export_graph_json(graph_dir: Path, kind: str) -> dict:
             "title": node.title,
             "content": node.content,
             "summary": str(node.meta.get("summary") or ""),
+            "tags": node.tags,
             "parent_ids": graph.nodes[node.node_id].parent_ids,
             "created_at": node.created_at,
         })
@@ -1728,9 +2072,131 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def local_tag_name(name: str, taken: set[str]) -> str:
+    """A source tag name → a name this backend can carry, deterministically.
+
+    `★ studio-baseline` → `studio-baseline`. Decoration and separators go; the word
+    stays. **A name is never dropped**: if transliteration empties it or collides, the
+    original is preserved through a digest suffix rather than lost, because the name
+    is the tag's whole portable identity."""
+    cleaned = "".join(" " if (ord(ch) < 0x20 or ord(ch) == 0x7F or ch == ",") else ch
+                      for ch in str(name))
+    # strip leading/trailing non-alphanumerics (the ★ and its space), keep the middle
+    cleaned = re.sub(r"^[^\w]+|[^\w]+$", "", cleaned, flags=re.U).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)[:TAG_NAME_MAX].strip()
+    if not cleaned:
+        cleaned = "tag-" + hashlib.sha256(str(name).encode()).hexdigest()[:8]
+    if cleaned in taken:
+        suffix = "-" + hashlib.sha256(str(name).encode()).hexdigest()[:6]
+        cleaned = cleaned[:TAG_NAME_MAX - len(suffix)] + suffix
+    return cleaned
+
+
+def collect_source_tags(raw_nodes: list[dict]) -> dict[str, dict]:
+    """`graph_tags` across every node → `{tag_id: tagdef}`.
+
+    A **union** is required, not a read of any one node: in the neural-whoop archive
+    only 130 of 189 nodes echo the vocabulary while 59 carry an empty `graph_tags`
+    beside a populated `tag_ids` [rec: fresh-spire-9002]. The **parentless node's copy
+    wins** when copies disagree — the vocabulary is defined on the graph root, so that
+    copy is the authoritative one."""
+    union: dict[str, dict] = {}
+    root_copy: dict[str, dict] = {}
+    for raw in raw_nodes:
+        parentless = not (raw.get("incoming_ids") or raw.get("parent_ids")
+                          or raw.get("parents"))
+        for tag in raw.get("graph_tags") or []:
+            if not isinstance(tag, dict) or not tag.get("tag_id"):
+                continue
+            tid = str(tag["tag_id"])
+            union.setdefault(tid, tag)
+            if parentless:
+                root_copy[tid] = tag
+    union.update(root_copy)
+    return union
+
+
+def import_tag_vocabulary(raw_nodes: list[dict], *, fork: bool, pushed_at: str,
+                          out=lambda m: print(m, file=sys.stderr)
+                          ) -> tuple[dict[str, str], list[dict]]:
+    """Source `graph_tags` → (`{tag_id: local name}`, ordered tag definitions).
+
+    The fork rule mirrors the node rule exactly. `--fork` records the source id under
+    `origin:` and omits `flywheel:`, so the first push *creates* the vocabulary fresh
+    under roots this project owns. A re-home stamps `flywheel:`, so the first push is
+    a no-op against the graph it already lives on."""
+    source = collect_source_tags(raw_nodes)
+    by_id: dict[str, str] = {}
+    defs: list[dict] = []
+    taken: set[str] = set()
+    for tid, tag in sorted(source.items(), key=lambda kv: str(kv[1].get("name") or kv[0])):
+        original = str(tag.get("name") or tid)
+        name = local_tag_name(original, taken)
+        taken.add(name)
+        by_id[tid] = name
+        entry: dict = {"name": name}
+        if name != original:
+            # Never a silent rename: the source spelling stays queryable, and the
+            # rename is reported on stderr as it happens.
+            entry["archive_name"] = original
+            out(f"import: tag {original!r} → {name!r} (kept as archive_name:)")
+        for key in ("bg_color", "text_color"):
+            if tag.get(key):
+                entry[key] = str(tag[key])
+        for key in ("one_only", "track_history"):
+            if tag.get(key):
+                entry[key] = True
+        if fork:
+            entry["origin"] = {"backend": "flywheel", "tag_id": tid,
+                               "exported_at": str(pushed_at)}
+        else:
+            entry["flywheel"] = {"tag_id": tid, "pushed_at": str(pushed_at)}
+        defs.append(entry)
+    return by_id, defs
+
+
+def pointer_tag_chains(raw_nodes: list[dict], tag_by_id: dict[str, str]) -> dict:
+    """Reconstruct each moving pointer tag's chain from per-node `tag_history`.
+
+    Deliberately **not** modelled in frontmatter. This goes to
+    `cache/import-report.json` and from there into the epoch marker body as prose: a
+    pointer move with a reason is a decision, and a decision is a record node. Putting
+    the chain in frontmatter would be a third home for a claim no invariant reads
+    (SPEC I1).
+
+    The chains are also the finding: every hop carries a timestamp and a successor,
+    and **not one carries a reason** [rec: fresh-spire-9002]."""
+    hops: dict[str, list[dict]] = {}
+    slug_by_id = {str(n.get("node_id") or n.get("id") or ""): str(
+        n.get("slug_name") or n.get("slug") or n.get("node_id") or "") for n in raw_nodes}
+    for raw in raw_nodes:
+        for hop in raw.get("tag_history") or []:
+            if not isinstance(hop, dict) or not hop.get("tag_id"):
+                continue
+            tid = str(hop["tag_id"])
+            successor = str(hop.get("superseded_by_node_id") or "")
+            hops.setdefault(tid, []).append({
+                "slug": str(raw.get("slug_name") or raw.get("slug") or ""),
+                "history_index": hop.get("history_index"),
+                "superseded_at": hop.get("superseded_at"),
+                "superseded_by_slug": slug_by_id.get(successor, successor),
+            })
+    out: dict = {}
+    for tid, chain in hops.items():
+        chain.sort(key=lambda h: (h.get("history_index") is None,
+                                  h.get("history_index"), str(h.get("superseded_at"))))
+        out[tag_by_id.get(tid, tid)] = chain
+    return out
+
+
 def cmd_import(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    tags_path = tags_file_for(config, graph_dir, getattr(args, "tags_file", None))
+    want_tags = not getattr(args, "no_tags", False)
+    vocab = load_tag_vocab(tags_path) if want_tags else {}
+    chains: dict = {}
+    tag_counts: dict[str, int] = {}
     written = skipped = 0
     for kind, path in (("record", args.record), ("state", args.state)):
         if path is None:
@@ -1743,6 +2209,13 @@ def cmd_import(args: argparse.Namespace) -> int:
                 if isinstance(item, dict) and item.get("node_id"):
                     extras[str(item["node_id"])] = item
         pushed_at = (isinstance(raw, dict) and raw.get("exported_at")) or utc_now()
+        tag_by_id: dict[str, str] = {}
+        if want_tags:
+            tag_by_id, tag_defs = import_tag_vocabulary(
+                list(extras.values()), fork=args.fork, pushed_at=str(pushed_at))
+            for entry in tag_defs:
+                merge_tag_def(vocab, kind, entry)
+            chains.update(pointer_tag_chains(list(extras.values()), tag_by_id))
         directory = graph_kind_dir(graph_dir, kind)
         directory.mkdir(parents=True, exist_ok=True)
         for node in sorted(graph.nodes.values(), key=lambda n: (n.created_at, n.node_id)):
@@ -1773,6 +2246,15 @@ def cmd_import(args: argparse.Namespace) -> int:
                 "parents": parents,
                 "summary": str(src.get("summary") or ""),
             }
+            # Tags travel on both paths, and for the same reason `summary` does: they
+            # are annotation the source authored, not mirror bookkeeping. Omitted when
+            # empty so an untagged graph's files are byte-unchanged.
+            tags = sorted({tag_by_id[str(t)] for t in (src.get("tag_ids") or [])
+                           if str(t) in tag_by_id})
+            if tags:
+                meta["tags"] = tags
+                for name in tags:
+                    tag_counts[name] = tag_counts.get(name, 0) + 1
             if args.fork:
                 # A fork takes its own mirror identity: the source graph's ids are
                 # provenance only (`origin:`), never a push target. With `flywheel:`
@@ -1803,7 +2285,59 @@ def cmd_import(args: argparse.Namespace) -> int:
             written += 1
     print(f"import: wrote {written} node file(s), {skipped} already up to date "
           f"under {graph_dir}")
+
+    if want_tags and any(vocab.get(k) for k in GRAPH_KINDS):
+        write_tag_vocab(tags_path, vocab)
+        declared = sum(len(vocab.get(k) or []) for k in GRAPH_KINDS)
+        print(f"import: {declared} tag(s) declared in {tags_path}, "
+              f"{sum(tag_counts.values())} assignment(s) across "
+              f"{len(tag_counts)} name(s)")
+        report_path = write_import_report(config, graph_dir, chains, tag_counts,
+                                          fork=args.fork)
+        if chains:
+            # Loud on purpose. This is the one thing the import cannot carry, and the
+            # adopt skill's step 6 has to pick it up by hand.
+            print("", file=sys.stderr)
+            print("=" * 72, file=sys.stderr)
+            print("POINTER TAGS MOVED, AND THE MOVES DO NOT TRAVEL.", file=sys.stderr)
+            for name, chain in sorted(chains.items()):
+                print(f"  {name}: {len(chain)} hop(s) — "
+                      + " → ".join(str(h.get("slug") or "?") for h in chain)
+                      + (f" → {chain[-1].get('superseded_by_slug')}"
+                         if chain and chain[-1].get("superseded_by_slug") else ""),
+                      file=sys.stderr)
+            print("", file=sys.stderr)
+            print("The names travelled; the chain did not. Every hop has a timestamp",
+                  file=sys.stderr)
+            print("and no reason, so frontmatter would be a third home for a claim no",
+                  file=sys.stderr)
+            print("invariant reads. Write the chain into the epoch marker body as prose",
+                  file=sys.stderr)
+            print("(hypergraph-adopt step 6) — that is what makes this routing rather",
+                  file=sys.stderr)
+            print("than loss. The full chains are in:", file=sys.stderr)
+            print(f"  {report_path}", file=sys.stderr)
+            print("=" * 72, file=sys.stderr)
     return 0
+
+
+def write_import_report(config: dict, graph_dir: Path, chains: dict,
+                        counts: dict[str, int], *, fork: bool) -> Path:
+    """What the import carried and what it could not, as a file the adopt skill reads."""
+    cache_dir = Path(config.get("cache_dir") or (Path(graph_dir).parent / "cache"))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / "import-report.json"
+    path.write_text(json.dumps({
+        "version": EXPORT_VERSION,
+        "generated_at": utc_now(),
+        "mode": "fork" if fork else "re-home",
+        "tag_assignments": dict(sorted(counts.items())),
+        "pointer_tag_history": chains,
+        "note": ("Pointer-tag history is deliberately not modelled in the graph. Record "
+                 "these chains in the adoption epoch marker's body as prose; a pointer "
+                 "move with a reason is a decision, and a decision is a record node."),
+    }, indent=2, ensure_ascii=False) + "\n")
+    return path
 
 
 # ------------------------------------------------------------------- authoring
@@ -1986,6 +2520,21 @@ def cmd_new(args: argparse.Namespace) -> int:
         "parents": parents,
         "summary": args.summary or "",
     }
+    tags = sorted(dict.fromkeys(args.tag or []))
+    for problem in tag_name_problems(tags):
+        raise LocalGraphError(problem)
+    if tags:
+        # Warn, never refuse: a tag is annotation and no invariant reads one, so an
+        # undeclared name must stay usable. The warning exists only once a project
+        # has said "we have a vocabulary" by committing a tags.yml.
+        vocab = load_tag_vocab(tags_file_for(config, graph_dir, args.tags_file))
+        if any(vocab.get(k) for k in GRAPH_KINDS):
+            for name in tags:
+                if name not in declared_tag_names(vocab, kind):
+                    print(f"warning   tag `{name}` is not declared in this project's "
+                          f"vocabulary — `hypergraph tags add {name}` adds it",
+                          file=sys.stderr)
+        meta["tags"] = tags     # omitted when empty: see FM_ORDER
     directory = graph_kind_dir(graph_dir, kind)
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{slug}.md"
@@ -8270,7 +8819,16 @@ def main(argv: list[str] | None = None) -> int:
     graph_args(p_import)
     p_import.add_argument("--record", type=Path, help="record-graph export JSON")
     p_import.add_argument("--state", type=Path, help="state-graph export JSON")
-    p_import.add_argument("--force", action="store_true", help="overwrite differing node files")
+    p_import.add_argument("--force", action="store_true",
+                          help="overwrite differing node files. Note: since tags "
+                               "travel, re-importing the same export into a repo "
+                               "imported by an older release changes the rendered "
+                               "bytes and needs this flag — loudly and correctly")
+    p_import.add_argument("--no-tags", action="store_true",
+                          help="do not carry the source graph's tags (the vocabulary "
+                               "or the per-node assignments)")
+    p_import.add_argument("--tags-file", type=Path, metavar="PATH",
+                          help=f"where to write the vocabulary (default: {DEFAULT_TAGS_FILE})")
     p_import.add_argument("--fork", action="store_true",
                           help="adoption: record the source ids under `origin:` and omit "
                                "`flywheel:`, so push re-publishes the history to a mirror "
@@ -8302,7 +8860,39 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--hwm", help="state root only: initial high_water_mark (default: none)")
     p_new.add_argument("--reconcile", action="store_true",
                        help="required for state nodes: assert this is a reconcile pass (SPEC I3)")
+    p_new.add_argument("--tag", action="append", metavar="NAME",
+                       help="a tag name for this node (repeatable). Annotation only — "
+                            "no invariant reads a tag, and a claim that lives only as "
+                            "a tag is invisible to the protocol")
+    p_new.add_argument("--tags-file", type=Path, metavar="PATH",
+                       help=f"tag vocabulary (default: {DEFAULT_TAGS_FILE})")
     p_new.set_defaults(func=cmd_new)
+
+    p_tags = sub.add_parser(
+        "tags", help="show or edit this project's tag vocabulary (.hypergraph/tags.yml)")
+    p_tags.add_argument("action", choices=["list", "add", "rm"],
+                        help="list: the vocabulary plus usage counts. add/rm: declare "
+                             "or undeclare a name — never hand-edit the file")
+    p_tags.add_argument("name", nargs="?", help="add/rm: the tag name")
+    graph_args(p_tags)
+    p_tags.add_argument("--tags-file", type=Path, metavar="PATH",
+                        help=f"vocabulary path (default: {DEFAULT_TAGS_FILE})")
+    p_tags.add_argument("--graph", choices=list(GRAPH_KINDS), default="record",
+                        help="which graph's vocabulary (default: record) — "
+                             "`tags:create` is per graph root and there are two")
+    p_tags.add_argument("--bg-color", help="add: chip background (default: from the name's digest)")
+    p_tags.add_argument("--text-color", help="add: chip text colour")
+    p_tags.add_argument("--one-only", action="store_true",
+                        help="add: at most one node may carry this tag (a pointer tag)")
+    p_tags.add_argument("--track-history", action="store_true",
+                        help="add: ask the backend to keep the pointer's move history. "
+                             "Declarative input to `tags:create` only — this protocol "
+                             "does not model the chain; a move with a reason is a "
+                             "record node")
+    p_tags.add_argument("--force", action="store_true",
+                        help="rm: undeclare even though nodes still carry the name")
+    p_tags.add_argument("--json", action="store_true", help="list: machine-readable output")
+    p_tags.set_defaults(func=cmd_tags)
 
     p_update = sub.add_parser("update", help="replace a state node's body (reconcile only)")
     p_update.add_argument("slug")
@@ -8473,6 +9063,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if getattr(args, "command", None) == "import" and not (args.record or args.state):
         parser.error("import needs --record and/or --state")
+    if getattr(args, "command", None) == "tags" and args.action in ("add", "rm") \
+            and not args.name:
+        parser.error(f"tags {args.action} needs a tag name")
     if getattr(args, "command", None) == "update" and not args.print_sha:
         if not args.body:
             parser.error("update needs --body (or --print-sha)")

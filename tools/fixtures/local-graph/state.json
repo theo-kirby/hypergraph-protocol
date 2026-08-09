@@ -7,6 +7,7 @@
       "title": "local — state",
       "content": "Fixture project: ingest CSVs. Distilled state graph — what is true now.\n\n## Reconciliation\n\n- high_water_mark: calm-fern-1003\n- reconciled_at: 2026-08-02T03:00:00+00:00\n",
       "summary": "",
+      "tags": [],
       "parent_ids": [],
       "created_at": "2026-08-02T00:00:00+00:00"
     },
@@ -16,6 +17,7 @@
       "title": "Ingest",
       "content": "Status: working\n\n## Current\n\n- Streaming csv parser ingests multi-GB files (2.3GB in 84s, 210MB peak RSS) [rec: calm-fern-1003].\n\n## Negative knowledge\n\n- [scope: ingest of files >2GB | confidence: medium | evidence: brave-otter-1002] pandas chunked reader OOMs at concat time; do not revisit without a memory budget.\n\n## Provenance\n\n- brave-otter-1002 — created this component and documented the OOM failure\n- calm-fern-1003 — streaming parser fix that made it work\n",
       "summary": "",
+      "tags": [],
       "parent_ids": [
         "3e64ea0a-f035-5204-8cf2-465735478d01"
       ],
