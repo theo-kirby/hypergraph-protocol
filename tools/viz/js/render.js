@@ -163,6 +163,12 @@ function drawCircleNode(entry, pos) {
   const heavy = node.is_root || node.is_hwm || node.unreconciled || node.frontier;
   g.appendChild(el("circle", { r: R, fill: T().surface, stroke: accentFor(entry),
     "stroke-width": heavy ? 2.2 : 1.4 }));
+  // The circle style used to be unlabelled by design, which made the Clusters
+  // view unreadable: you could see the grouping and not what was grouped. The
+  // label is drawn always and shown by zoom (applyTf), so panning stays cheap.
+  g.appendChild(el("text", { class: "nodelabel", x: 0, y: R + 13,
+    "font-family": FONT, "font-size": 10.5, "text-anchor": "middle",
+    fill: T().ink2, "pointer-events": "none" }, trunc(node.title, 20)));
   const tip = el("title");
   tip.textContent = node.title + " (" + node.slug + ")";
   g.appendChild(tip);
@@ -316,7 +322,7 @@ function drawBlobs(pos) {
   const hs = hyperedges().list.slice()
     .sort((a, b) => b.members.length - a.members.length);  // big first, small on top
   hs.forEach(h => {
-    const d = blobPath(h.members, pos);
+    const d = blobPathFor(h, pos);
     if (!d) return;
     const color = T().cat[h.ci % T().cat.length];
     const path = el("path", { d, fill: color,
@@ -341,13 +347,24 @@ function updateBlobs(slug) {
   const pos = posFor(), H = hyperedges();
   (H.memberOf[slug] || []).forEach(st => {
     const be = blobEls[st];
-    if (be) be.path.setAttribute("d", blobPath(H.index[st].members, pos));
+    if (be) be.path.setAttribute("d", blobPathFor(H.index[st], pos));
   });
-  const lps = blobLabelPositions(pos);  // de-overlap involves every label
+  const lps = blobLabelPositions(pos);  // placement involves every label
   for (const st in blobEls) {
     blobEls[st].label.setAttribute("x", lps[st].x);
     blobEls[st].label.setAttribute("y", lps[st].y);
   }
+}
+
+// Redraw only the blob layer — after a drag ends (the field replaces the hull
+// used while dragging) or after zooming across the field threshold.
+function redrawBlobs() {
+  const world = document.getElementById("world");
+  const old = document.getElementById("blobs");
+  if (!world || !old) return;
+  const fresh = drawBlobs(posFor());
+  world.replaceChild(fresh, old);
+  updateDim();
 }
 
 function renderAll() {
@@ -415,10 +432,15 @@ function renderAll() {
   updateDim();
 }
 
+// Below this zoom a 10.5px label is under 7px on screen — noise, not text.
+const LABEL_MIN_ZOOM = 0.62;
+
 function applyTf() {
   const t = tfFor();
   const world = document.getElementById("world");
   if (world) world.setAttribute("transform", `translate(${t.x},${t.y}) scale(${t.k})`);
+  const on = t.k >= LABEL_MIN_ZOOM ? "" : "none";
+  svg.querySelectorAll("text.nodelabel").forEach(el => el.style.display = on);
 }
 
 // ------------------------------------------------------- dim / select / search

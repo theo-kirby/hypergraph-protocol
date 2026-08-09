@@ -35,7 +35,9 @@ svg.addEventListener("pointermove", e => {
       if (eg.from === drag.slug || eg.to === drag.slug)
         edgeEls[i].setAttribute("d", edgePath(eg, pos));
     });
-    if (show.blobs && recVis()) updateBlobs(drag.slug);
+    // The distance field is too costly per frame; drag on the cheap hull and
+    // put the real outline back on pointerup.
+    if (show.blobs && recVis()) { blobDragging = true; updateBlobs(drag.slug); }
   }
 });
 svg.addEventListener("pointerup", e => {
@@ -46,17 +48,23 @@ svg.addEventListener("pointerup", e => {
     else if (drag.blob) select(drag.blob);
     else deselect();
   }
+  const wasDragging = blobDragging;
   drag = null;
+  blobDragging = false;
+  if (wasDragging && show.blobs && recVis()) redrawBlobs();
 });
 svg.addEventListener("wheel", e => {
   e.preventDefault();
   const t = tfFor(), r = svg.getBoundingClientRect();
   const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const before = blobFieldMode();
   const k2 = Math.min(2.5, Math.max(0.1, t.k * Math.exp(-e.deltaY * 0.0016)));
   t.x = mx - (mx - t.x) * (k2 / t.k);
   t.y = my - (my - t.y) * (k2 / t.k);
   t.k = k2;
   applyTf();
+  // Crossing the field threshold swaps hull for outline (and back).
+  if (show.blobs && recVis() && blobFieldMode() !== before) redrawBlobs();
 }, { passive: false });
 document.addEventListener("keydown", e => { if (e.key === "Escape") deselect(); });
 

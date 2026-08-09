@@ -234,6 +234,18 @@ def test_template_force_view_machinery():
     assert "Math.random" not in tpl
 
 
+def test_template_carries_the_ported_distance_field():
+    """The blob geometry is excaligraph's, ported. Keep the pieces and the credit."""
+    tpl = hg.VIZ_TEMPLATE
+    for fn in ("blobOutline", "traceContour", "spanningSegments", "routeCorridor",
+               "smoothMin", "smoothMax", "douglasPeucker", "sdRectangle",
+               "sdEllipse", "sdSegment", "blobPathFor"):
+        assert fn in tpl, f"{fn} missing from the blob port"
+    assert "excaligraph" in tpl and "MIT licence" in tpl, "attribution must survive"
+    # the hull stays as the fast fallback, it is not replaced
+    assert "BLOB_FIELD_MIN_ZOOM" in tpl
+
+
 def test_viz_bundle_in_sync():
     """The page is authored under tools/viz/ and bundled into VIZ_TEMPLATE.
 

@@ -99,6 +99,34 @@ def test_layout_local_controls_are_hidden_where_they_mean_nothing(page):
     assert page.is_hidden('.seg[data-key="board"]')
 
 
+def test_clusters_draws_distinguishable_labelled_blobs(page):
+    """Phase 2's acceptance: one blob per hyperedge, each labelled, and the
+    outlines reproduce exactly — the geometry has no randomness in it."""
+    open_view(page, "clusters")
+    m = measure(page)
+    assert m["blobs"] == 12, "one outline per hyperedge"
+    assert m["labels"] == m["nodes"], "the circle style is labelled now"
+    blob_svg = page.evaluate('() => document.getElementById("blobs").innerHTML')
+    # a hull would be a handful of curves; the traced field is far more detailed
+    assert blob_svg.count(" C ") > 200, "outlines look like hulls, not a field"
+    page.reload()
+    page.wait_for_selector("#world")
+    open_view(page, "clusters")
+    assert page.evaluate('() => document.getElementById("blobs").innerHTML') == blob_svg
+
+
+def test_blob_labels_do_not_collide(page):
+    open_view(page, "clusters")
+    boxes = page.evaluate("""() => [...document.querySelectorAll("#blobs text")]
+        .map(t => { const b = t.getBBox(); return [b.x, b.y, b.width, b.height]; })""")
+    assert len(boxes) == 12
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            apart = (a[0] + a[2] <= b[0] or b[0] + b[2] <= a[0]
+                     or a[1] + a[3] <= b[1] or b[1] + b[3] <= a[1])
+            assert apart, f"blob labels overlap: {a} vs {b}"
+
+
 def test_views_are_deterministic_across_reloads(page, viz_html):
     """Two renders of one input must agree — the page has no randomness."""
     first = {}

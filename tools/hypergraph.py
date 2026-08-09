@@ -2377,20 +2377,8 @@ function computeLayout() {
         pos[n.slug] = { x: (n.order - (width - 1) / 2) * dx, y: n.layer * dy };
       });
     }
-  } else {                         // force: deterministic seed + sim
-    let maxOrder = 0;
-    if (recVis()) DATA.record.nodes.forEach(n => {
-      maxOrder = Math.max(maxOrder, n.order);
-      pos[n.slug] = {
-        x: n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
-        y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
-      };
-    });
-    if (stVis()) DATA.state.nodes.forEach(n => pos[n.slug] = {
-      x: (maxOrder + 3) * 80 + n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
-      y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
-    });
-    runSim(pos);
+  } else {                         // force: two-level cluster sim, deterministic
+    layoutForce(pos);
     if (cards) {  // sim runs in circle metric; stretch, then separate any
       for (const s in pos) { pos[s].x *= 3.2; pos[s].y *= 1.8; }
       const slugs = Object.keys(pos);  // insertion order: deterministic
@@ -2419,7 +2407,118 @@ function computeLayout() {
   return pos;
 }
 
-function simTick(pos, nodes, springs, clusters, alpha) {
+// ------------------------------------------------------------------- force
+// The Clusters view asks one question: which record work belongs to the same
+// state claim? A single flat force sim answers it badly — every node repels
+// every other equally, so twelve hyperedges settle into one overlapping pile and
+// the blobs on top of them become mush.
+//
+// So the layout runs at two levels. First the *hyperedges* are laid out as a
+// coarse graph of twelve bodies, each with a radius set by its member count,
+// pushed apart until they no longer overlap and pulled together when they share
+// members. Only then do nodes settle, each held near the centre of the
+// hyperedge(s) it belongs to. Group separation is decided by the level that
+// knows about groups, which is what makes it hold.
+
+const CLUSTER_GAP = 34;        // clear space demanded between two hyperedges
+const CLUSTER_TICKS = 260, NODE_TICKS = 240;
+
+// FNV-1a -> [0,1): the page's only source of jitter, and it is a pure
+// function of the slug — so every load lays out identically.
+function hashSlug(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h / 4294967296;
+}
+
+// Radius a hyperedge needs to hold its members without crowding them.
+function clusterRadius(h) {
+  return 40 + 26 * Math.sqrt(Math.max(1, h.members.length));
+}
+
+// Coarse layout over the hyperedges themselves. Seeded on a ring ordered by
+// size (biggest first) so the result is reproducible and the large clusters,
+// which have the least freedom, claim their space first.
+function clusterCentres() {
+  const list = hyperedges().list;
+  if (!list.length) return {};
+  const order = list.slice().sort((a, b) => b.members.length - a.members.length ||
+                                            (a.state < b.state ? -1 : 1));
+  const radius = {}, centre = {};
+  order.forEach((h, i) => {
+    radius[h.state] = clusterRadius(h);
+    const angle = (i / order.length) * 6.283185307 + hashSlug(h.state) * 0.4;
+    const ring = 60 + 46 * Math.sqrt(order.length) * (0.7 + 0.3 * (i / order.length));
+    centre[h.state] = { x: Math.cos(angle) * ring, y: Math.sin(angle) * ring };
+  });
+
+  // Shared members pull two hyperedges together; overlap pushes them apart.
+  const shared = [];
+  for (let i = 0; i < order.length; i++) {
+    const mi = new Set(order[i].members);
+    for (let j = i + 1; j < order.length; j++) {
+      const n = order[j].members.reduce((c, m) => c + (mi.has(m) ? 1 : 0), 0);
+      if (n) shared.push([order[i].state, order[j].state, n]);
+    }
+  }
+
+  for (let t = 0; t < CLUSTER_TICKS; t++) {
+    const alpha = 1 - t / CLUSTER_TICKS;
+    shared.forEach(([a, b, n]) => {
+      const pa = centre[a], pb = centre[b];
+      const dx = pb.x - pa.x, dy = pb.y - pa.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const rest = radius[a] + radius[b] + CLUSTER_GAP;
+      const pull = Math.min(0.06, 0.012 * n) * (d - rest) / d * alpha;
+      pa.x += dx * pull; pa.y += dy * pull;
+      pb.x -= dx * pull; pb.y -= dy * pull;
+    });
+    for (let i = 0; i < order.length; i++) {
+      for (let j = i + 1; j < order.length; j++) {
+        const a = order[i].state, b = order[j].state;
+        const pa = centre[a], pb = centre[b];
+        let dx = pb.x - pa.x, dy = pb.y - pa.y;
+        let d = Math.hypot(dx, dy);
+        if (d < 1e-3) {  // coincident: deterministic symmetry break
+          const ang = hashSlug(a + b) * 6.283185307;
+          dx = Math.cos(ang); dy = Math.sin(ang); d = 1;
+        }
+        const want = radius[a] + radius[b] + CLUSTER_GAP;
+        if (d >= want) continue;
+        const push = ((want - d) / d) * 0.5;
+        pa.x -= dx * push; pa.y -= dy * push;
+        pb.x += dx * push; pb.y += dy * push;
+      }
+    }
+    order.forEach(h => {  // mild centering keeps the whole board near the origin
+      centre[h.state].x *= 1 - 0.004 * alpha;
+      centre[h.state].y *= 1 - 0.004 * alpha;
+    });
+  }
+  return { centre, radius };
+}
+
+// Where a node wants to sit: the centre of its hyperedge, or the mean of them
+// when it belongs to several — a node cited by two claims belongs between them.
+function nodeHomes(centres) {
+  const H = hyperedges(), homes = {};
+  DATA.record.nodes.forEach(n => {
+    const owners = (H.memberOf[n.slug] || []).filter(st => centres.centre[st]);
+    if (!owners.length) return;
+    let x = 0, y = 0;
+    owners.forEach(st => { x += centres.centre[st].x; y += centres.centre[st].y; });
+    homes[n.slug] = { x: x / owners.length, y: y / owners.length,
+                      // a node shared by two clusters is held less tightly by
+                      // either, so it can sit in the overlap rather than fight
+                      weight: owners.length > 1 ? 0.10 : 0.22 };
+  });
+  return homes;
+}
+
+function simTick(pos, nodes, springs, homes, alpha) {
   const f = {};
   nodes.forEach(s => f[s] = { x: 0, y: 0 });
   for (let i = 0; i < nodes.length; i++) {          // pairwise repulsion
@@ -2430,7 +2529,7 @@ function simTick(pos, nodes, springs, clusters, alpha) {
         const ang = hashSlug(nodes[i] + nodes[j]) * 6.283185307;
         dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1;
       }
-      const d = Math.sqrt(d2), rep = Math.min(30, 24000 / d2);
+      const d = Math.sqrt(d2), rep = Math.min(30, 20000 / d2);
       const ux = dx / d, uy = dy / d;
       f[nodes[i]].x += ux * rep; f[nodes[i]].y += uy * rep;
       f[nodes[j]].x -= ux * rep; f[nodes[j]].y -= uy * rep;
@@ -2444,19 +2543,15 @@ function simTick(pos, nodes, springs, clusters, alpha) {
     f[sp[0]].x += dx * k; f[sp[0]].y += dy * k;
     f[sp[1]].x -= dx * k; f[sp[1]].y -= dy * k;
   });
-  clusters.forEach(ms => {                          // hyperedge members cohere
-    if (ms.length < 2) return;
-    let cx = 0, cy = 0;
-    ms.forEach(s => { cx += pos[s].x; cy += pos[s].y; });
-    cx /= ms.length; cy /= ms.length;
-    ms.forEach(s => {
-      f[s].x += (cx - pos[s].x) * 0.08;
-      f[s].y += (cy - pos[s].y) * 0.08;
-    });
-  });
-  nodes.forEach(s => {                              // mild centering + integrate
-    f[s].x -= pos[s].x * 0.005;
-    f[s].y -= pos[s].y * 0.005;
+  nodes.forEach(s => {                              // home pull + integrate
+    const home = homes[s];
+    if (home) {
+      f[s].x += (home.x - pos[s].x) * home.weight;
+      f[s].y += (home.y - pos[s].y) * home.weight;
+    } else {
+      f[s].x -= pos[s].x * 0.005;
+      f[s].y -= pos[s].y * 0.005;
+    }
     pos[s].x += f[s].x * alpha;
     pos[s].y += f[s].y * alpha;
   });
@@ -2465,12 +2560,15 @@ function simTick(pos, nodes, springs, clusters, alpha) {
 // Springs come from graph *structure* (parent edges + cross-links), never from
 // the edge display toggles, so the layout is stable under checkbox flips.
 // Node iteration order is DATA array order (record then state): deterministic.
-function runSim(pos) {
+function runSim(pos, homes) {
   const nodes = [];
   const springs = [];
+  // Parent edges pull only weakly here: in this view the grouping is the
+  // message, and a strong causal chain would drag members out of their blob.
   const tree = g => DATA[g].nodes.forEach(n => {
+    if (!pos[n.slug]) return;
     nodes.push(n.slug);
-    n.parents.forEach(p => { if (pos[p]) springs.push([p, n.slug, 0.03, 110]); });
+    n.parents.forEach(p => { if (pos[p]) springs.push([p, n.slug, 0.012, 120]); });
   });
   if (recVis()) tree("record");
   if (stVis()) tree("state");
@@ -2478,19 +2576,103 @@ function runSim(pos) {
     if (pos[l.record] && pos[l.state])
       springs.push([l.record, l.state, 0.012, 170]);
   });
-  const clusters = hyperedges().list.map(h => {
-    const ms = h.members.filter(s => pos[s]);
-    if (pos[h.state]) ms.push(h.state);  // blobs settle near their state node
-    return ms;
-  });
   let alpha = 1.0;
-  for (let t = 0; t < 300; t++) {
-    simTick(pos, nodes, springs, clusters, alpha);
+  for (let t = 0; t < NODE_TICKS; t++) {
+    simTick(pos, nodes, springs, homes || {}, alpha);
     alpha *= 0.985;
   }
 }
 
-// ------------------------------------------------------- blob hull geometry
+// Seed members on a ring inside their cluster, in a deterministic order, so the
+// sim starts already grouped and only has to relax rather than to discover.
+function seedClustered(pos, centres, homes) {
+  const H = hyperedges();
+  const seen = {};
+  H.list.forEach(h => {
+    const c = centres.centre[h.state];
+    if (!c) return;
+    const r = centres.radius[h.state] * 0.72, n = Math.max(1, h.members.length);
+    h.members.forEach((m, i) => {
+      if (seen[m] || !bySlug[m]) return;
+      seen[m] = true;
+      // Sunflower packing: even area coverage, so a big cluster stays compact
+      // instead of stringing its members around one wide ring.
+      const a = i * 2.399963229728653 + hashSlug(h.state) * 6.283185307;
+      const rad = r * Math.sqrt((i + 0.5) / n);
+      pos[m] = { x: c.x + Math.cos(a) * rad, y: c.y + Math.sin(a) * rad };
+    });
+  });
+  let loose = 0;
+  DATA.record.nodes.forEach(n => {   // nodes no claim ever cited, on the outside
+    if (pos[n.slug] || !recVis()) return;
+    const a = (loose++ / 8) * 6.283185307;
+    const ring = 40 + 30 * Math.sqrt(DATA.record.nodes.length);
+    pos[n.slug] = { x: Math.cos(a) * ring * 1.9, y: Math.sin(a) * ring * 1.9 };
+  });
+  if (stVis()) DATA.state.nodes.forEach(n => {  // a state node sits in its blob
+    const c = centres.centre[n.slug];
+    pos[n.slug] = c ? { x: c.x, y: c.y - centres.radius[n.slug] * 0.25 }
+                    : { x: (hashSlug(n.slug) - 0.5) * 300, y: -420 };
+    if (c) homes[n.slug] = { x: c.x, y: c.y, weight: 0.18 };
+  });
+}
+
+function layoutForce(pos) {
+  const centres = clusterCentres();
+  if (!centres.centre) {   // no hyperedges: plain seeded sim
+    let maxOrder = 0;
+    if (recVis()) DATA.record.nodes.forEach(n => {
+      maxOrder = Math.max(maxOrder, n.order);
+      pos[n.slug] = { x: n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
+                      y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8 };
+    });
+    if (stVis()) DATA.state.nodes.forEach(n => pos[n.slug] = {
+      x: (maxOrder + 3) * 80 + n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
+      y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8 });
+    runSim(pos, {});
+    return pos;
+  }
+  const homes = nodeHomes(centres);
+  seedClustered(pos, centres, homes);
+  if (!recVis()) for (const s in pos) if (bySlug[s].graph === "record") delete pos[s];
+  runSim(pos, homes);
+  return pos;
+}
+
+// ------------------------------------------------------------------- blobs
+// Organic outlines around a set of nodes: the geometry behind a hyperedge.
+//
+// The signed-distance-field half of this file is ported from the excaligraph
+// project (src/geometry/blob.ts, MIT licence) and condensed for the browser.
+// The algorithm, its parameter names and its commentary are that project's; the
+// bugs in the transcription are ours. No URL here on purpose — this page must
+// stay self-contained, and a test asserts it fetches nothing.
+//
+// A hyperedge joins many nodes at once, so an arrow will not do — we fill a blob
+// that contains every member. A convex hull will not do either: the hull of
+// three far-apart nodes swallows everything between them, member or not. So:
+//
+//   1. every member contributes its own signed distance, pushed out by `padding`;
+//   2. a band of half-width `corridor` runs along a minimum spanning tree of the
+//      member centres, so far-apart members stay one connected blob;
+//   3. the pieces join with a *smooth* minimum, so two close members bulge into
+//      one body instead of showing a seam;
+//   4. every non-member is subtracted, so the boundary bends around a node that
+//      happens to sit in the way.
+//
+// Then the zero contour comes out by marching squares, gets simplified, and is
+// drawn as a closed curve. It is plain arithmetic on a fixed grid: same input,
+// same points, every time — which is the rule this page is held to anyway.
+
+// Tuned for this page's scale (nodes are 32px circles or ~160-240px cards).
+const BLOB = { padding: 15, corridor: 10, smoothing: 18, clearance: 11,
+               resolution: 5, tolerance: 1.4, maxPoints: 220 };
+const BLOB_MAX_SAMPLES = 60000;   // per blob; coarsen rather than stall
+// Below this zoom the field's detail is invisible anyway, so the cheap hull is
+// the honest choice; it is also what a drag uses, to keep the frame rate.
+const BLOB_FIELD_MIN_ZOOM = 0.3;
+
+// ------------------------------------------------------- fast fallback: hull
 // Andrew's monotone chain; deterministic sort. Colinear inputs collapse to
 // the two extreme points (capsule fallback in blobPath).
 function convexHull(pts) {
@@ -2550,43 +2732,472 @@ function blobPath(members, pos) {
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
     return { x: p.x + dx / d * RB, y: p.y + dy / d * RB };
   });
-  const n = ex.length;  // closed Catmull-Rom -> cubic Bezier
-  let d = `M ${ex[0].x} ${ex[0].y}`;
+  return closedCurve(ex.map(p => [p.x, p.y]));
+}
+
+// Closed Catmull-Rom through the loop, as cubic Beziers.
+function closedCurve(loop) {
+  const n = loop.length;
+  if (n < 3) return null;
+  let d = `M ${loop[0][0]} ${loop[0][1]}`;
   for (let i = 0; i < n; i++) {
-    const p0 = ex[(i + n - 1) % n], p1 = ex[i], p2 = ex[(i + 1) % n], p3 = ex[(i + 2) % n];
-    d += ` C ${p1.x + (p2.x - p0.x) / 6} ${p1.y + (p2.y - p0.y) / 6},` +
-         ` ${p2.x - (p3.x - p1.x) / 6} ${p2.y - (p3.y - p1.y) / 6}, ${p2.x} ${p2.y}`;
+    const p0 = loop[(i + n - 1) % n], p1 = loop[i];
+    const p2 = loop[(i + 1) % n], p3 = loop[(i + 2) % n];
+    d += ` C ${p1[0] + (p2[0] - p0[0]) / 6} ${p1[1] + (p2[1] - p0[1]) / 6},` +
+         ` ${p2[0] - (p3[0] - p1[0]) / 6} ${p2[1] - (p3[1] - p1[1]) / 6},` +
+         ` ${p2[0]} ${p2[1]}`;
   }
   return d + " Z";
 }
 
-function blobLabelPos(members, pos) {
-  const pts = members.flatMap(s => memberOutline(s, pos));
-  if (!pts.length) return { x: 0, y: 0 };
-  let cx = 0, top = 1e9;
-  pts.forEach(p => { cx += p.x; top = Math.min(top, p.y); });
-  return { x: cx / pts.length, y: top - BPAD - 8 };
+// ------------------------------------------------- signed distance functions
+// Each returns 0 on the outline, negative inside and positive outside, in px.
+// Subtracting a constant grows the shape by that much and rounds its corners,
+// which is exactly what `padding` should do.
+function sdRectangle(px, py, b) {
+  const dx = Math.abs(px - (b.x + b.width / 2)) - b.width / 2;
+  const dy = Math.abs(py - (b.y + b.height / 2)) - b.height / 2;
+  return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0);
 }
 
-// All blob label positions at once, with a deterministic de-overlap pass:
-// a label colliding with an already-placed one is pushed up until clear.
-function blobLabelPositions(pos) {
-  const placed = [], out = {};
-  hyperedges().list.forEach(h => {
-    const lp = blobLabelPos(h.members, pos);
-    const w = h.state.length * 6.3;
-    let y = lp.y, moved = true;
-    while (moved) {
-      moved = false;
-      for (const p of placed) {
-        if (Math.abs(lp.x - p.x) < (w + p.w) / 2 + 8 && Math.abs(y - p.y) < 13) {
-          y = p.y - 14;  // strictly decreases, so this terminates
-          moved = true;
+// Exact for a circle. For a stretched ellipse it reads a little short along the
+// long axis, which errs toward a tighter blob, never a looser one.
+function sdEllipse(px, py, b) {
+  const hw = Math.max(b.width / 2, 1e-6), hh = Math.max(b.height / 2, 1e-6);
+  const norm = Math.hypot((px - (b.x + hw)) / hw, (py - (b.y + hh)) / hh);
+  return (norm - 1) * Math.min(hw, hh);
+}
+
+function sdShape(s, px, py) {
+  return s.shape === "ellipse" ? sdEllipse(px, py, s.box) : sdRectangle(px, py, s.box);
+}
+
+// Distance to a line segment. The corridor band is this, minus its half-width.
+function sdSegment(px, py, a, b) {
+  const vx = b[0] - a[0], vy = b[1] - a[1];
+  const wx = px - a[0], wy = py - a[1];
+  const len2 = vx * vx + vy * vy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, (wx * vx + wy * vy) / len2));
+  return Math.hypot(wx - vx * t, wy - vy * t);
+}
+
+// A minimum that rounds off the corner where two shapes meet, so their union
+// reads as one body. `k` is the width of the blend, in px.
+function smoothMin(a, b, k) {
+  if (k <= 0) return Math.min(a, b);
+  const h = Math.max(0, Math.min(1, 0.5 + (0.5 * (b - a)) / k));
+  return b * (1 - h) + a * h - k * h * (1 - h);
+}
+function smoothMax(a, b, k) { return -smoothMin(-a, -b, k); }
+
+// ------------------------------------------------------------------- corridors
+// A minimum spanning tree over the member centres (Prim, O(n^2) in members).
+// This is what keeps a blob in one piece: without it, two members further apart
+// than the padding would each get their own island.
+function spanningSegments(centres) {
+  const segs = [];
+  if (centres.length < 2) return segs;
+  const reached = [0];
+  const remaining = new Set(centres.map((_, i) => i).slice(1));
+  while (remaining.size) {
+    let bestFrom = -1, bestTo = -1, best = Infinity;
+    for (const from of reached) for (const to of remaining) {
+      const a = centres[from], b = centres[to];
+      const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (d < best) { best = d; bestFrom = from; bestTo = to; }
+    }
+    segs.push([centres[bestFrom], centres[bestTo]]);
+    reached.push(bestTo);
+    remaining.delete(bestTo);
+  }
+  return segs;
+}
+
+const MAX_DETOURS = 3;   // how often one corridor may bend to get out of the way
+
+function boxCorners(b) {
+  return [[b.x, b.y], [b.x + b.width, b.y],
+          [b.x + b.width, b.y + b.height], [b.x, b.y + b.height]];
+}
+function boxCentre(b) { return [b.x + b.width / 2, b.y + b.height / 2]; }
+
+function closestOnSegment(p, a, b) {
+  const vx = b[0] - a[0], vy = b[1] - a[1];
+  const len2 = vx * vx + vy * vy;
+  if (len2 === 0) return a;
+  const t = Math.max(0, Math.min(1,
+    ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / len2));
+  return [a[0] + vx * t, a[1] + vy * t];
+}
+
+// How far along `dir` a waypoint must go to leave `shape` behind: past its
+// furthest corner, plus the margin.
+function offsetPastShape(from, dir, shape, margin) {
+  let furthest = 0;
+  for (const c of boxCorners(shape.box))
+    furthest = Math.max(furthest,
+      (c[0] - from[0]) * dir[0] + (c[1] - from[1]) * dir[1]);
+  return furthest + margin;
+}
+
+// A corridor drawn straight through a node the blob must dodge gets cut in half
+// by the subtraction, and the blob falls into two pieces. So bend it: take the
+// obstacle it passes closest to, step sideways past that obstacle's furthest
+// corner on whichever side is nearer, and route through that waypoint.
+function routeCorridor(a, b, obstacles, margin, depth) {
+  depth = depth || 0;
+  if (depth >= MAX_DETOURS || !obstacles.length) return [a, b];
+  let blocker = null, blockedAt = a, leastSlack = 0;
+  for (const s of obstacles) {
+    const near = closestOnSegment(boxCentre(s.box), a, b);
+    const slack = sdShape(s, near[0], near[1]) - margin;
+    if (slack < leastSlack) { leastSlack = slack; blocker = s; blockedAt = near; }
+  }
+  if (!blocker) return [a, b];
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 1;
+  const sideways = [-dy / len, dx / len], other = [dy / len, -dx / len];
+  const forward = offsetPastShape(blockedAt, sideways, blocker, margin);
+  const backward = offsetPastShape(blockedAt, other, blocker, margin);
+  const dir = forward <= backward ? sideways : other;
+  const off = Math.min(forward, backward);
+  const way = [blockedAt[0] + dir[0] * off, blockedAt[1] + dir[1] * off];
+  const first = routeCorridor(a, way, obstacles, margin, depth + 1);
+  const second = routeCorridor(way, b, obstacles, margin, depth + 1);
+  return first.slice(0, -1).concat(second);
+}
+
+function corridorSegments(members, obstacles, margin) {
+  const out = [];
+  const centres = members.map(m => boxCentre(m.box));
+  for (const [from, to] of spanningSegments(centres)) {
+    const path = routeCorridor(from, to, obstacles, margin);
+    for (let i = 0; i < path.length - 1; i++) out.push([path[i], path[i + 1]]);
+  }
+  return out;
+}
+
+// The scalar field whose zero contour is the blob boundary.
+function makeField(members, avoid, links) {
+  // Subtraction uses a tighter blend than the union: too soft and an avoided
+  // node dents the boundary from much further away than its clearance.
+  const cut = BLOB.smoothing / 2;
+  const first = members[0], rest = members.slice(1);
+  return (px, py) => {
+    // Seeded with the first member, not with infinity: a smooth minimum blends
+    // its two arguments, and infinity would poison the blend.
+    let d = sdShape(first, px, py) - BLOB.padding;
+    for (const m of rest)
+      d = smoothMin(d, sdShape(m, px, py) - BLOB.padding, BLOB.smoothing);
+    for (const [a, b] of links)
+      d = smoothMin(d, sdSegment(px, py, a, b) - BLOB.corridor, BLOB.smoothing);
+    for (const s of avoid)
+      d = smoothMax(d, -(sdShape(s, px, py) - BLOB.clearance), cut);
+    return d;
+  };
+}
+
+// --------------------------------------------------------- marching squares
+// Each contour point sits on one grid edge and is named by that edge ("h3,7"),
+// not by its coordinates, so two neighbouring cells agree on it exactly and
+// joining segments into loops is bookkeeping rather than guesswork.
+function traceContour(field, bounds, resolution) {
+  const cols = Math.max(2, Math.ceil((bounds.maxX - bounds.minX) / resolution) + 1);
+  const rows = Math.max(2, Math.ceil((bounds.maxY - bounds.minY) / resolution) + 1);
+  const values = new Float64Array(cols * rows);
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < cols; i++)
+      values[j * cols + i] = field(bounds.minX + i * resolution,
+                                   bounds.minY + j * resolution);
+
+  const at = (i, j) => values[j * cols + i];
+  const inside = (i, j) => at(i, j) < 0;
+  const crossH = (i, j) => {
+    const v0 = at(i, j), v1 = at(i + 1, j);
+    const t = v0 === v1 ? 0.5 : v0 / (v0 - v1);
+    return [bounds.minX + (i + t) * resolution, bounds.minY + j * resolution];
+  };
+  const crossV = (i, j) => {
+    const v0 = at(i, j), v1 = at(i, j + 1);
+    const t = v0 === v1 ? 0.5 : v0 / (v0 - v1);
+    return [bounds.minX + i * resolution, bounds.minY + (j + t) * resolution];
+  };
+
+  const points = new Map(), segments = [];
+  const link = (a, pa, b, pb) => {
+    points.set(a, pa); points.set(b, pb); segments.push([a, b]);
+  };
+  for (let j = 0; j < rows - 1; j++) {
+    for (let i = 0; i < cols - 1; i++) {
+      const code = (inside(i, j) ? 1 : 0) | (inside(i + 1, j) ? 2 : 0) |
+                   (inside(i + 1, j + 1) ? 4 : 0) | (inside(i, j + 1) ? 8 : 0);
+      if (code === 0 || code === 15) continue;
+      const topId = `h${i},${j}`, bottomId = `h${i},${j + 1}`;
+      const leftId = `v${i},${j}`, rightId = `v${i + 1},${j}`;
+      switch (code) {
+        case 1: case 14: link(topId, crossH(i, j), leftId, crossV(i, j)); break;
+        case 2: case 13: link(topId, crossH(i, j), rightId, crossV(i + 1, j)); break;
+        case 3: case 12: link(leftId, crossV(i, j), rightId, crossV(i + 1, j)); break;
+        case 4: case 11: link(rightId, crossV(i + 1, j), bottomId, crossH(i, j + 1)); break;
+        case 6: case 9:  link(topId, crossH(i, j), bottomId, crossH(i, j + 1)); break;
+        case 7: case 8:  link(leftId, crossV(i, j), bottomId, crossH(i, j + 1)); break;
+        // Ambiguous: opposite corners inside. The centre value decides, which is
+        // the standard fix and keeps the contour closed.
+        case 5: case 10: {
+          const centre = (at(i, j) + at(i + 1, j) + at(i + 1, j + 1) + at(i, j + 1)) / 4;
+          if (centre < 0 ? code === 5 : code === 10) {
+            link(topId, crossH(i, j), rightId, crossV(i + 1, j));
+            link(leftId, crossV(i, j), bottomId, crossH(i, j + 1));
+          } else {
+            link(topId, crossH(i, j), leftId, crossV(i, j));
+            link(rightId, crossV(i + 1, j), bottomId, crossH(i, j + 1));
+          }
+          break;
         }
       }
     }
-    placed.push({ x: lp.x, y, w });
-    out[h.state] = { x: lp.x, y };
+  }
+
+  // Every contour point lies on a grid edge shared by two cells, so exactly two
+  // segments meet there: walking from any segment traces a whole loop.
+  const adjacency = new Map();
+  segments.forEach(([a, b], index) => {
+    for (const id of [a, b]) {
+      const list = adjacency.get(id);
+      if (list) list.push(index); else adjacency.set(id, [index]);
+    }
+  });
+  const used = new Set(), loops = [];
+  for (let start = 0; start < segments.length; start++) {
+    if (used.has(start)) continue;
+    const ids = [segments[start][0]];
+    let current = start, currentId = ids[0];
+    for (;;) {
+      used.add(current);
+      const seg = segments[current];
+      const nextId = seg[0] === currentId ? seg[1] : seg[0];
+      if (nextId === ids[0]) break;
+      ids.push(nextId);
+      const next = (adjacency.get(nextId) || []).find(i => !used.has(i));
+      if (next === undefined) break;   // contour ran off the grid; keep what we have
+      current = next; currentId = nextId;
+    }
+    if (ids.length >= 3) loops.push(ids.map(id => points.get(id)));
+  }
+  return loops;
+}
+
+// ------------------------------------------------------------ simplification
+function perpendicularDistance(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  return Math.abs(dx * (a[1] - p[1]) - dy * (a[0] - p[0])) / len;
+}
+
+// Ramer-Douglas-Peucker, iterative so a long contour cannot blow the stack.
+function douglasPeucker(points, tolerance) {
+  if (points.length < 3) return points.slice();
+  const keep = new Uint8Array(points.length);
+  keep[0] = 1; keep[points.length - 1] = 1;
+  const stack = [[0, points.length - 1]];
+  while (stack.length) {
+    const [first, last] = stack.pop();
+    let worst = -1, worstD = tolerance;
+    for (let i = first + 1; i < last; i++) {
+      const d = perpendicularDistance(points[i], points[first], points[last]);
+      if (d > worstD) { worstD = d; worst = i; }
+    }
+    if (worst !== -1) { keep[worst] = 1; stack.push([first, worst], [worst, last]); }
+  }
+  return points.filter((_, i) => keep[i] === 1);
+}
+
+function signedArea(loop) {
+  let sum = 0;
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++)
+    sum += (loop[j][0] - loop[i][0]) * (loop[j][1] + loop[i][1]);
+  return sum / 2;
+}
+
+function containsPoint(loop, p) {
+  let inside = false;
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+    const [xi, yi] = loop[i], [xj, yj] = loop[j];
+    if ((yi > p[1]) !== (yj > p[1]) &&
+        p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// The tracing order depends on which cell the walk started in, and that decides
+// which points simplification keeps. Anchoring the start to a geometric feature
+// (leftmost point, ties on y) makes the output depend on the shape alone.
+function rotateToExtreme(loop) {
+  let best = 0;
+  for (let i = 1; i < loop.length; i++)
+    if (loop[i][0] < loop[best][0] ||
+        (loop[i][0] === loop[best][0] && loop[i][1] < loop[best][1])) best = i;
+  return loop.slice(best).concat(loop.slice(0, best));
+}
+
+function finishLoop(loop) {
+  const anchored = rotateToExtreme(loop);
+  const open = anchored.concat([anchored[0]]);
+  let simplified = douglasPeucker(open, BLOB.tolerance);
+  let attempt = BLOB.tolerance;      // coarsen rather than emit hundreds of points
+  while (simplified.length > BLOB.maxPoints && attempt < 512) {
+    attempt *= 1.6;
+    simplified = douglasPeucker(open, attempt);
+  }
+  return simplified.slice(0, -1);
+}
+
+// --------------------------------------------------------------- entry point
+// A smooth minimum is not associative, so folding members in a different order
+// would move the boundary by a fraction of a pixel. A hyperedge is a *set*, so
+// order it canonically first and the blob depends on the set alone.
+function blobShapes(slugs, pos) {
+  const out = [];
+  slugs.forEach(s => {
+    const p = pos[s];
+    if (!p) return;
+    const d = dimsOf(s), circle = styleFor(bySlug[s]) === "circle";
+    out.push({ shape: circle ? "ellipse" : "rectangle",
+               box: { x: p.x - d.w / 2, y: p.y - d.h / 2, width: d.w, height: d.h } });
+  });
+  return out.sort((a, b) => a.box.x - b.box.x || a.box.y - b.box.y ||
+                            a.box.width - b.box.width || a.box.height - b.box.height);
+}
+
+// Closed outlines around `members`, largest first, in world coordinates.
+// Normally there is exactly one. There can be more when an avoided node cuts a
+// blob in two; loops *inside* another loop are holes and get dropped.
+function blobOutline(members, avoid) {
+  if (!members.length) return [];
+  const links = corridorSegments(members, avoid, BLOB.clearance + BLOB.corridor);
+  // The field is positive everywhere outside this margin, which keeps the
+  // contour off the edge of the grid and so keeps every loop closed.
+  const margin = BLOB.padding + BLOB.corridor + BLOB.smoothing + BLOB.resolution * 3;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const { box } of members) {
+    minX = Math.min(minX, box.x); minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width); maxY = Math.max(maxY, box.y + box.height);
+  }
+  for (const seg of links) for (const [x, y] of seg) {
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  const bounds = { minX: minX - margin, minY: minY - margin,
+                   maxX: maxX + margin, maxY: maxY + margin };
+
+  // Only shapes reaching into the grid can bend the boundary; the rest have
+  // zero influence there, so dropping them changes nothing.
+  const reach = BLOB.clearance + BLOB.smoothing;
+  const near = avoid.filter(({ box }) =>
+    box.x - reach <= bounds.maxX && box.x + box.width + reach >= bounds.minX &&
+    box.y - reach <= bounds.maxY && box.y + box.height + reach >= bounds.minY);
+
+  let resolution = BLOB.resolution;
+  const samples = ((bounds.maxX - bounds.minX) / resolution + 1) *
+                  ((bounds.maxY - bounds.minY) / resolution + 1);
+  if (samples > BLOB_MAX_SAMPLES) resolution *= Math.sqrt(samples / BLOB_MAX_SAMPLES);
+
+  const loops = traceContour(makeField(members, near, links), bounds, resolution);
+  // Even-odd nesting: a loop inside an odd number of others is a hole.
+  return loops
+    .filter((loop, i) => loops.reduce(
+      (depth, other, j) => depth + (j !== i && containsPoint(other, loop[0]) ? 1 : 0),
+      0) % 2 === 0)
+    .map(finishLoop)
+    .filter(loop => loop.length >= 4)
+    .sort((a, b) => Math.abs(signedArea(b)) - Math.abs(signedArea(a)));
+}
+
+// Non-members the blob has to bend around: every other node in the layout.
+// Read from `pos`, not from the drawn elements — the blob layer is built before
+// the node layer, so `nodeEls` still holds the *previous* render at this point
+// (and nothing at all on the first one, which silently disabled avoidance).
+// Nodes far outside the members' span are dropped inside blobOutline anyway.
+function blobAvoidShapes(memberSet, pos) {
+  const others = [];
+  for (const slug in pos) if (!memberSet.has(slug) && bySlug[slug]) others.push(slug);
+  return blobShapes(others, pos);
+}
+
+// True when the distance field is worth computing: the cheap hull is used while
+// dragging and when zoomed too far out for the detail to show.
+let blobDragging = false;
+function blobFieldMode() {
+  return !blobDragging && tfFor().k >= BLOB_FIELD_MIN_ZOOM;
+}
+
+// Cached per hyperedge so a re-render (theme flip, dim pass) does not recompute
+// the field. Keyed by the positions the field was built from.
+const blobCache = new Map();
+function blobGeometry(h, pos) {
+  const key = h.state + "|" + h.members.map(s => {
+    const p = pos[s];
+    return p ? Math.round(p.x) + "," + Math.round(p.y) : "-";
+  }).join(";");
+  const hit = blobCache.get(h.state);
+  if (hit && hit.key === key) return hit.value;
+  const memberSet = new Set(h.members);
+  const value = blobOutline(blobShapes(h.members, pos), blobAvoidShapes(memberSet, pos));
+  blobCache.set(h.state, { key, value });
+  return value;
+}
+
+// The path for one hyperedge: field loops when they are worth it, hull if not.
+function blobPathFor(h, pos) {
+  if (!blobFieldMode()) return blobPath(h.members, pos);
+  const loops = blobGeometry(h, pos);
+  if (!loops.length) return blobPath(h.members, pos);
+  return loops.map(closedCurve).filter(Boolean).join(" ") || blobPath(h.members, pos);
+}
+
+// -------------------------------------------------------------- blob labels
+// Placed *on* the outline rather than pushed up off it (excaligraph's
+// top | centre | bottom idea): each label takes the first anchor that does not
+// collide with one already placed, so a dense cluster spreads its labels around
+// its own boundary instead of drifting into a stack above the canvas.
+function outlineAnchors(loops, members, pos) {
+  if (loops && loops.length) {
+    const loop = loops[0];
+    let minY = Infinity, maxY = -Infinity, sumX = 0;
+    loop.forEach(p => { minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]); sumX += p[0]; });
+    const near = (target, sign) => {
+      let x = 0, n = 0;
+      loop.forEach(p => { if (Math.abs(p[1] - target) < 6) { x += p[0]; n++; } });
+      return { x: n ? x / n : sumX / loop.length, y: target + sign * 12 };
+    };
+    return [near(minY, -1), near(maxY, 1),
+            { x: sumX / loop.length, y: (minY + maxY) / 2 }];
+  }
+  const pts = members.flatMap(s => memberOutline(s, pos));
+  if (!pts.length) return [{ x: 0, y: 0 }];
+  let cx = 0, top = 1e9, bottom = -1e9;
+  pts.forEach(p => { cx += p.x; top = Math.min(top, p.y); bottom = Math.max(bottom, p.y); });
+  cx /= pts.length;
+  return [{ x: cx, y: top - BPAD - 8 }, { x: cx, y: bottom + BPAD + 14 },
+          { x: cx, y: (top + bottom) / 2 }];
+}
+
+function blobLabelPositions(pos) {
+  const placed = [], out = {};
+  hyperedges().list.forEach(h => {
+    const loops = blobFieldMode() ? blobGeometry(h, pos) : null;
+    const anchors = outlineAnchors(loops, h.members, pos);
+    const w = h.state.length * 6.3;
+    const clear = c => !placed.some(p =>
+      Math.abs(c.x - p.x) < (w + p.w) / 2 + 8 && Math.abs(c.y - p.y) < 13);
+    let chosen = anchors.find(clear);
+    if (!chosen) {  // every anchor taken: step up from the first until clear
+      chosen = { x: anchors[0].x, y: anchors[0].y };
+      while (!clear(chosen)) chosen.y -= 14;   // strictly decreases, so it ends
+    }
+    placed.push({ x: chosen.x, y: chosen.y, w });
+    out[h.state] = chosen;
   });
   return out;
 }
@@ -2756,6 +3367,12 @@ function drawCircleNode(entry, pos) {
   const heavy = node.is_root || node.is_hwm || node.unreconciled || node.frontier;
   g.appendChild(el("circle", { r: R, fill: T().surface, stroke: accentFor(entry),
     "stroke-width": heavy ? 2.2 : 1.4 }));
+  // The circle style used to be unlabelled by design, which made the Clusters
+  // view unreadable: you could see the grouping and not what was grouped. The
+  // label is drawn always and shown by zoom (applyTf), so panning stays cheap.
+  g.appendChild(el("text", { class: "nodelabel", x: 0, y: R + 13,
+    "font-family": FONT, "font-size": 10.5, "text-anchor": "middle",
+    fill: T().ink2, "pointer-events": "none" }, trunc(node.title, 20)));
   const tip = el("title");
   tip.textContent = node.title + " (" + node.slug + ")";
   g.appendChild(tip);
@@ -2909,7 +3526,7 @@ function drawBlobs(pos) {
   const hs = hyperedges().list.slice()
     .sort((a, b) => b.members.length - a.members.length);  // big first, small on top
   hs.forEach(h => {
-    const d = blobPath(h.members, pos);
+    const d = blobPathFor(h, pos);
     if (!d) return;
     const color = T().cat[h.ci % T().cat.length];
     const path = el("path", { d, fill: color,
@@ -2934,13 +3551,24 @@ function updateBlobs(slug) {
   const pos = posFor(), H = hyperedges();
   (H.memberOf[slug] || []).forEach(st => {
     const be = blobEls[st];
-    if (be) be.path.setAttribute("d", blobPath(H.index[st].members, pos));
+    if (be) be.path.setAttribute("d", blobPathFor(H.index[st], pos));
   });
-  const lps = blobLabelPositions(pos);  // de-overlap involves every label
+  const lps = blobLabelPositions(pos);  // placement involves every label
   for (const st in blobEls) {
     blobEls[st].label.setAttribute("x", lps[st].x);
     blobEls[st].label.setAttribute("y", lps[st].y);
   }
+}
+
+// Redraw only the blob layer — after a drag ends (the field replaces the hull
+// used while dragging) or after zooming across the field threshold.
+function redrawBlobs() {
+  const world = document.getElementById("world");
+  const old = document.getElementById("blobs");
+  if (!world || !old) return;
+  const fresh = drawBlobs(posFor());
+  world.replaceChild(fresh, old);
+  updateDim();
 }
 
 function renderAll() {
@@ -3008,10 +3636,15 @@ function renderAll() {
   updateDim();
 }
 
+// Below this zoom a 10.5px label is under 7px on screen — noise, not text.
+const LABEL_MIN_ZOOM = 0.62;
+
 function applyTf() {
   const t = tfFor();
   const world = document.getElementById("world");
   if (world) world.setAttribute("transform", `translate(${t.x},${t.y}) scale(${t.k})`);
+  const on = t.k >= LABEL_MIN_ZOOM ? "" : "none";
+  svg.querySelectorAll("text.nodelabel").forEach(el => el.style.display = on);
 }
 
 // ------------------------------------------------------- dim / select / search
@@ -3279,7 +3912,9 @@ svg.addEventListener("pointermove", e => {
       if (eg.from === drag.slug || eg.to === drag.slug)
         edgeEls[i].setAttribute("d", edgePath(eg, pos));
     });
-    if (show.blobs && recVis()) updateBlobs(drag.slug);
+    // The distance field is too costly per frame; drag on the cheap hull and
+    // put the real outline back on pointerup.
+    if (show.blobs && recVis()) { blobDragging = true; updateBlobs(drag.slug); }
   }
 });
 svg.addEventListener("pointerup", e => {
@@ -3290,17 +3925,23 @@ svg.addEventListener("pointerup", e => {
     else if (drag.blob) select(drag.blob);
     else deselect();
   }
+  const wasDragging = blobDragging;
   drag = null;
+  blobDragging = false;
+  if (wasDragging && show.blobs && recVis()) redrawBlobs();
 });
 svg.addEventListener("wheel", e => {
   e.preventDefault();
   const t = tfFor(), r = svg.getBoundingClientRect();
   const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const before = blobFieldMode();
   const k2 = Math.min(2.5, Math.max(0.1, t.k * Math.exp(-e.deltaY * 0.0016)));
   t.x = mx - (mx - t.x) * (k2 / t.k);
   t.y = my - (my - t.y) * (k2 / t.k);
   t.k = k2;
   applyTf();
+  // Crossing the field threshold swaps hull for outline (and back).
+  if (show.blobs && recVis() && blobFieldMode() !== before) redrawBlobs();
 }, { passive: false });
 document.addEventListener("keydown", e => { if (e.key === "Escape") deselect(); });
 

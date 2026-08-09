@@ -1,13 +1,13 @@
 {
   "clusters": {
-    "aspect": 0.6,
+    "aspect": 0.8,
     "blobs": 12,
     "edges": 46,
-    "height": 805,
-    "labels": 0,
+    "height": 953,
+    "labels": 39,
     "nodes": 39,
-    "scale": 0.9,
-    "width": 480
+    "scale": 0.793,
+    "width": 759
   },
   "frontier": {
     "aspect": 0.76,

@@ -25,20 +25,8 @@ function computeLayout() {
         pos[n.slug] = { x: (n.order - (width - 1) / 2) * dx, y: n.layer * dy };
       });
     }
-  } else {                         // force: deterministic seed + sim
-    let maxOrder = 0;
-    if (recVis()) DATA.record.nodes.forEach(n => {
-      maxOrder = Math.max(maxOrder, n.order);
-      pos[n.slug] = {
-        x: n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
-        y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
-      };
-    });
-    if (stVis()) DATA.state.nodes.forEach(n => pos[n.slug] = {
-      x: (maxOrder + 3) * 80 + n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
-      y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
-    });
-    runSim(pos);
+  } else {                         // force: two-level cluster sim, deterministic
+    layoutForce(pos);
     if (cards) {  // sim runs in circle metric; stretch, then separate any
       for (const s in pos) { pos[s].x *= 3.2; pos[s].y *= 1.8; }
       const slugs = Object.keys(pos);  // insertion order: deterministic
