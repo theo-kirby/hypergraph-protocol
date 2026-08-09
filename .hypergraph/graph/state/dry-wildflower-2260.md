@@ -5,44 +5,50 @@ title: Skills
 created_at: '2026-08-06T21:41:21.141576+00:00'
 parents:
 - cool-king-8586
-summary: Five skills (init/record/reconcile/orient/adopt) + AGENTS.md onboarding, validated by controlled blind retest and field adoption; adopt now mirrors the full imported history.
+summary: Five single-path skills (zero flywheel/lease/MCP/429/409 hits), dogfooded through committed .claude/skills symlinks; live from the next session start; working.
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 8
-  pushed_at: '2026-08-09T10:15:16+00:00'
-  content_sha256: 49417f71d698512a4701931d4935765f9fb5fd0afdedaf954d5c5d34302dc6c6
+  revision: 9
+  pushed_at: '2026-08-09T11:42:29+00:00'
+  content_sha256: 55bd9c20a22eabf966dcefdde61cc2afae3ecf1331dd385f48ddadf3b02e1cdd
 ---
 Status: working
 
 ## Current
 
-- Five skills landed and installed: hypergraph-init (roots + skeleton + config), hypergraph-record (causally-parented record nodes, always declares State Impact, never writes state), hypergraph-reconcile (single writer: folds impacts, advances HWM, regenerates STATE.md, runs check, refreshes + verifies the mirror), hypergraph-orient (read-only frontier brief, ≤~6 tool calls, STATE.md fallback), and hypergraph-adopt (conversion path for repos with a past) [rec: spring-fog-0600] [rec: late-isle-6483].
-- hypergraph-adopt covers both modes — A: import an existing Flywheel graph verbatim as the fork with mandatory `archive:` config; B: author 1–3 prehistory nodes from the repo itself — plus the epoch marker, distillation into an honest state graph (per-branch subagent mining, id-prefix→slug resolution, user interview for invisible dead ends), the init tail, and onboarding install; `templates/agents-block.md` (idempotent sentinel block with contract reconciliation, symlink-safe) ships with it [rec: late-isle-6483].
-- hypergraph-adopt mode A now imports with `--fork` and pushes the **whole** graph: plain mirror-root titles (`<project> — record`, no parenthetical — the lineage belongs in the body), `push --lineage` as the mirror record root's body, push results recorded **in batches of ~20 rather than once at the end** (a run that dies midway is only safely resumable for batches already recorded; anything created but unrecorded is created twice), and verification against the `mirror_roots:` export alone. Reconcile step 8 refreshes the lineage node beside the legend and carries the same mirror-only verify rule; init's bootstrap note is retitled to the re-home case and says not to pass `--fork` [rec: tender-moss-3792].
-- Field correction from tbinn: the mode-B marker parents on the newest prehistory node, not `--root` — the CLI correctly refuses a second parentless root per graph; skill and SPEC amended [rec: stormy-dew-2969].
-- install.sh symlinks the skill dirs into ~/.claude/skills; relative reference symlinks (references/spec.md → ../../../SPEC.md) survive installation because they resolve against physical location [rec: spring-fog-0600].
-- Orient validated end-to-end by a fresh agent (4/6 calls); skill updated to read component bodies via one flywheel_get_node_children page [rec: steep-cell-5173].
-- hypergraph-record covers directive decision nodes: Operator/agent intent is recorded with impact declarations before any work exists, so gaps reach the frontier through the record graph [rec: patient-limit-9007].
-- Onboarding outside the skills channel: AGENTS.md states the record discipline as non-negotiable for arriving agents, with CLAUDE.md containing only `@AGENTS.md`; added after blind test #1 (machinery used, obligation missed) and validated by blind test #2 — a controlled retest with AGENTS.md as the only changed variable produced full compliance: orient, record, defer reconcile [rec: tiny-sunset-0847] [rec: little-bar-4131].
-- The five skills are **not installed by default anywhere**, and `AGENTS.md` claimed they were ("also installed in `~/.claude/skills`"). That stale claim cost a full working session: `/hypergraph-record` and `/hypergraph-reconcile` resolved as unknown skills and it read as a harness fault rather than a missing install. AGENTS.md corrected — the workflow **is** the SKILL.md file and can be followed directly; `hypergraph skills install` (project) or `--user` (global) is what makes them loadable [rec: sweet-wave-7885].
-- The benchmark boxes are unaffected by that gap: pi never reads `.claude/skills`, and the Claude Code provisioning path already runs `skills install --user` itself [rec: sweet-wave-7885].
+- Five skills: hypergraph-init (roots + skeleton + config), hypergraph-record (causally-parented record nodes, always declares State Impact, never writes state), hypergraph-reconcile (single writer: folds impacts, advances HWM, regenerates STATE.md, runs check, publishes), hypergraph-orient (read-only frontier brief), and hypergraph-adopt (conversion path for repos with a past) [rec: spring-fog-0600] [rec: late-isle-6483].
+- **They are single-path.** Every backend-dispatch preamble, every `flywheel` workflow branch, and all five `references/flywheel-adapter.md` symlinks are gone. The acceptance test chosen in advance holds: grepping the five SKILL.md bodies for `flywheel|lease|MCP|429|409` returns **zero hits**, and no dangling symlink remains under `skills/` [rec: calm-sand-3399]. An agent reading them learns one system.
+- Sizes after the rewrite: orient 78→59, record 88→77, reconcile 117→94, init 99→85, adopt 128→150 (adopt grew deliberately, around the new affordances). **Reconcile step 8 went from 23 lines of choreography to 9** [rec: calm-sand-3399].
+- What each cut bought: orient lost two workflows plus a no-MCP fallback for one workflow and *no fallback* — there is no degraded mode, the repo **is** the graph; record lost the rate limits, because pacing is the tool's job rather than something an agent recites; reconcile gained a single unconditional `hypergraph push` step, with the two nonzero-exit meanings named because they are genuinely different failures (an append-only breach is fixed locally, drift is fixed by re-publishing); init stopped asking a storage question that no longer exists [rec: calm-sand-3399].
+- Reconcile's steps were reordered so **publish precedes commit**, which puts `push`'s frontmatter writes inside the same `git add` rather than leaving them dangling until the next one [rec: calm-sand-3399].
+- init gained a When-To-Use line routing repos-with-a-past to adopt: init writes a day-one frontier, and on a mature codebase that is a fiction [rec: calm-sand-3399].
+- **This repo now dogfoods the skills.** `.claude/skills/hypergraph-*` are five committed relative symlinks into `skills/`, so a fresh clone resolves `/hypergraph-record` and editing `skills/<name>/SKILL.md` edits the live skill — the only arrangement that cannot go stale. Project scope, not `--user`: a global install would put `hypergraph-*` into every session the user has, everywhere [rec: jolly-arbor-9572].
+- Every skill carries a two-line `## The CLI` preamble: `uv run tools/hypergraph.py …` in a dev checkout, bare `hypergraph` for an adopter. `[tool.uv] package = false` means the bare form never resolves in this repo, so every skill line reading `hypergraph new record …` was previously unexecutable *in the repo that ships it* [rec: jolly-arbor-9572].
+- `hypergraph skills install` gained `--link`, and `install.sh` is now a wrapper around it, so there is one implementation of "install the skills" rather than two that could drift [rec: jolly-arbor-9572].
+- hypergraph-adopt covers both modes — A: import an existing hosted graph verbatim as the fork with mandatory `archive:` config; B: author 1–3 prehistory nodes from the repo itself — plus the epoch marker, distillation into an honest state graph, the init tail, and onboarding install; `templates/agents-block.md` ships with it [rec: late-isle-6483] [rec: tender-moss-3792].
+- Field correction from tbinn: the mode-B marker parents on the newest prehistory node, not `--root` — the CLI correctly refuses a second parentless root per graph [rec: stormy-dew-2969].
+- Onboarding outside the skills channel: AGENTS.md states the record discipline as non-negotiable for arriving agents, with CLAUDE.md containing only `@AGENTS.md`; added after blind test #1 (machinery used, obligation missed) and validated by blind test #2, a controlled retest with AGENTS.md as the only changed variable [rec: tiny-sunset-0847] [rec: little-bar-4131].
+- Open: the rewritten skills **have not yet been run by an agent that read them as skills**. Claude Code loads skills at session start, so both the dogfooding symlinks and the single-path bodies become live on the next cold start [rec: jolly-arbor-9572] [rec: calm-sand-3399].
 
 ## Negative knowledge
 
-- [scope: hypergraph-orient reading state-node bodies on the Flywheel backend | confidence: medium | evidence: steep-cell-5173] flywheel_get_node_tree with projection=full returns topology-only payloads — it cannot substitute for get_node_children/get_node when bodies are needed.
 - [scope: protocol discoverability by uninstructed agents | confidence: high | evidence: tiny-sunset-0847, little-bar-4131] README/SPEC presence and installed skills do not by themselves cause a protocol-naive agent to record its work — it can use the graphs as app data without recognizing the obligation; repo-level agent onboarding (AGENTS.md/CLAUDE.md) is required, and the controlled retest confirms it is also sufficient.
-- [scope: documenting where a tool's skills live | confidence: high | evidence: sweet-wave-7885] a README claim that something is installed is not an install. `AGENTS.md` asserted the skills were in `~/.claude/skills`; they were in the repo and nowhere else, and the resulting "unknown skill" errors were read as a harness bug for a whole session. Documentation that states a machine's state, rather than the command that produces it, goes stale silently and misdirects whoever trusts it.
+- [scope: documenting where a tool's skills live | confidence: high | evidence: sweet-wave-7885, jolly-arbor-9572] a README claim that something is installed is not an install. `AGENTS.md` asserted the skills were in `~/.claude/skills`; they were in the repo and nowhere else, and the resulting "unknown skill" errors were read as a harness bug for a whole session. Documentation that states a machine's state, rather than the command that produces it, goes stale silently. The durable fix was not better wording but committed symlinks — a fact in the repo instead of a claim about a machine.
+- [scope: installers that write over their own source | confidence: high | evidence: jolly-arbor-9572] `skills install` unlinked a symlinked destination and copied over it, so running the documented command inside this checkout would have replaced each dogfooding symlink with a stale snapshot of itself — no error, and output indistinguishable from a normal install. Any installer whose destination can legitimately be a link **into its own source** must detect that case and refuse, because the failure is invisible at the moment it happens and only surfaces later as edits that mysteriously stop taking effect.
+- [scope: hypergraph-orient reading state-node bodies over a hosted store | confidence: medium | evidence: steep-cell-5173] a tree call with `projection=full` returns topology-only payloads — it cannot substitute for children/get_node when bodies are needed. Retained as host-contract knowledge; orient no longer has a hosted path.
 
 ## Provenance
 
 - wandering-rice-9747 — component seeded at project init
-- spring-fog-0600 — four skills + installer landed, installed, registered (M4)
+- spring-fog-0600 — four skills + installer landed (M4)
 - steep-cell-5173 — orient validated cold-start; body-reading recipe corrected (M5)
 - patient-limit-9007 — directive-decision-node guidance added to hypergraph-record
 - tiny-sunset-0847 — AGENTS.md onboarding added after blind test #1
-- little-bar-4131 — blind test #2 validated AGENTS.md; discoverability entry raised to high confidence
+- little-bar-4131 — blind test #2 validated AGENTS.md
 - late-isle-6483 — fifth skill hypergraph-adopt + agents-block template
 - stormy-dew-2969 — mode-B marker parentage corrected from field use
-- tender-moss-3792 — adopt/reconcile/init updated for fork-import: --fork, full-history push, batched result recording, mirror-only verify
+- tender-moss-3792 — adopt/reconcile/init updated for fork-import
 - sweet-wave-7885 — skills are not installed by default; AGENTS.md corrected
+- jolly-arbor-9572 — dogfooding symlinks committed; install-over-source bug fixed; --link added
+- calm-sand-3399 — the five skills go single-path; acceptance grep returns zero hits

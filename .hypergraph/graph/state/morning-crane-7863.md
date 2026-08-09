@@ -5,13 +5,13 @@ title: Adoption
 created_at: '2026-08-07T20:01:01+00:00'
 parents:
 - cool-king-8586
-summary: 'Adoption thrust delivered end-to-end: epoch mechanism, adopt skill, verify+legend+lineage, fork-import, a3go+tbinn adopted and mirrored in full, acceptance loop held, 0.0.2 published.'
+summary: 'Adoption built, field-proven, and now MCP-free: mirror pull plus four adopt affordances compute the facts, while the agent writes every claim; working.'
 flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
-  revision: 3
-  pushed_at: '2026-08-08T11:35:36+00:00'
-  content_sha256: 78c373c3d2aa3ed75484ab81b71d0419b4cfc1db4a0eda44439d79f8a4ab15e1
+  revision: 4
+  pushed_at: '2026-08-09T11:42:29+00:00'
+  content_sha256: 9676c247c3625b13ed5978b3220a9a0d5b8b43f524b2d577ed1d5d4539623188
 ---
 Status: working
 
@@ -24,11 +24,19 @@ Status: working
 - Release 0.0.2 built with `hypergraph skills install` (skills + agents-block as package data) [rec: crisp-lake-4496] and now published to PyPI and verified from the public index — skills install works via uvx and the published CLI checks both adopted repos clean; the adopter onboarding pins on the dev checkout are removed [rec: rough-reef-5869].
 - Field adoptions landed: a3go mode A (108-node legacy graph imported verbatim, 107 nodes epoch-exempt, check 0/0, verified mirror on fresh roots with the legacy graph frozen as archive) [rec: humble-clover-7048]; tbinn mode B (authored prehistory, frontier honestly led by a broken node, full mirror verified) [rec: stormy-dew-2969].
 - Fork-import closed the last gap in the thrust: a full import **is** a fork, so the project re-publishes its whole imported history to a mirror it owns. `import --fork` files the archive's ids under `origin:` and omits `flywheel:`; `push --lineage` puts the archive lineage in the mirror record root's body; verification runs against the project's own roots alone. Shipped with tests, docs and skills [rec: copper-moss-3669] [rec: tender-moss-3792], then proven live on a3go — 108 creates, topology restored by re-parenting, `push --verify` exit 0 against the mirror alone [rec: northern-willow-0469].
+- **Mode A no longer needs MCP.** The legacy export is `hypergraph mirror pull --record-node-id … [--state-node-id …]`, one call over every anchor, split locally by BFS into `record.json`/`state.json` — a node reachable from both anchor sets is an error, because the two graphs are disjoint by construction. It prints a draft `archive:` block on stderr [rec: silver-ember-3035] [rec: calm-sand-3399].
+- **Four affordances compute the facts the adopting agent used to gather by hand**, so its budget goes to judgment [rec: calm-sand-3399]:
+  - `adopt --survey` — git shape (first commit, contributors, commit clusters as candidate eras, highest-churn paths), source dirs, doc inventory, test framework, and **AGENTS.md/CLAUDE.md presence plus symlink status**. That last one was `ls -la` + `readlink` by hand, guarding a rule the skill states in prose (never break a `CLAUDE.md → AGENTS.md` symlink). Replaces roughly fifteen exploratory bash calls [rec: calm-sand-3399].
+  - `adopt --init` — mints both roots and writes a *valid* config. Verified on a scratch repo: the result checks **0/0** [rec: calm-sand-3399].
+  - `adopt --marker <slug>` — records the epoch only after checking the slug resolves, and refuses to append a second `epoch:` block [rec: calm-sand-3399].
+  - `adopt --resolve-prefixes --against <export>` — maps `[0-9a-f]{8,}` prefixes cited in tracked docs to slugs, **reporting ambiguity rather than guessing**; hex tokens matching no node are listed apart. Against this repo's own export it mapped all 53 ids with 0 ambiguous, correctly setting aside 1057 git SHAs [rec: calm-sand-3399].
+- The **interview** stayed in the skill and became an explicit five-question list, each answer routed to where it lands: what didn't work and what in the docs is now false become negative knowledge and `broken` statuses; what is externally blocked becomes `blocked`; what you are deliberately not doing becomes a decision record node rather than a state claim [rec: calm-sand-3399].
 - Acceptance test passed: a fresh agent with no protocol context completed the full loop in a3go — orient in 6 calls, genuine frontier work (GEO-1 precondition: d=1 boards proven exactly 2D Go, corner-flip endpoint measured), causally-parented record, no state writes, librarian reconcile, mirror verify clean — zero protocol violations [rec: fond-tree-4727].
 
 ## Negative knowledge
 
 - [scope: importing legacy Flywheel graphs into the local backend | confidence: high | evidence: vast-sky-3964 | decision: vast-sky-3964] Artifacts do not survive import — the local backend has no artifact operation, so archived artifacts stay on the legacy Flywheel graph; the `archive:` config reference is mandatory in mode A for this reason, and the mirror record root now states the loss explicitly via `push --lineage`.
+- [scope: generating protocol content from a tool | confidence: high | evidence: calm-sand-3399 | decision: calm-sand-3399] the CLI must never generate prose — no prehistory bodies, no `## Current` claims, no negative-knowledge entries — even though it has the facts to fill the templates. A claim nobody derived from evidence they read is not re-derivable, which breaks I8 by definition, and template-filling is precisely the aspirational output adopt's guardrails exist to prevent. The line that holds: the CLI computes facts, the agent writes claims.
 - [scope: adopting a graph you do not own | confidence: high | evidence: copper-moss-3669, northern-willow-0469 | decision: copper-moss-3669] preserving the source node_ids as the *push target* silently orphans the whole imported history: the nodes are on Flywheel, on a graph another account owns, so push omits them and the project's own mirror stays a stub. Provenance and push target must be separate fields, and mirror verification must never include the archive in its export.
 
 ## Provenance
@@ -45,3 +53,5 @@ Status: working
 - copper-moss-3669 — fork-import direction opened: adopted projects mirror their full history
 - tender-moss-3792 — fork-import shipped (tooling, docs, skills)
 - northern-willow-0469 — a3go migrated live; fork-import field-proven
+- silver-ember-3035 — mirror pull replaces the MCP export path for mode A
+- calm-sand-3399 — adopt affordances (survey/init/marker/resolve-prefixes); the no-generated-prose line

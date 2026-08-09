@@ -5,13 +5,13 @@ title: Dogfooding
 created_at: '2026-08-06T21:41:24.844400+00:00'
 parents:
 - cool-king-8586
-summary: 'Self-host deepened: graphs live in-repo; blind-test pair passed; remote publication + local-backend cycles independently audited.'
+summary: Full self-host cycle, two blind tests, remote-cycle audit, and the repo now dogfooding its own skills through committed .claude/skills symlinks; working.
 flywheel:
   node_id: a4fad33e-262f-5f4a-8d83-298e76523a0e
   slug: bold-field-1268
-  revision: 7
-  pushed_at: '2026-08-07T20:15:27+00:00'
-  content_sha256: 4398bd19b80de42e8212a2707328f558d8b435105e410134a93f6f0863913862
+  revision: 8
+  pushed_at: '2026-08-09T11:42:29+00:00'
+  content_sha256: 0a7219babda2576c1999e276e7ea0bb0bbfc34962b232d6d95a46c15a09309e2
 ---
 Status: working
 
@@ -26,13 +26,14 @@ Status: working
 - Blind test #1 (no onboarding): a protocol-naive agent shipped a real feature and used the graph machinery (exports, render, viz) but recorded nothing — machinery discovery held, obligation legibility failed; countermeasure was AGENTS.md onboarding, and the work was recorded retroactively [rec: tiny-sunset-0847].
 - Blind test #2 (with AGENTS.md, only changed variable): passed — the arriving agent oriented, committed its work to git, recorded a causally-parented node with a valid impact declaration, never touched state, and explicitly deferred reconcile to the Operator; the countermeasure is validated [rec: little-bar-4131].
 - Operating pattern observed across cycles: worker sessions (fresh context) do work and append record nodes; a standing librarian session reconciles — the division of labor I3 implies, emerging in practice [rec: little-bar-4131].
+- The project now dogfoods its own skills, which it previously did not: before [rec: jolly-arbor-9572] there was no `.claude/` directory at all, so no `hypergraph-*` skill resolved as a slash command **in the repo that ships them**. Five committed relative symlinks fixed it; they take effect from the next session start, because skills load at session start [rec: jolly-arbor-9572].
 - The immutability convention was exercised for real: a wrong figure in a committed record node was corrected by a child record node rather than an edit, and reconcile folded the corrected value [rec: sleepy-branch-3744].
 
 - Remote-machine cycles (publication decision + git-native backend, including their self-reconciles) independently audited by the librarian session: every claim reproduced — 50/50 tests, check 0/0 from node files, STATE.md byte-identical on regeneration, empty mirror push plan [rec: green-field-8645].
 
 ## Negative knowledge
 
-None yet.
+- [scope: dogfooding a tool you also ship | confidence: high | evidence: jolly-arbor-9572] this repo shipped two mechanisms for installing its skills and had run neither against itself, so the artifact it sells was the one thing not using it. Nothing detected that: `check` validates the graph, tests validate the code, and no gate anywhere asks whether the project consumes its own output. Committing the wiring into the repo — rather than documenting a command someone must remember to run — is what makes dogfooding a fact instead of an intention.
 
 ## Provenance
 
@@ -44,3 +45,4 @@ None yet.
 - old-dawn-8747 — graphs migrated into the repo; first record node authored by the local CLI
 - sleepy-branch-3744 — correction-by-child-node exercised in practice
 - green-field-8645 — independent audit of the remote cycles; summary repairs
+- jolly-arbor-9572 — the repo starts dogfooding its own skills through committed symlinks

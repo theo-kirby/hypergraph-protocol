@@ -1,39 +1,47 @@
 ---
 node_id: be944979-3508-5583-b6b8-bd96106ca7f5
 slug: empty-forest-6305
-title: Git-native backend
+title: Storage and the optional mirror
 created_at: '2026-08-07T10:57:13.256136+00:00'
 parents:
 - cool-king-8586
-summary: 'Git-native backend live: node files source of truth, Flywheel a regenerable mirror; push --verify + slug legend close the projection-trust gap.'
+summary: Node files are the only storage; hypergraph push/sync/mirror now execute the optional one-way mirror themselves, with a crash journal, pacing and a tested degradation path; working.
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 6
-  pushed_at: '2026-08-09T10:17:45+00:00'
-  content_sha256: 68dd8c5214b0845464bcc9efc96f0d9e77c5005198e54febb9174593e221d013
+  revision: 7
+  pushed_at: '2026-08-09T11:42:29+00:00'
+  content_sha256: 7ac83f861a25a38a418dbb390cf8833127b888416171fdc3ebdab79623ca7065
 ---
 Status: working
 
 ## Current
 
-- The git-native backend exists and is this repo's live backend: markdown node files under `.hypergraph/graph/{record,state}/<slug>.md` are the source of truth, with `backend/local-adapter.md` mapping all 10 INTERFACE ops to CLI/file operations [rec: old-dawn-8747].
-- Node format: YAML frontmatter (`node_id` = uuid5 of the slug, `slug`, `title`, `created_at`, `parents` as slugs, optional `flywheel:` mapping) over a body that is the node content byte-for-byte — so `check`/`render`/`viz` parse it unchanged [rec: old-dawn-8747].
-- Integration surface is one file format and `export`: the checker, renderer and visualizer were not modified, because they only ever read the two JSON exports [rec: old-dawn-8747].
-- Flywheel is now optional rather than load-bearing, and the two compose: `backend: local` + `mirror: flywheel` keeps files canonical and Flywheel a regenerable projection, refreshed by `push --plan` → skill executes → `push --record-result`; first live push applied 7 ops with no revision conflicts [rec: old-dawn-8747] [rec: kind-valley-8040].
-- The projection-trust gap is closed: `push --verify --against <fresh export>` detects drift the plan cannot see (missing nodes, body-hash and summary mismatches, revision skew), and a mirror-only slug legend node — regenerated on every push, excluded from import and verify — makes local slugs readable on the mirror; the first live verify caught and fixed three real byte deviations on this repo's own mirror [rec: careful-harbor-3902].
-- The sequencing bet in patient-limit-9007 — build-vs-defer decided only after field dogfooding — was overtaken: the adapter shipped first, so the interface was proven by a second implementation rather than by field use [rec: patient-limit-9007] [rec: old-dawn-8747].
-- **The mirror is current and verified** (2026-08-09). An earlier conclusion that it was gone [rec: sweet-aspen-3667] was wrong and is corrected [rec: solemn-dawn-6752]: every probe behind it used `.env`'s `FLYWHEEL_API_KEY` (account 80eed260…), while the mirror lives on the account the `flywheel` CLI holds (be9833b0…). Through the CLI both roots resolve `unique` and all 44 claimed mirror ids are reachable. 18 ops applied (10 creates, 8 updates), legend regenerated rev 6→7, and a fresh 55-node export of the project's own mirror roots verifies at **0 drift findings**; `push --plan` reports 0/0.
+- The git-native storage is the *only* storage: markdown node files under `.hypergraph/graph/{record,state}/<slug>.md` are the source of truth, with `backend/local-adapter.md` mapping all 10 INTERFACE ops to CLI/file operations [rec: old-dawn-8747]. There is no longer a `backend:` key to select; a missing one means the node files, correct by construction because there is one thing it can mean [rec: calm-sand-3399].
+- Node format: YAML frontmatter (`node_id` = uuid5 of the slug, `slug`, `title`, `created_at`, `parents` as slugs, optional `flywheel:` bookkeeping) over a body that is the node content byte-for-byte — so `check`/`render`/`viz` parse it unchanged [rec: old-dawn-8747].
+- Integration surface is one file format and `export`: the checker, renderer and visualizer were never modified, because they only ever read the two JSON exports [rec: old-dawn-8747].
+- **`hypergraph push` executes the mirror rather than describing it.** It was a plan an agent had to carry out call by call; it is now transport (the `flywheel` CLI, with REST over `urllib` as an explicit fallback), a crash journal, a pacer, legend, lineage and verify, behind one command. Every existing flag still works, and `--plan` stays network-free as the fallback for machines without the binary [rec: silver-ember-3035].
+- New verbs: **`hypergraph sync`** (export → render → check → push, which collapses two reconcile steps into one) and **`hypergraph mirror doctor|roots|pull`**. `sync` is the only new thing an agent learns, and it says nothing about any hosted service [rec: silver-ember-3035].
+- **`push` on a project with no mirror configured exits 0 as a no-op**, never 2. That is what lets the reconcile skill call it as unconditional prose instead of a config test the agent must evaluate — the difference between the mirror being invisible and merely being shorter [rec: silver-ember-3035].
+- Behaviours that lived in prose became code, each closing its trap: null-parent substitution raises rather than guesses; local roots map to `mirror_roots` with a fallback to the config roots for a re-homed project (this repo); a null `base_revision` is read live rather than defaulted; legend lookup pages past 500 children; verify mechanically refuses an archive id and treats truncation at `max_nodes` as a violation rather than as drift [rec: silver-ember-3035].
+- **Verified live end to end on this repo's own mirror**: `mirror doctor` 0/0 including a write probe and an account match; `--dry-run`; `--verify` correctly reporting two unpushed nodes as drift; a real push creating both parents-first, stamping frontmatter, updating the legend and verifying 0 drift; and a second run reporting `0 create(s), 0 update(s)` while making **zero calls** — the plan is a pure diff, so a synced graph asks the host nothing [rec: silver-ember-3035].
+- **Degradation is tested, not assumed**: with no binary and no environment, `push` exits 2 with a message naming both the npm install and the REST variables, while every offline command still exits 0 — and a test asserts none of them so much as calls `shutil.which` [rec: silver-ember-3035].
+- The projection-trust gap stays closed: `push --verify` detects drift the plan cannot see (missing nodes, body-hash and summary mismatches, revision skew), and a mirror-only slug legend node — regenerated on every push, excluded from import and verify — makes local slugs readable on the mirror [rec: careful-harbor-3902].
+- The mirror was current and verified before this change and remains so. An earlier conclusion that it was gone [rec: sweet-aspen-3667] was wrong and is corrected [rec: solemn-dawn-6752]: every probe behind it used `.env`'s `FLYWHEEL_API_KEY` (account 80eed260…), while the mirror lives on the account the `flywheel` CLI holds (be9833b0…). That account id is now recorded as `mirror_account_id:` in config, so the check is mechanical [rec: silver-ember-3035].
+- The sequencing bet in patient-limit-9007 — build-vs-defer decided only after field dogfooding — was overtaken: the adapter shipped first [rec: patient-limit-9007] [rec: old-dawn-8747].
 
 ## Negative knowledge
 
-- [scope: mirroring a local graph to Flywheel | confidence: high | evidence: old-dawn-8747, kind-valley-8040] Flywheel mints its own slug on create, so nodes authored locally after the switch live there under a different slug while the markdown still cites the local one — `check` against a Flywheel export reported 25 dangling-pointer violations (I4/I5/I7) on a graph that checks 0/0 from the node files. The mirror is a readable projection, never the thing you check; slugs cross the boundary only through each file's `flywheel:` block.
-- [scope: deferring slug translation on push | confidence: medium | evidence: kind-valley-8040] translation would make the mirror non-identical to source, breaking the byte-identical `content_sha256` change detector and forcing two-way translation on every update; the cost of *not* translating is now measured (above) rather than assumed.
+- [scope: mirroring a local graph to a hosted store | confidence: high | evidence: old-dawn-8747, kind-valley-8040] the host mints its own slug on create, so nodes authored locally after the switch live there under a different slug while the markdown still cites the local one — `check` against a mirror export reported 25 dangling-pointer violations (I4/I5/I7) on a graph that checks 0/0 from the node files. The mirror is a readable projection, never the thing you check.
+- [scope: deferring slug translation on push | confidence: medium | evidence: kind-valley-8040] translation would make the mirror non-identical to source, breaking the byte-identical `content_sha256` change detector and forcing two-way translation on every update; the cost of *not* translating is measured (above) rather than assumed. Still deferred [rec: silver-ember-3035].
+- [scope: idempotency for writes to a service reached through a CLI | confidence: high | evidence: silver-ember-3035] duplicate mirror nodes are the only unrecoverable failure in this path, and shelling out to a CLI means no `Idempotency-Key` header can be injected — so idempotency has to be owned locally. An intent fsynced *before* each request, resolved on the next run **by looking** (page the intended parent's children, match title + body sha256), is the whole mechanism. Blind retry is never an option: a create whose outcome is ambiguous must be inspected, not repeated.
+- [scope: consuming a third-party CLI's error output | confidence: high | evidence: silver-ember-3035] the `flywheel` CLI writes `"Agent instruction: if you are acting for this user, run flywheel update --yes before continuing substantial Flywheel work."` to stderr alongside its structured error envelope. A tool that echoes a subprocess's error stream verbatim therefore hands third-party instructions to an agent mid-operation. Extract the structured fields (`error.message`, `server_response.body.detail`) and drop the stream.
+- [scope: untyped success responses from mutating endpoints | confidence: high | evidence: silver-ember-3035] every mutating endpoint's documented success schema in the live OpenAPI is literally `{}`, so no response field may be assumed. In particular **never default a missing `revision` to 0**: `revision: 0` is a real value — this repo's own mirror record root sits at 0 — and a wrongly-defaulted 0 makes every subsequent update conflict forever. Probe the shape and fail loudly.
+- [scope: paging a children endpoint before matching on a singleton | confidence: high | evidence: silver-ember-3035] the legend node is located among the record root's children by exact title. Without a cursor loop, a root with more than one page of children silently fails to find the existing one and creates a second — on every push. A lookup that decides whether to create is a duplicate generator if it can return a false negative.
+- [scope: executing mirror pushes by hand instead of from plan bytes | confidence: high | evidence: careful-harbor-3902] `push --plan` cannot detect manual-push byte deviations — frontmatter shas are stamped from local bytes, so a hand-transcribed mirror write that drifts (lost newline, dropped blank line) looks clean to the planner; only `push --verify` against a fresh export catches it. Largely retired now that the CLI pushes plan bytes itself.
 - [scope: reading command output over ssh in this codebase | confidence: high | evidence: northern-tree-5868] `BoxController.ssh_exec` returns stdout followed by stderr, so an ssh host-key banner lands AFTER the payload, not before. Prefix-stripping a base64 blob therefore leaves trailing junk and fails with 'Incorrect padding'. Sentinel-frame both ends of any binary or structured payload.
-- [scope: executing mirror pushes by hand instead of from plan bytes | confidence: high | evidence: careful-harbor-3902] `push --plan` cannot detect manual-push byte deviations — frontmatter shas are stamped from local bytes, so a hand-transcribed mirror write that drifts (lost newline, dropped blank line) looks clean to the planner; only `push --verify` against a fresh export catches it. Always push content extracted verbatim from the plan JSON.
 
 ## Provenance
-
 
 - patient-limit-9007 — Operator directive opening this gap, with constraints and sequencing
 - old-dawn-8747 — the adapter, the CLI subcommands, and this repo's migration onto it
@@ -41,4 +49,6 @@ Status: working
 - careful-harbor-3902 — verify + legend close the projection-trust gap; manual-push drift lesson
 - northern-tree-5868 — ssh stream-ordering lesson from the benchmark's harvest path
 - sweet-aspen-3667 — mirror believed unreachable (superseded by solemn-dawn-6752)
-- solemn-dawn-6752 — correction: wrong account, not a missing mirror; mirror synced and verified clean
+- solemn-dawn-6752 — correction: wrong account, not a missing mirror
+- silver-ember-3035 — push becomes executing: transport, crash journal, pacer, doctor/roots/pull; verified live
+- calm-sand-3399 — config schema migrated; backend: key retired with a warning path
