@@ -757,3 +757,122 @@ def test_publish_gitignore_excludes_the_bulk_but_keeps_the_source(config):
     # NOT excluded, deliberately: a hand-written train.c IS the control arm's
     # work. Dropping `*.c` would delete the evidence it is meant to publish.
     assert "\n*.c\n" not in body
+
+
+# ---- measurement, re-pre-registered (METRICS.md rev-1) ------------------------
+
+def test_best_recoverable_finds_a_result_the_run_overwrote():
+    """git-s2 reached 23.29%, published it, then overwrote the local artifact.
+
+    Scoring only the teardown file reported that run as producing nothing. The
+    published vectors and the number in its own record are both still there.
+    """
+    from boxlab.analyze import best_recoverable, cited_accuracies, fidelity_gap
+    record = "Best run so far: 23.29% total accuracy on the Google analogy set."
+    scored = [
+        {"total": {"accuracy": 0.0009}, "source": "artifacts/vectors.txt"},
+        {"total": {"accuracy": 0.2329}, "source": "published/vectors.txt"},
+    ]
+    best = best_recoverable(scored, cited_accuracies(record))
+    assert best and abs(best["total"]["accuracy"] - 0.2329) < 1e-9
+    gap = fidelity_gap(scored[0], best)
+    assert gap is not None and abs(gap - 0.232) < 0.001
+
+
+def test_a_better_model_the_run_never_mentions_does_not_count():
+    """Otherwise the measure scores the harvest, not the memory system."""
+    from boxlab.analyze import best_recoverable, cited_accuracies
+    record = "Our best result was 12.00% total accuracy."
+    scored = [{"total": {"accuracy": 0.12}, "source": "a"},
+              {"total": {"accuracy": 0.31}, "source": "b"}]  # never mentioned
+    best = best_recoverable(scored, cited_accuracies(record))
+    assert best and abs(best["total"]["accuracy"] - 0.12) < 1e-9
+
+
+def test_a_run_that_cites_no_number_recovers_nothing():
+    from boxlab.analyze import best_recoverable
+    assert best_recoverable([{"total": {"accuracy": 0.3}}], []) is None
+
+
+def test_diverged_candidates_are_never_recoverable():
+    from boxlab.analyze import best_recoverable
+    scored = [{"total": {"accuracy": 0.30}, "diverged": True}]
+    assert best_recoverable(scored, [0.30]) is None
+
+
+def test_cited_accuracies_ignores_numbers_that_are_not_this_measure():
+    """A 0.95 learning-rate decay is not a claim about analogy accuracy."""
+    from boxlab.analyze import cited_accuracies
+    found = cited_accuracies("lr decay 0.95, 100% of the corpus, acc 0.2203, 23.3%")
+    assert 0.2203 in found and 0.233 in found
+    assert 0.95 not in found and 1.0 not in found
+
+
+def test_the_gap_is_null_not_zero_when_a_side_is_missing():
+    """A gap between a number and a non-number is not a gap of nothing."""
+    from boxlab.analyze import fidelity_gap
+    assert fidelity_gap(None, {"total": {"accuracy": 0.2}}) is None
+    assert fidelity_gap({"total": {"accuracy": 0.2}}, None) is None
+    assert fidelity_gap({"total": {"accuracy": 0.2}}, {"total": {"accuracy": 0.2}}) == 0
+
+
+def test_cold_start_excludes_runs_with_nothing_to_recover():
+    """Two of three arm-B seeds wrote nothing before the cut and were scored anyway."""
+    from boxlab.report import by_arm
+    def run(rid, prior, seconds):
+        return {"run": rid, "arm": "flywheel", "had_prior_state": prior,
+                "cold_start": {"time_to_first_productive_s": seconds,
+                               "orientation_tool_calls": 4},
+                "totals": {"tool_calls": 10, "assistant_turns": 5,
+                           "cost_usd": 0.01}}
+    summary = by_arm([run("f1", True, 90.0), run("f2", False, 5.0),
+                      run("f3", None, 5.0)])
+    arm = summary["flywheel"]
+    assert arm["cold_start_n"] == 1
+    assert arm["cold_start_excluded"] == 2
+    assert set(arm["cold_start_excluded_runs"]) == {"f2", "f3"}
+    # The two vacuous runs would have dragged the median from 90 to 5 — turning
+    # "this arm did not recover its state" into "this arm recovered instantly".
+    assert arm["cold_start_s_median"] == 90.0
+
+
+def test_an_unknown_prior_state_excludes_rather_than_counting_as_no():
+    from boxlab.report import by_arm
+    summary = by_arm([{"run": "x", "arm": "git", "had_prior_state": None,
+                       "cold_start": {"time_to_first_productive_s": 1.0},
+                       "totals": {"tool_calls": 1, "assistant_turns": 1,
+                                  "cost_usd": 0.0}}])
+    assert summary["git"]["cold_start_n"] == 0
+    assert summary["git"]["cold_start_excluded"] == 1
+
+
+def test_cold_start_verdict_uses_eligible_runs_as_its_denominator():
+    """An arm with 3 runs but 1 eligible must not read as having n=3."""
+    from boxlab.report import verdict
+    summary = {
+        "a": {"runs": 3, "cold_start_n": 1, "cold_start_s_median": 5.0,
+              "cold_start_s_range": (4.0, 6.0)},
+        "b": {"runs": 3, "cold_start_n": 3, "cold_start_s_median": 40.0,
+              "cold_start_s_range": (35.0, 45.0)},
+    }
+    assert "not comparable" in verdict(summary, "cold_start_s")
+
+
+def test_min_n_and_the_direction_table_are_unchanged():
+    """Both were correct on the first run and are deliberately not touched."""
+    from boxlab.report import HIGHER_IS_BETTER, MIN_N
+    assert MIN_N == 3
+    assert HIGHER_IS_BETTER["accuracy"] is True
+    assert HIGHER_IS_BETTER["cold_start_s"] is False
+    assert HIGHER_IS_BETTER["orientation_calls"] is False
+    # Lower is better: the gap is work the memory system lost.
+    assert HIGHER_IS_BETTER["fidelity_gap"] is False
+    assert HIGHER_IS_BETTER["best_recoverable"] is True
+
+
+def test_the_driver_probes_prior_state_before_it_kills_the_session():
+    """Probing after the kill would race the agent's last writes."""
+    import inspect
+    from boxlab import experiment
+    src = inspect.getsource(experiment._run_one)
+    assert src.index("_had_prior_state(") < src.index("cold-start cut: killing")

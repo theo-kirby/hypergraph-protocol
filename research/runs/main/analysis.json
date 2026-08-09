@@ -50,6 +50,9 @@
       },
       "arm": "flywheel",
       "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
       "fidelity": {
         "dim": 100,
         "vocab": 71291,
@@ -162,8 +165,17 @@
           "reproduced": true,
           "matched_literature": true,
           "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/flywheel-s1/workspace/research/artifacts/vectors.txt"
+      },
+      "fidelity_candidates": [
+        {
+          "source": "research/runs/main/flywheel-s1/workspace/research/artifacts/vectors.txt",
+          "accuracy": 0.3041453974308633,
+          "diverged": false
         }
-      }
+      ],
+      "fidelity_gap": null
     },
     {
       "run": "flywheel-s2",
@@ -215,6 +227,9 @@
       },
       "arm": "flywheel",
       "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
       "fidelity": {
         "dim": 200,
         "vocab": 71290,
@@ -327,8 +342,133 @@
           "reproduced": true,
           "matched_literature": true,
           "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/flywheel-s2/workspace/research/artifacts/vectors.txt"
+      },
+      "fidelity_candidates": [
+        {
+          "source": "research/runs/main/flywheel-s2/workspace/research/artifacts/vectors.txt",
+          "accuracy": 0.31429853592864754,
+          "diverged": false
         }
-      }
+      ],
+      "fidelity_best_recoverable": {
+        "dim": 200,
+        "vocab": 71290,
+        "nonfinite_vectors": 0,
+        "diverged": false,
+        "total": {
+          "correct": 5603,
+          "answered": 17827,
+          "accuracy": 0.31429853592864754
+        },
+        "semantic": {
+          "correct": 2468,
+          "answered": 7416,
+          "accuracy": 0.33279395900755127
+        },
+        "syntactic": {
+          "correct": 3135,
+          "answered": 10411,
+          "accuracy": 0.30112381135337624
+        },
+        "skipped": 1717,
+        "questions": 19544,
+        "per_section": {
+          "capital-common-countries": {
+            "correct": 350,
+            "answered": 506,
+            "accuracy": 0.691699604743083,
+            "skipped": 0
+          },
+          "capital-world": {
+            "correct": 1305,
+            "answered": 3564,
+            "accuracy": 0.3661616161616162,
+            "skipped": 960
+          },
+          "city-in-state": {
+            "correct": 528,
+            "answered": 2330,
+            "accuracy": 0.22660944206008585,
+            "skipped": 137
+          },
+          "currency": {
+            "correct": 114,
+            "answered": 596,
+            "accuracy": 0.1912751677852349,
+            "skipped": 270
+          },
+          "family": {
+            "correct": 171,
+            "answered": 420,
+            "accuracy": 0.40714285714285714,
+            "skipped": 86
+          },
+          "gram1-adjective-to-adverb": {
+            "correct": 92,
+            "answered": 992,
+            "accuracy": 0.09274193548387097,
+            "skipped": 0
+          },
+          "gram2-opposite": {
+            "correct": 79,
+            "answered": 756,
+            "accuracy": 0.10449735449735449,
+            "skipped": 56
+          },
+          "gram3-comparative": {
+            "correct": 626,
+            "answered": 1332,
+            "accuracy": 0.46996996996997,
+            "skipped": 0
+          },
+          "gram4-superlative": {
+            "correct": 133,
+            "answered": 992,
+            "accuracy": 0.13407258064516128,
+            "skipped": 130
+          },
+          "gram5-present-participle": {
+            "correct": 178,
+            "answered": 1056,
+            "accuracy": 0.16856060606060605,
+            "skipped": 0
+          },
+          "gram6-nationality-adjective": {
+            "correct": 1156,
+            "answered": 1521,
+            "accuracy": 0.760026298487837,
+            "skipped": 78
+          },
+          "gram7-past-tense": {
+            "correct": 276,
+            "answered": 1560,
+            "accuracy": 0.17692307692307693,
+            "skipped": 0
+          },
+          "gram8-plural": {
+            "correct": 429,
+            "answered": 1332,
+            "accuracy": 0.32207207207207206,
+            "skipped": 0
+          },
+          "gram9-plural-verbs": {
+            "correct": 166,
+            "answered": 870,
+            "accuracy": 0.19080459770114944,
+            "skipped": 0
+          }
+        },
+        "bands": {
+          "reproduced": true,
+          "matched_literature": true,
+          "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/flywheel-s2/workspace/research/artifacts/vectors.txt",
+        "cited": true
+      },
+      "fidelity_gap": 0.0
     },
     {
       "run": "flywheel-s3",
@@ -380,6 +520,9 @@
       },
       "arm": "flywheel",
       "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
       "fidelity": {
         "dim": 200,
         "vocab": 71290,
@@ -492,8 +635,17 @@
           "reproduced": true,
           "matched_literature": true,
           "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/flywheel-s3/workspace/research/artifacts/vectors.txt"
+      },
+      "fidelity_candidates": [
+        {
+          "source": "research/runs/main/flywheel-s3/workspace/research/artifacts/vectors.txt",
+          "accuracy": 0.2578111852807539,
+          "diverged": false
         }
-      }
+      ],
+      "fidelity_gap": null
     },
     {
       "run": "git-s1",
@@ -545,6 +697,9 @@
       },
       "arm": "git",
       "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
       "fidelity": {
         "dim": 200,
         "vocab": 71290,
@@ -658,8 +813,17 @@
           "matched_literature": false,
           "diverged": true,
           "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/git-s1/workspace/research/artifacts/vectors.txt"
+      },
+      "fidelity_candidates": [
+        {
+          "source": "research/runs/main/git-s1/workspace/research/artifacts/vectors.txt",
+          "accuracy": 0.0,
+          "diverged": true
         }
-      }
+      ],
+      "fidelity_gap": null
     },
     {
       "run": "git-s2",
@@ -710,7 +874,12 @@
         "cost_usd": 0.319334805
       },
       "arm": "git",
-      "harvested": true
+      "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
+      "fidelity_candidates": [],
+      "fidelity_gap": null
     },
     {
       "run": "git-s3",
@@ -762,6 +931,9 @@
       },
       "arm": "git",
       "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
       "fidelity": {
         "dim": 200,
         "vocab": 71290,
@@ -875,8 +1047,17 @@
           "matched_literature": false,
           "diverged": true,
           "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/git-s3/workspace/research/artifacts/vectors.txt"
+      },
+      "fidelity_candidates": [
+        {
+          "source": "research/runs/main/git-s3/workspace/research/artifacts/vectors.txt",
+          "accuracy": 0.0,
+          "diverged": true
         }
-      }
+      ],
+      "fidelity_gap": null
     },
     {
       "run": "hypergraph-s1",
@@ -928,6 +1109,9 @@
       },
       "arm": "hypergraph",
       "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
       "fidelity": {
         "dim": 100,
         "vocab": 71290,
@@ -1040,8 +1224,133 @@
           "reproduced": false,
           "matched_literature": false,
           "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/hypergraph-s1/workspace/research/artifacts/vectors.txt"
+      },
+      "fidelity_candidates": [
+        {
+          "source": "research/runs/main/hypergraph-s1/workspace/research/artifacts/vectors.txt",
+          "accuracy": 0.12649352106355527,
+          "diverged": false
         }
-      }
+      ],
+      "fidelity_best_recoverable": {
+        "dim": 100,
+        "vocab": 71290,
+        "nonfinite_vectors": 0,
+        "diverged": false,
+        "total": {
+          "correct": 2255,
+          "answered": 17827,
+          "accuracy": 0.12649352106355527
+        },
+        "semantic": {
+          "correct": 612,
+          "answered": 7416,
+          "accuracy": 0.0825242718446602
+        },
+        "syntactic": {
+          "correct": 1643,
+          "answered": 10411,
+          "accuracy": 0.15781385073479973
+        },
+        "skipped": 1717,
+        "questions": 19544,
+        "per_section": {
+          "capital-common-countries": {
+            "correct": 89,
+            "answered": 506,
+            "accuracy": 0.17588932806324112,
+            "skipped": 0
+          },
+          "capital-world": {
+            "correct": 213,
+            "answered": 3564,
+            "accuracy": 0.05976430976430976,
+            "skipped": 960
+          },
+          "city-in-state": {
+            "correct": 128,
+            "answered": 2330,
+            "accuracy": 0.054935622317596564,
+            "skipped": 137
+          },
+          "currency": {
+            "correct": 25,
+            "answered": 596,
+            "accuracy": 0.04194630872483222,
+            "skipped": 270
+          },
+          "family": {
+            "correct": 157,
+            "answered": 420,
+            "accuracy": 0.3738095238095238,
+            "skipped": 86
+          },
+          "gram1-adjective-to-adverb": {
+            "correct": 64,
+            "answered": 992,
+            "accuracy": 0.06451612903225806,
+            "skipped": 0
+          },
+          "gram2-opposite": {
+            "correct": 42,
+            "answered": 756,
+            "accuracy": 0.05555555555555555,
+            "skipped": 56
+          },
+          "gram3-comparative": {
+            "correct": 460,
+            "answered": 1332,
+            "accuracy": 0.34534534534534533,
+            "skipped": 0
+          },
+          "gram4-superlative": {
+            "correct": 102,
+            "answered": 992,
+            "accuracy": 0.1028225806451613,
+            "skipped": 130
+          },
+          "gram5-present-participle": {
+            "correct": 143,
+            "answered": 1056,
+            "accuracy": 0.13541666666666666,
+            "skipped": 0
+          },
+          "gram6-nationality-adjective": {
+            "correct": 304,
+            "answered": 1521,
+            "accuracy": 0.19986850756081526,
+            "skipped": 78
+          },
+          "gram7-past-tense": {
+            "correct": 142,
+            "answered": 1560,
+            "accuracy": 0.09102564102564102,
+            "skipped": 0
+          },
+          "gram8-plural": {
+            "correct": 244,
+            "answered": 1332,
+            "accuracy": 0.1831831831831832,
+            "skipped": 0
+          },
+          "gram9-plural-verbs": {
+            "correct": 142,
+            "answered": 870,
+            "accuracy": 0.1632183908045977,
+            "skipped": 0
+          }
+        },
+        "bands": {
+          "reproduced": false,
+          "matched_literature": false,
+          "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/hypergraph-s1/workspace/research/artifacts/vectors.txt",
+        "cited": true
+      },
+      "fidelity_gap": 0.0
     },
     {
       "run": "hypergraph-s2",
@@ -1093,6 +1402,9 @@
       },
       "arm": "hypergraph",
       "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
       "fidelity": {
         "dim": 200,
         "vocab": 71290,
@@ -1205,8 +1517,133 @@
           "reproduced": true,
           "matched_literature": true,
           "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/hypergraph-s2/workspace/research/artifacts/vectors.txt"
+      },
+      "fidelity_candidates": [
+        {
+          "source": "research/runs/main/hypergraph-s2/workspace/research/artifacts/vectors.txt",
+          "accuracy": 0.32428339036293263,
+          "diverged": false
         }
-      }
+      ],
+      "fidelity_best_recoverable": {
+        "dim": 200,
+        "vocab": 71290,
+        "nonfinite_vectors": 0,
+        "diverged": false,
+        "total": {
+          "correct": 5781,
+          "answered": 17827,
+          "accuracy": 0.32428339036293263
+        },
+        "semantic": {
+          "correct": 2440,
+          "answered": 7416,
+          "accuracy": 0.3290183387270766
+        },
+        "syntactic": {
+          "correct": 3341,
+          "answered": 10411,
+          "accuracy": 0.320910575352992
+        },
+        "skipped": 1717,
+        "questions": 19544,
+        "per_section": {
+          "capital-common-countries": {
+            "correct": 369,
+            "answered": 506,
+            "accuracy": 0.7292490118577075,
+            "skipped": 0
+          },
+          "capital-world": {
+            "correct": 1046,
+            "answered": 3564,
+            "accuracy": 0.2934904601571268,
+            "skipped": 960
+          },
+          "city-in-state": {
+            "correct": 752,
+            "answered": 2330,
+            "accuracy": 0.32274678111587984,
+            "skipped": 137
+          },
+          "currency": {
+            "correct": 93,
+            "answered": 596,
+            "accuracy": 0.15604026845637584,
+            "skipped": 270
+          },
+          "family": {
+            "correct": 180,
+            "answered": 420,
+            "accuracy": 0.42857142857142855,
+            "skipped": 86
+          },
+          "gram1-adjective-to-adverb": {
+            "correct": 89,
+            "answered": 992,
+            "accuracy": 0.08971774193548387,
+            "skipped": 0
+          },
+          "gram2-opposite": {
+            "correct": 65,
+            "answered": 756,
+            "accuracy": 0.08597883597883597,
+            "skipped": 56
+          },
+          "gram3-comparative": {
+            "correct": 661,
+            "answered": 1332,
+            "accuracy": 0.49624624624624625,
+            "skipped": 0
+          },
+          "gram4-superlative": {
+            "correct": 162,
+            "answered": 992,
+            "accuracy": 0.16330645161290322,
+            "skipped": 130
+          },
+          "gram5-present-participle": {
+            "correct": 232,
+            "answered": 1056,
+            "accuracy": 0.2196969696969697,
+            "skipped": 0
+          },
+          "gram6-nationality-adjective": {
+            "correct": 1058,
+            "answered": 1521,
+            "accuracy": 0.6955950032873109,
+            "skipped": 78
+          },
+          "gram7-past-tense": {
+            "correct": 407,
+            "answered": 1560,
+            "accuracy": 0.2608974358974359,
+            "skipped": 0
+          },
+          "gram8-plural": {
+            "correct": 441,
+            "answered": 1332,
+            "accuracy": 0.3310810810810811,
+            "skipped": 0
+          },
+          "gram9-plural-verbs": {
+            "correct": 226,
+            "answered": 870,
+            "accuracy": 0.2597701149425287,
+            "skipped": 0
+          }
+        },
+        "bands": {
+          "reproduced": true,
+          "matched_literature": true,
+          "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/hypergraph-s2/workspace/research/artifacts/vectors.txt",
+        "cited": true
+      },
+      "fidelity_gap": 0.0
     },
     {
       "run": "hypergraph-s3",
@@ -1258,6 +1695,9 @@
       },
       "arm": "hypergraph",
       "harvested": true,
+      "had_prior_state": null,
+      "prior_state_detail": null,
+      "preflight_ok": null,
       "fidelity": {
         "dim": 100,
         "vocab": 71290,
@@ -1370,8 +1810,133 @@
           "reproduced": true,
           "matched_literature": false,
           "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/hypergraph-s3/workspace/research/artifacts/vectors.txt"
+      },
+      "fidelity_candidates": [
+        {
+          "source": "research/runs/main/hypergraph-s3/workspace/research/artifacts/vectors.txt",
+          "accuracy": 0.214618275649296,
+          "diverged": false
         }
-      }
+      ],
+      "fidelity_best_recoverable": {
+        "dim": 100,
+        "vocab": 71290,
+        "nonfinite_vectors": 0,
+        "diverged": false,
+        "total": {
+          "correct": 3826,
+          "answered": 17827,
+          "accuracy": 0.214618275649296
+        },
+        "semantic": {
+          "correct": 1459,
+          "answered": 7416,
+          "accuracy": 0.19673678532901834
+        },
+        "syntactic": {
+          "correct": 2367,
+          "answered": 10411,
+          "accuracy": 0.22735568149073096
+        },
+        "skipped": 1717,
+        "questions": 19544,
+        "per_section": {
+          "capital-common-countries": {
+            "correct": 211,
+            "answered": 506,
+            "accuracy": 0.41699604743083,
+            "skipped": 0
+          },
+          "capital-world": {
+            "correct": 728,
+            "answered": 3564,
+            "accuracy": 0.20426487093153758,
+            "skipped": 960
+          },
+          "city-in-state": {
+            "correct": 318,
+            "answered": 2330,
+            "accuracy": 0.13648068669527896,
+            "skipped": 137
+          },
+          "currency": {
+            "correct": 61,
+            "answered": 596,
+            "accuracy": 0.10234899328859061,
+            "skipped": 270
+          },
+          "family": {
+            "correct": 141,
+            "answered": 420,
+            "accuracy": 0.3357142857142857,
+            "skipped": 86
+          },
+          "gram1-adjective-to-adverb": {
+            "correct": 86,
+            "answered": 992,
+            "accuracy": 0.08669354838709678,
+            "skipped": 0
+          },
+          "gram2-opposite": {
+            "correct": 48,
+            "answered": 756,
+            "accuracy": 0.06349206349206349,
+            "skipped": 56
+          },
+          "gram3-comparative": {
+            "correct": 428,
+            "answered": 1332,
+            "accuracy": 0.3213213213213213,
+            "skipped": 0
+          },
+          "gram4-superlative": {
+            "correct": 96,
+            "answered": 992,
+            "accuracy": 0.0967741935483871,
+            "skipped": 130
+          },
+          "gram5-present-participle": {
+            "correct": 133,
+            "answered": 1056,
+            "accuracy": 0.1259469696969697,
+            "skipped": 0
+          },
+          "gram6-nationality-adjective": {
+            "correct": 846,
+            "answered": 1521,
+            "accuracy": 0.5562130177514792,
+            "skipped": 78
+          },
+          "gram7-past-tense": {
+            "correct": 262,
+            "answered": 1560,
+            "accuracy": 0.16794871794871793,
+            "skipped": 0
+          },
+          "gram8-plural": {
+            "correct": 316,
+            "answered": 1332,
+            "accuracy": 0.23723723723723725,
+            "skipped": 0
+          },
+          "gram9-plural-verbs": {
+            "correct": 152,
+            "answered": 870,
+            "accuracy": 0.17471264367816092,
+            "skipped": 0
+          }
+        },
+        "bands": {
+          "reproduced": true,
+          "matched_literature": false,
+          "literature_reference_dim100": 0.2416
+        },
+        "source": "research/runs/main/hypergraph-s3/workspace/research/artifacts/vectors.txt",
+        "cited": true
+      },
+      "fidelity_gap": 0.0
     }
   ],
   "by_arm": {
@@ -1380,6 +1945,8 @@
       "produced_vectors": 3,
       "diverged": 0,
       "usable_vectors": 3,
+      "produced_usable_model": 3,
+      "produced_usable_model_recoverable": 1,
       "accuracy_median": 0.3041453974308633,
       "accuracy_range": [
         0.2578111852807539,
@@ -1390,12 +1957,28 @@
         0.31429853592864754,
         0.2578111852807539
       ],
-      "cold_start_s_median": 38.33299994468689,
-      "cold_start_s_range": [
-        12.650000095367432,
-        64.07399988174438
+      "best_recoverable_median": 0.31429853592864754,
+      "best_recoverable_range": [
+        0.31429853592864754,
+        0.31429853592864754
       ],
-      "orientation_calls_median": 9,
+      "best_recoverable_values": [
+        0.31429853592864754
+      ],
+      "fidelity_gap_median": 0.0,
+      "fidelity_gap_values": [
+        0.0
+      ],
+      "cold_start_n": 0,
+      "cold_start_excluded": 3,
+      "cold_start_excluded_runs": [
+        "flywheel-s1",
+        "flywheel-s2",
+        "flywheel-s3"
+      ],
+      "cold_start_s_median": null,
+      "cold_start_s_range": null,
+      "orientation_calls_median": null,
       "tool_calls_median": 113,
       "turns_median": 90,
       "cost_usd_median": 0.339105555
@@ -1405,15 +1988,26 @@
       "produced_vectors": 2,
       "diverged": 2,
       "usable_vectors": 0,
+      "produced_usable_model": 0,
+      "produced_usable_model_recoverable": 0,
       "accuracy_median": null,
       "accuracy_range": null,
       "accuracy_values": [],
-      "cold_start_s_median": 81.09500002861023,
-      "cold_start_s_range": [
-        24.015999794006348,
-        91.17599987983704
+      "best_recoverable_median": null,
+      "best_recoverable_range": null,
+      "best_recoverable_values": [],
+      "fidelity_gap_median": null,
+      "fidelity_gap_values": [],
+      "cold_start_n": 0,
+      "cold_start_excluded": 3,
+      "cold_start_excluded_runs": [
+        "git-s1",
+        "git-s2",
+        "git-s3"
       ],
-      "orientation_calls_median": 9,
+      "cold_start_s_median": null,
+      "cold_start_s_range": null,
+      "orientation_calls_median": null,
       "tool_calls_median": 81,
       "turns_median": 59,
       "cost_usd_median": 0.265922895
@@ -1423,6 +2017,8 @@
       "produced_vectors": 3,
       "diverged": 0,
       "usable_vectors": 3,
+      "produced_usable_model": 3,
+      "produced_usable_model_recoverable": 3,
       "accuracy_median": 0.214618275649296,
       "accuracy_range": [
         0.12649352106355527,
@@ -1433,12 +2029,32 @@
         0.32428339036293263,
         0.214618275649296
       ],
-      "cold_start_s_median": 43.111000061035156,
-      "cold_start_s_range": [
-        26.847000122070312,
-        50.25699996948242
+      "best_recoverable_median": 0.214618275649296,
+      "best_recoverable_range": [
+        0.12649352106355527,
+        0.32428339036293263
       ],
-      "orientation_calls_median": 10,
+      "best_recoverable_values": [
+        0.12649352106355527,
+        0.32428339036293263,
+        0.214618275649296
+      ],
+      "fidelity_gap_median": 0.0,
+      "fidelity_gap_values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cold_start_n": 0,
+      "cold_start_excluded": 3,
+      "cold_start_excluded_runs": [
+        "hypergraph-s1",
+        "hypergraph-s2",
+        "hypergraph-s3"
+      ],
+      "cold_start_s_median": null,
+      "cold_start_s_range": null,
+      "orientation_calls_median": null,
       "tool_calls_median": 133,
       "turns_median": 87,
       "cost_usd_median": 0.203081925

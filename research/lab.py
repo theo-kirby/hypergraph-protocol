@@ -289,10 +289,16 @@ def cmd_run(args) -> int:
 # symlinks inside those venvs, which Python's safe tar filter refuses outright
 # (`AbsoluteLinkError` on research/venv/bin/python3 — hit on the real harvest).
 EVIDENCE_SUFFIXES = (
-    "artifacts/vectors.txt", "artifacts/results.json",
+    "artifacts/results.json",
     "NOTES.md", "DECISIONS.md", "DEAD-ENDS.md", "STATE.md", "README.md",
 )
 EVIDENCE_DIRS = (".pi/agent/sessions/", ".claude/projects/", ".hypergraph/")
+
+# Every vector dump, not just the final artifact. `fidelity_best_recoverable`
+# needs the candidates a run produced and then replaced — scoring only
+# `artifacts/vectors.txt` is what made two control runs that reached 22–23% and
+# published it read as "produced nothing".
+EVIDENCE_STEMS = ("vectors",)
 
 
 def _extract_evidence(tarball: Path, dest: Path) -> None:
@@ -306,29 +312,98 @@ def _extract_evidence(tarball: Path, dest: Path) -> None:
             if not member.isfile():
                 continue
             name = member.name
+            base = name.rsplit("/", 1)[-1]
             wanted = (any(name.endswith(s) for s in EVIDENCE_SUFFIXES)
-                      or any(d in name for d in EVIDENCE_DIRS))
+                      or any(d in name for d in EVIDENCE_DIRS)
+                      or any(base.startswith(s) for s in EVIDENCE_STEMS))
             if wanted:
                 tf.extract(member, dest, filter="data")
 
 
-def _score_fidelity(workspace: Path) -> Optional[dict]:
-    """Run OUR evaluator over a harvested vectors.txt. Never the arm's own score."""
-    matches = list(workspace.rglob("artifacts/vectors.txt"))
-    if not matches:
-        return None
+@functools.lru_cache(maxsize=1)
+def _analogy():
+    """The frozen evaluator, loaded once. Never the arm's own score."""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "analogy", Path(__file__).resolve().parent / "eval" / "analogy.py")
-    analogy = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(analogy)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _score_one(path: Path) -> Optional[dict]:
+    """Score a single vector dump with OUR evaluator, or None if unreadable."""
+    analogy = _analogy()
     try:
-        index, matrix = analogy.load_vectors(matches[0])
-    except SystemExit:
+        index, matrix = analogy.load_vectors(path)
+    except (SystemExit, ValueError, OSError, UnicodeDecodeError):
         return None
     result = analogy.evaluate(index, matrix, analogy.load_questions())
     result["bands"] = analogy.score_bands(result)
+    result["source"] = str(path)
     return result
+
+
+def _score_fidelity(workspace: Path) -> Optional[dict]:
+    """`fidelity_final`: the artifact the run left behind at teardown."""
+    matches = list(workspace.rglob("artifacts/vectors.txt"))
+    return _score_one(matches[0]) if matches else None
+
+
+def _score_best_recoverable(workspace: Path, run_dir: Path,
+                            extra_records: Optional[list] = None) -> tuple:
+    """`fidelity_best_recoverable`: the best model the run can still point to.
+
+    Scores every vector dump reachable from the harvest and the published repo,
+    then keeps only those whose number the run's own record cites (METRICS.md
+    §1). A better file the run never mentions is not recovered knowledge — it is
+    luck, and counting it would measure the harvest rather than the memory
+    system.
+
+    Returns `(best_entry_or_None, all_scored)`.
+    """
+    candidates = analyze.find_vector_candidates(workspace)
+    scored = [entry for entry in (_score_one(p) for p in candidates) if entry]
+    cited = analyze.cited_accuracies(
+        analyze.record_text(workspace, extra=extra_records)
+        + analyze.record_text(run_dir))
+    return analyze.best_recoverable(scored, cited), scored
+
+
+def _fetch_published(config: LabConfig, arm: str, seed: int, dest: Path,
+                     experiment: str) -> Optional[Path]:
+    """Download this run's published repo — the other place its results live.
+
+    git-s2 reached 23.29%, pushed it, then overwrote the local artifact with a
+    diverged run. `boxwheel/word2vec-cpu-baseline` still holds those vectors.
+    A measure that never looks at the repo the run was told to publish to is not
+    measuring what the run preserved.
+    """
+    import io
+    import tarfile
+    import urllib.request
+    from boxlab.config import repo_name_for
+    token, owner = config.github_token, config.github_owner
+    if not token or not owner:
+        return None
+    name = repo_name_for(arm, seed, experiment)
+    url = f"https://api.github.com/repos/{owner}/{name}/tarball"
+    request = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}", "User-Agent": "boxlab-analyze"})
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            blob = response.read()
+    except Exception:
+        return None
+    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
+            for member in tf:
+                if member.isfile():
+                    tf.extract(member, dest, filter="data")
+    except (tarfile.TarError, OSError):
+        return None
+    return dest
 
 
 def cmd_analyze(args) -> int:
@@ -340,6 +415,7 @@ def cmd_analyze(args) -> int:
         print(f"no harvested runs under {root}")
         return 1
 
+    config = LabConfig.load() if args.fetch_published else None
     reports = []
     for run_dir in run_dirs:
         tarball = run_dir / "workspace.tar.gz"
@@ -351,10 +427,38 @@ def cmd_analyze(args) -> int:
         meta = json.loads((run_dir / "run.json").read_text())
         r["arm"] = meta.get("arm")
         r["harvested"] = meta.get("harvested")
+        # Recorded at the cut by the driver. Runs that wrote nothing to their
+        # memory system before the cut are excluded from the cold-start
+        # statistic — see METRICS.md §2.
+        r["had_prior_state"] = meta.get("had_prior_state")
+        r["prior_state_detail"] = meta.get("prior_state_detail")
+        r["preflight_ok"] = meta.get("preflight_ok")
+
         if unpacked.exists():
             fidelity = _score_fidelity(unpacked)
             if fidelity:
                 r["fidelity"] = fidelity
+
+            extra = []
+            if args.fetch_published and meta.get("arm") and meta.get("seed"):
+                published = _fetch_published(
+                    config, meta["arm"], meta["seed"],
+                    run_dir / "published", args.experiment)
+                if published:
+                    extra = [p for p in published.rglob("*")
+                             if p.is_file() and p.name in
+                             ("README.md", "results.json", "NOTES.md")]
+                    for path in analyze.find_vector_candidates(published):
+                        extra.append(path.parent / "README.md")
+            best, scored = _score_best_recoverable(
+                unpacked, run_dir, extra_records=[p for p in extra if p.exists()])
+            r["fidelity_candidates"] = [
+                {"source": e.get("source"),
+                 "accuracy": (e.get("total") or {}).get("accuracy"),
+                 "diverged": e.get("diverged")} for e in scored]
+            if best:
+                r["fidelity_best_recoverable"] = best
+            r["fidelity_gap"] = analyze.fidelity_gap(r.get("fidelity"), best)
         print(f"  scored {run_dir.name}", flush=True)
         reports.append(r)
 
@@ -426,6 +530,10 @@ def main(argv=None) -> int:
 
     pa = sub.add_parser("analyze", help="score harvested runs")
     pa.add_argument("--outdir", default="research/runs")
+    pa.add_argument("--experiment", default=EXPERIMENT_SLUG)
+    pa.add_argument("--fetch-published", action="store_true",
+                    help="also score vectors from each run's published repo "
+                         "(needed for fidelity_best_recoverable)")
     pa.set_defaults(func=cmd_analyze)
 
     args = p.parse_args(argv)
