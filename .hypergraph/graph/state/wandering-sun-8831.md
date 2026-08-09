@@ -9,9 +9,9 @@ summary: 'check/render/viz + local backend + epoch support + push --verify/--leg
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 11
-  pushed_at: '2026-08-09T12:06:39+00:00'
-  content_sha256: 2a076d88b132dee758672215a1c4b43c02ecea5e5d4685ea6dad1be7077104ce
+  revision: 12
+  pushed_at: '2026-08-09T12:28:31+00:00'
+  content_sha256: 041e5716f37df1fdae8dda00def006695e5d6e1bc5678ab6a7ab396e2bcbb370
 ---
 Status: working
 
@@ -27,7 +27,10 @@ Status: working
 - Test suite green: 72 pytest cases over committed fixtures — checker (incl. 4 epoch cases), viz, and local backend (incl. verify/legend/drift, fork-import, and skills-install cases) [rec: tender-moss-3792]. The strongest local-backend guarantee is the round-trip: importing the clean fixture into node files and exporting back yields node-for-node identical graphs that still check clean [rec: old-dawn-8747].
 - Two real defects in `check` were found by watching agents fail against it in the benchmark, not by review [rec: staid-field-2723]: `check --config <missing>` raised an unhandled `FileNotFoundError` from pathlib, naming the plumbing instead of the problem — two of three arm-C agents read that as "contents are wrong", wrote a one-line `backend: local` stub, and got "0 violations" because `find_root` had silently fallen back to guessing the roots. Both fixed: a missing or unparseable config exits with an instruction naming the file and what a config is for, and an inferred root now emits a warning when a config was supplied and declares none — a warning rather than a violation, because a freshly initialised graph has exactly one parentless node and a correct graph must not fail over how its root was located. `--version` added, which the benchmark's install pin and `preflight.py` both require [rec: staid-field-2723].
 - Verified against real Flywheel exports: normalizes the live edge encoding (incoming_ids as parents), alongside parent_ids/parents fixture forms [rec: steep-cell-5173].
-- **Two reproduced defects, both open, both concurrency-related** [rec: vast-rain-4873]: `check_hwm` enumerates unreconciled nodes by `created > cutoff` with no ancestry test, so a node merged from a branch that started earlier counts as already reconciled and vanishes from the frontier at 0 violations; and a node body carrying a literal git conflict-marker block passes `check` at 0/0 and is then published to the mirror. Neither is caught by any existing invariant.
+- **Both reproduced concurrency defects are fixed in v0.0.5** [rec: placid-ridge-4035], and each was found by construction rather than by review [rec: vast-rain-4873]. Unreconciled enumeration is now `unreconciled_nodes()` — set subtraction against `ancestors_of()` over the record DAG — and `check_hwm` names *every* unresolvable tip rather than the first. `check_conflict_markers()` rejects `<<<<<<<`, `>>>>>>>` and diff3's `|||||||` at line start, in both graphs and in `validate_node_content`, so the machine that would have committed the merge refuses before the one that would have checked it.
+- A bare `=======` is deliberately **not** sufficient evidence: it is also a setext H1 underline, so it is reported only inside a node that already shows an unambiguous marker. Flagging it alone would fail honest documents [rec: placid-ridge-4035].
+- New verbs: **`hypergraph hwm`** (frontier plus outstanding nodes) and **`hwm --suggest`**, the one-time migration aid that expresses the pre-0.0.5 timestamp rule as ancestry; and **`check --since <ref>`**, which fails a branch that changed files without adding a record node — the first mechanism that reaches a contributor who never read AGENTS.md [rec: placid-ridge-4035].
+- Suite at **282 tests**, up from 250, with `tests/test_collaboration.py` carrying 32 of them including the literal two-branch reproduction from the investigation. Two older tests changed contract rather than breaking: `read_hwm` returns `[]` for `none`, and the no-transport degradation case now asserts exit 0 with the remedy still named, plus exit 2 under `--require-mirror` [rec: placid-ridge-4035].
 
 ## Negative knowledge
 
@@ -61,3 +64,4 @@ Status: working
 - tender-moss-3792 — import --fork, push --lineage, scale guard, legend header; suite to 72
 - northern-willow-0469 — mirror-only verify proven live on a3go
 - vast-rain-4873 — two reproduced checker defects: timestamp-based HWM enumeration and undetected conflict markers
+- placid-ridge-4035 — ancestry enumeration, conflict-marker detection, hwm and check --since; suite to 282

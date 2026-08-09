@@ -9,9 +9,9 @@ summary: Five single-path skills (zero flywheel/lease/MCP/429/409 hits), dogfood
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 10
-  pushed_at: '2026-08-09T12:06:39+00:00'
-  content_sha256: 8b661fa938052ee22f66ed9466a3c07a5f1f2f8fd115bcda0fbf11e97ad9a8be
+  revision: 11
+  pushed_at: '2026-08-09T12:28:31+00:00'
+  content_sha256: 4453a9dbe35cff209a1476b5a635797930cb1d26fa815954a86b33c0b05c0d42
 ---
 Status: working
 
@@ -30,7 +30,8 @@ Status: working
 - Field correction from tbinn: the mode-B marker parents on the newest prehistory node, not `--root` — the CLI correctly refuses a second parentless root per graph [rec: stormy-dew-2969].
 - Onboarding outside the skills channel: AGENTS.md states the record discipline as non-negotiable for arriving agents, with CLAUDE.md containing only `@AGENTS.md`; added after blind test #1 (machinery used, obligation missed) and validated by blind test #2, a controlled retest with AGENTS.md as the only changed variable [rec: tiny-sunset-0847] [rec: little-bar-4131].
 - Open: the rewritten skills **have not yet been run by an agent that read them as skills**. Claude Code loads skills at session start, so both the dogfooding symlinks and the single-path bodies become live on the next cold start [rec: jolly-arbor-9572] [rec: calm-sand-3399].
-- Open: reconcile's unconditional publish step is correct for the maintainer and wrong for a forking contributor, whose machine holds no credentials for the project's mirror and gets exit 2. It needs a publish-branch gate, and the skill needs the maintainer-reconciles rule stated — contributors record only [rec: vast-rain-4873].
+- reconcile gained the maintainer-on-main rule in its When-To-Use, frontier guidance in the HWM step (usually one slug, several after a merge, and what to do when `check` names `hwm --suggest`), and a guardrail to start from `sync` rather than a bare `check` after a merge. Its publish step now names all three stand-down cases in one sentence instead of one [rec: placid-ridge-4035].
+- record gained the converse, which is what a contributor needs: recording is safe on any branch, fork or machine, because record nodes are one file each and merge without conflict — and it is the *whole* obligation, because the maintainer reconciles after the merge [rec: placid-ridge-4035].
 
 ## Negative knowledge
 
@@ -54,3 +55,4 @@ Status: working
 - jolly-arbor-9572 — dogfooding symlinks committed; install-over-source bug fixed; --link added
 - calm-sand-3399 — the five skills go single-path; acceptance grep returns zero hits
 - vast-rain-4873 — parallel-work investigation: reconcile needs a publish-branch gate and the contributors-record rule
+- placid-ridge-4035 — reconcile gains the maintainer-on-main rule and frontier guidance; record covers contributors

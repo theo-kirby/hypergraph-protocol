@@ -9,9 +9,9 @@ summary: Node files are the only storage; hypergraph push/sync/mirror now execut
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 8
-  pushed_at: '2026-08-09T12:06:39+00:00'
-  content_sha256: 8882352ec3d7b40a62cf61a20323d2177c53ead2172e80812d06d401c57dec45
+  revision: 9
+  pushed_at: '2026-08-09T12:28:31+00:00'
+  content_sha256: 9b3cd14c2bcf13a9b34ec8e5409b1e96db86b3172ae1c8ae9bf3fcd87752bc62
 ---
 Status: working
 
@@ -29,7 +29,9 @@ Status: working
 - The projection-trust gap stays closed: `push --verify` detects drift the plan cannot see (missing nodes, body-hash and summary mismatches, revision skew), and a mirror-only slug legend node — regenerated on every push, excluded from import and verify — makes local slugs readable on the mirror [rec: careful-harbor-3902].
 - The mirror was current and verified before this change and remains so. An earlier conclusion that it was gone [rec: sweet-aspen-3667] was wrong and is corrected [rec: solemn-dawn-6752]: every probe behind it used `.env`'s `FLYWHEEL_API_KEY` (account 80eed260…), while the mirror lives on the account the `flywheel` CLI holds (be9833b0…). That account id is now recorded as `mirror_account_id:` in config, so the check is mechanical [rec: silver-ember-3035].
 - The sequencing bet in patient-limit-9007 — build-vs-defer decided only after field dogfooding — was overtaken: the adapter shipped first [rec: patient-limit-9007] [rec: old-dawn-8747].
-- **Open gap: `push` has no git awareness.** Nothing in the push path reads `HEAD`, so an agent on a feature branch can publish to the append-only public mirror; if the PR is then rejected those nodes sit there with no local counterpart. A publish-branch and dirty-tree guard is needed, the Operator bet being that the mirror publishes **from CI on main only** — a build artifact of the default branch [rec: vast-rain-4873].
+- **`push` is now git-aware** [rec: placid-ridge-4035]. `publish_branch_block()` compares HEAD against `publish_branch:` (else `origin/HEAD`, else `main`), and `mirror_not_ours()` compares the authenticated account against `mirror_account_id:`. Both feed one `stand_down()` helper: print a line, exit 0, unless `--require-mirror`. Outside a git checkout the guard allows — the node files are the graph, and git is how they usually travel rather than a requirement.
+- **The exit-0 no-op guarantee now covers *who* is running, not only whether a mirror is configured.** A fork inherits the committed `mirror:` key and holds no credentials for it, so reconcile's unconditional publish step used to exit 2 on every outside contributor's machine. The same prose now works on a maintainer's main, on a feature branch, and on a fork [rec: placid-ridge-4035].
+- **The dirty-tree guard was deliberately not built**, despite being scoped alongside the branch guard. Reconcile publishes *before* it commits, on purpose, so `push`'s frontmatter writes land in the same `git add` — which makes a dirty graph the expected state at push time [rec: placid-ridge-4035].
 - **The exit-0 no-op guarantee is too narrow.** It covers *no mirror configured*, but an outside contributor inherits the committed `mirror:` key and holds no credentials, so reconcile's unconditional publish step exits 2 on their machine. It must also no-op when credentials are absent or belong to an account other than `mirror_account_id`, with `--require-mirror` for CI [rec: vast-rain-4873].
 
 ## Negative knowledge
@@ -55,3 +57,4 @@ Status: working
 - silver-ember-3035 — push becomes executing: transport, crash journal, pacer, doctor/roots/pull; verified live
 - calm-sand-3399 — config schema migrated; backend: key retired with a warning path
 - vast-rain-4873 — parallel-work investigation: push needs a branch guard, and the no-op guarantee must cover a mirror that is not yours
+- placid-ridge-4035 — publish-branch gate, not-the-owner stand-down, and the dirty-tree guard rejected

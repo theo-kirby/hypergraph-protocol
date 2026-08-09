@@ -9,9 +9,9 @@ summary: 'SPEC.md v0.0.4: invariants I1-I8, templates, forward-work conventions,
 flywheel:
   node_id: 3310b4b6-38dc-5091-b321-0a62ce235f80
   slug: young-wave-9364
-  revision: 5
-  pushed_at: '2026-08-09T12:06:39+00:00'
-  content_sha256: 79e116372cd7083643b7fec55e0b4c0664ec480118607811d775ff29ec63e5e4
+  revision: 6
+  pushed_at: '2026-08-09T12:28:31+00:00'
+  content_sha256: cf012a2b99a30b7d0d352f93ff0fda49b458f94a70ad76d5f5f2d0f0f2dd0c63
 ---
 Status: working
 
@@ -27,7 +27,9 @@ Status: working
 - **Invariants I1–I8 were untouched by that change**, which is the evidence that the storage/protocol boundary was drawn in the right place: they were already storage-neutral, and only the framing around them named a backend [rec: silver-ember-3035].
 - Node-file frontmatter is now described asymmetrically, because the two blocks are not peers: `origin:` is protocol (immutable import provenance), while a `flywheel:` block is bookkeeping that `push` writes and nothing else reads, `check` included [rec: silver-ember-3035].
 - **Open gap: the protocol has no concurrency story.** I5's high-water mark is specified and implemented as a *timestamp* cutoff, which silently drops any record node authored before the last reconcile and merged after it — reproduced, with the checker reporting 0 unreconciled and 0 violations. A merge-aware protocol needs the mark to be an **ancestry frontier** over the causal DAG. Doctrine to add alongside it: contributors record, maintainers reconcile — which follows from I3 rather than extending it [rec: vast-rain-4873].
-- Also to settle in SPEC: "fork" currently names two unrelated things — a GitHub repo fork keeps the same graph, slugs and node ids, while `import --fork` mints a new identity [rec: vast-rain-4873]. The Collaboration component carries the full gap.
+- **v0.0.5 closes the concurrency gap in the spec itself** [rec: placid-ridge-4035]. I5 is restated: the mark is a **frontier** of record tips, and a node is reconciled exactly when it is an ancestor of one of them. The old wording — "record nodes created after the HWM node are unreconciled" — was the defect written down, so fixing the code without fixing the sentence would have left the next implementer to rebuild it.
+- A new **Collaboration** convention states the rule the invariants already implied: contributors record, the maintainer reconciles; publish from the default branch only; after a merge run `sync` rather than a bare `check`; never commit a conflict marker; and a repo fork is not a graph fork — forking a repository copies the graph verbatim and a PR merges back into it, while `import --fork` starts a new project and mints new identity [rec: placid-ridge-4035].
+- The HWM vocabulary entry and the `## Reconciliation` template were updated with it, and the header is v0.0.5 [rec: placid-ridge-4035].
 
 ## Negative knowledge
 
@@ -43,3 +45,4 @@ None yet.
 - silver-ember-3035 — Backend → Storage; fork/mirror doctrine split; I1–I8 confirmed storage-neutral
 - calm-sand-3399 — version unified at 0.0.4 and pinned to pyproject by assertion
 - vast-rain-4873 — parallel-work investigation: I5's timestamp cutoff is not merge-safe; collaboration doctrine to add
+- placid-ridge-4035 — SPEC v0.0.5: I5 as an ancestry frontier, the Collaboration convention, fork disambiguation
