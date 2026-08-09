@@ -2275,13 +2275,22 @@ def _trees_match(src: Path, dst: Path) -> bool:
         return False
 
 
-def upgrade_onboarding(block: str, repo: Path, changes: list, dry_run: bool) -> None:
-    """Refresh the sentinel-delimited block in whichever onboarding files carry it.
+def upgrade_onboarding(block: str, repo: Path, changes: list, dry_run: bool,
+                       write: bool = False) -> None:
+    """Refresh the sentinel-delimited block, unless the adopter has edited it.
 
     Writing through a symlink is deliberate: `CLAUDE.md` is often a link to
     `AGENTS.md`, and `write_text` follows it, so the target is edited and the link
     survives. Adopt has warned about that rule in prose since it shipped; here it
-    falls out of the implementation."""
+    falls out of the implementation.
+
+    What does *not* fall out of the implementation, and used to be wrong: the
+    sentinels mark the block hypergraph owns, and adopt writes per-project content
+    inside them anyway, because that is where the contract reconciliation belongs.
+    So the block is only ours to replace while it is still verbatim something we
+    shipped (`SHIPPED_BLOCK_DIGESTS`). Once an adopter has edited it, an upgrade
+    reports and steps back — `--agents-block` is the way to say "overwrite it, I
+    have merged what I wanted"."""
     seen: set[Path] = set()
     for name in ONBOARDING_FILES:
         path = repo / name
@@ -2291,16 +2300,23 @@ def upgrade_onboarding(block: str, repo: Path, changes: list, dry_run: bool) -> 
         if resolved in seen:      # CLAUDE.md → AGENTS.md: one file, edited once
             continue
         text = path.read_text(errors="replace")
-        updated = replace_agents_block(text, block)
-        if updated is None:
+        current = extract_agents_block(text)
+        if current is None:
             continue              # no block: this file never had one, so leave it
         seen.add(resolved)
-        if updated == text:
+        if block_digest(current) == block_digest(block):
             changes.append(("unchanged", path, ""))
             continue
+        if block_digest(current) not in SHIPPED_BLOCK_DIGESTS and not write:
+            changes.append(("customized", path,
+                            "local edits inside the sentinels — pass --agents-block "
+                            "to overwrite"))
+            continue
+        updated = replace_agents_block(text, block)
         if not dry_run:
             path.write_text(updated)
-        changes.append(("refreshed", path, "hypergraph block"))
+        note = "hypergraph block" + (" — overwrote local edits" if write else "")
+        changes.append(("refreshed", path, note))
 
 
 def upgrade_workflows(source: Path, repo: Path, changes: list, dry_run: bool,
@@ -2348,7 +2364,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     upgrade_skills(root / "skills", skills_target, changes, args.dry_run)
     block_path = root / "templates" / "agents-block.md"
     if block_path.exists():
-        upgrade_onboarding(block_path.read_text(), repo, changes, args.dry_run)
+        upgrade_onboarding(block_path.read_text(), repo, changes, args.dry_run,
+                           args.agents_block)
     upgrade_workflows(root / "templates" / "github-actions", repo, changes,
                       args.dry_run, args.workflows)
 
@@ -2366,7 +2383,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         changes.append(("skipped", config_path, "no config — not an adopted project"))
 
     verb = {"refreshed": "would refresh", "unchanged": "unchanged",
-            "skipped": "skipped", "differs": "differs"} if args.dry_run else {}
+            "skipped": "skipped", "differs": "differs",
+            "customized": "customized"} if args.dry_run else {}
     for state, path, note in changes:
         label = verb.get(state, state)
         try:
@@ -2376,13 +2394,22 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         print(f"  {label:<14} {shown}" + (f"   ({note})" if note else ""))
     touched = sum(1 for state, _p, _n in changes if state == "refreshed")
     drifted = [c for c in changes if c[0] == "differs"]
+    kept = [c for c in changes if c[0] == "customized"]
+    tail = ((f", {len(drifted)} workflow(s) differ" if drifted else "")
+            + (f", {len(kept)} block(s) left alone" if kept else ""))
     if not changes or all(c[0] != "refreshed" for c in changes):
-        print(f"\nupgrade: already current at {__version__}"
-              + (f" — {len(drifted)} workflow(s) differ" if drifted else ""))
+        print(f"\nupgrade: already current at {__version__}" + tail.replace(",", " —", 1))
     else:
         print(f"\nupgrade: {touched} item(s) "
               f"{'would be refreshed' if args.dry_run else 'refreshed'} to {__version__}"
-              + (f", {len(drifted)} workflow(s) differ" if drifted else ""))
+              + tail)
+    if kept:
+        # Naming the shipped copy is the whole remedy: the adopter diffs it against
+        # their block and merges by hand, which is the only safe merge of prose that
+        # is half ours and half theirs.
+        print(f"\nThe block in {len(kept)} file(s) carries edits of your own, so it "
+              f"was left as it is.\nCompare it against this release's version and "
+              f"merge what you want:\n  {block_path}")
     if not args.dry_run and touched:
         print("Commit the result — these files travel with the repo.")
     return 0
@@ -2445,6 +2472,47 @@ def cmd_skills(args: argparse.Namespace) -> int:
 AGENTS_BEGIN = "<!-- hypergraph:begin -->"
 AGENTS_END = "<!-- hypergraph:end -->"
 ONBOARDING_FILES = ("AGENTS.md", "CLAUDE.md", ".hypergraph/AGENTS.md")
+
+# Every agents-block this project has ever shipped, by content digest.
+#
+# The sentinels do **not** mean "ours to overwrite". hypergraph-adopt's step 8
+# deliberately writes per-project content *inside* them — the contract
+# reconciliation that routes an existing discipline through hypergraph, and the
+# project's epoch note — so a block in the wild is a mixture of our template and
+# the adopter's own prose, often woven into the same sentence.
+#
+# That leaves one honest question an upgrade can ask: *did anyone edit this?* A
+# block whose digest is in this set is a template we shipped and nobody touched,
+# so replacing it loses nothing. Anything else is the adopter's, and gets
+# reported rather than overwritten — the same treatment `.github/workflows/`
+# already gets, and for the same reason.
+#
+# Add a line here whenever templates/agents-block.md changes;
+# `test_shipped_block_digest_is_registered` fails until you do.
+SHIPPED_BLOCK_DIGESTS = frozenset({
+    # 0.0.1–0.0.6
+    "9119d3e23dbac92888b7f420213b2307d280b8d584c62c02d6ac6dbe4d53330c",
+    # 0.0.7 — adds the `hypergraph upgrade` note to non-negotiable 4
+    "c0698b961c95a5c98a1e3df40cba88e5917db5d02e427c6fa4c7727a57feafa0",
+})
+
+
+def block_digest(block: str) -> str:
+    """Content digest of a sentinel block, insensitive to surrounding whitespace.
+
+    Files gain and lose a trailing newline as editors touch them; that is not an
+    edit to the block, and treating it as one would report every adopter as
+    having customized their onboarding."""
+    return hashlib.sha256(block.strip().encode()).hexdigest()
+
+
+def extract_agents_block(text: str) -> str | None:
+    """The sentinel block including its markers, or None when there is none."""
+    start = text.find(AGENTS_BEGIN)
+    end = text.find(AGENTS_END)
+    if start < 0 or end < 0 or end < start:
+        return None
+    return text[start:end + len(AGENTS_END)]
 
 
 def version_tuple(text: str) -> tuple[int, ...] | None:
@@ -8180,6 +8248,10 @@ def main(argv: list[str] | None = None) -> int:
     p_upgrade.add_argument("--workflows", action="store_true",
                            help="also overwrite drifted .github/workflows/hypergraph-*"
                                 " (default: report them — adopters customize these)")
+    p_upgrade.add_argument("--agents-block", action="store_true",
+                           help="also overwrite an AGENTS.md block carrying local edits"
+                                " (default: report it — adopt writes per-project"
+                                " content inside the sentinels)")
     p_upgrade.add_argument("--dry-run", action="store_true",
                            help="print what would change and write nothing")
     p_upgrade.set_defaults(func=cmd_upgrade)

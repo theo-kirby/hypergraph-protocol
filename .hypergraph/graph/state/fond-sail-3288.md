@@ -9,9 +9,9 @@ summary: ''
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 2
-  pushed_at: '2026-08-09T18:08:20+00:00'
-  content_sha256: 7ef3e1910988bc89ef62031f82118e5c547af6cfc7ca9fcea128b819a591e6b5
+  revision: 3
+  pushed_at: '2026-08-09T18:17:00+00:00'
+  content_sha256: c7d7724aa1a13c15807af1cf4262edc6c07adc68b4d4f0ccc6c0f623fe4209e9
 ---
 Status: broken
 
@@ -58,6 +58,19 @@ right behaviour for `.github/workflows/`, reporting drift and leaving it alone
 opposite default. Everything else in the upgrade held: skills refreshed, config
 stamped, prose outside the sentinels byte-identical [rec: vast-valley-5745].
 
+**Fixed in the tree, not yet released** [rec: open-eagle-4603]. `upgrade` now replaces
+a block only while its content digest matches one this project has shipped
+(`SHIPPED_BLOCK_DIGESTS`, both templates recovered from git history as blobs);
+anything else is reported as `customized`, left untouched, and the shipped template is
+named so the adopter merges by hand. `--agents-block` opts into overwriting, exactly as
+`--workflows` does. It needs no migration and no new config field — every repo adopted
+before the fix classifies correctly on its first run, because the evidence is the block
+itself. The nested-marker design was tried first and rejected: on cadex the ADR-log
+clause is woven into the *middle of numbered item 2*, so no pair of markers separates
+it. **Status stays `broken` because every adopter runs 0.0.7 from PyPI**, where the
+destructive behaviour is live; this becomes true for anyone only when a release carries
+it.
+
 A second gap, smaller: on a repo adopted before the stamp, `check` emits only the
 "predates the stamp" info, so the case where the **CLI** is the older half cannot be
 reported at all. cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so
@@ -65,6 +78,7 @@ reported at all. cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so
 
 ## Negative knowledge
 
+- [scope: sentinel markers around generated content | confidence: high | evidence: open-eagle-4603] Sentinels answer "where does our content go", never "who owns what is in here". The moment a workflow tells an agent to write project-specific prose inside them — which adopt's contract reconciliation must, because the amendment belongs in the sentence it qualifies — the region is shared, and a tool that replaces it wholesale destroys data by design. Ownership of shared prose is not recoverable from position in the file; it is recoverable from whether the bytes are still ours, which is a digest.
 - [scope: shipping a command that rewrites files in someone else's repo | confidence: high | evidence: vast-valley-5745] `--dry-run` is not a convenience, it is the only thing between a destructive default and silent data loss. `upgrade` shipped on the belief that sentinels made the write safe; the sentinels are exactly where the unsafe content lives. A destructive default is invisible on any fixture that does not use the feature it destroys, so the test that would have caught this is an adopted repo with project-specific prose in its block — not a scratch repo with the template in it.
 
 ## Provenance
@@ -72,4 +86,5 @@ reported at all. cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so
 - ancient-bluff-9706 — hypergraph upgrade and the version stamp, with both compatibility directions measured
 - humble-rain-0304 — 0.0.7 published; the two-command update verified end-to-end from PyPI
 - long-peak-1620 — the CI-template/CLI skew that showed copied artifacts drift out of step with the CLI
+- open-eagle-4603 — the fix: a block is ours to replace only while its digest is one we shipped
 - vast-valley-5745 — first run on a real adopted repo: the sentinel block's project-specific half is overwritten, and a pre-stamp repo cannot report a CLI-is-older skew

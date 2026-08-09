@@ -106,7 +106,10 @@ hypergraph upgrade                    # the copies — skills, AGENTS.md block, 
 them and they go stale silently. `hypergraph upgrade` refreshes what is already
 there — it never installs what is not, so it will not drop CI into a repo that never
 had it, and drifted workflows are reported rather than overwritten (`--workflows`
-opts in). It also stamps `hypergraph_version:` into the config, which is what lets
+opts in). Your AGENTS.md block gets the same protection: adoption writes
+project-specific content inside those sentinels, so a block you have edited is
+reported and left alone, with the shipped version named for you to merge against
+(`--agents-block` opts in). It also stamps `hypergraph_version:` into the config, which is what lets
 `check` tell you which half is behind. Node files themselves need no migration: they
 are additive markdown, and an older CLI reads a newer graph.
 

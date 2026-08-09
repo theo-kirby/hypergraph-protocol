@@ -141,6 +141,12 @@ day-zero project. Nothing to decide.
      conflicting discipline (e.g. "commit findings as <other system> nodes"), amend
      those sections to route through hypergraph — never leave two contradictory
      contracts standing.
+     Write that amendment **inside the sentinels**, woven into the numbered item it
+     qualifies, and add whatever else is project-specific (the epoch marker slug,
+     the prehistory count). `hypergraph upgrade` will not overwrite a block once you
+     have edited it — it reports the block and steps back, naming the shipped
+     template to merge against. Only a block still verbatim as we shipped it is
+     refreshed automatically.
    - **Never break a CLAUDE.md→AGENTS.md symlink**: step 1's survey already reported
      whether either file is a link and where it points. Edit the *target*, never the
      link.

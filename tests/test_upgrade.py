@@ -24,6 +24,28 @@ from graph_fixtures import hg
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "skills"
 
+# The block exactly as 0.0.6 shipped it. An adopter who never edited theirs has
+# this in their AGENTS.md, and upgrade may replace it because we can prove we
+# wrote every byte — its digest is in `SHIPPED_BLOCK_DIGESTS`. Kept verbatim here
+# rather than read out of git history, so the test states the contract instead of
+# depending on the repository it runs in.
+BLOCK_0_0_6 = """<!-- hypergraph:begin -->
+## Hypergraph protocol
+
+This repo's memory lives in two graphs under `.hypergraph/` (see `.hypergraph/AGENTS.md`):
+
+1. **Orient on arrival**: run the `hypergraph-orient` skill or read `STATE.md` —
+   the frontier (open/broken/blocked) is what matters now.
+2. **Record every unit of work** (features, fixes, experiments, dead ends,
+   decisions): the `hypergraph-record` skill — one causally-parented record node
+   with a `## State Impact` section. Unrecorded work is invisible to the project.
+3. **Never write state nodes**; declare impacts and let the
+   `hypergraph-reconcile` skill fold them. `STATE.md` is generated — never
+   hand-edit it.
+4. **Verify before finishing**: `hypergraph export` + `hypergraph check` must
+   exit 0.
+<!-- hypergraph:end -->"""
+
 
 def run(*argv):
     return hg.main([str(a) for a in argv])
@@ -35,8 +57,13 @@ def run_out(capsys, *argv):
     return code, capsys.readouterr().out
 
 
-def adopted_repo(tmp_path, *, skills=True, agents=True, workflow=True, config=True):
-    """A repo shaped like one that ran adopt some releases ago."""
+def adopted_repo(tmp_path, *, skills=True, agents=True, workflow=True, config=True,
+                 block=BLOCK_0_0_6):
+    """A repo shaped like one that ran adopt some releases ago.
+
+    `block` defaults to a genuinely-shipped older template, because that is the
+    only shape upgrade may overwrite; pass an edited one to exercise the case
+    where it must step back."""
     repo = tmp_path / "adopted"
     (repo / ".hypergraph").mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
@@ -51,7 +78,7 @@ def adopted_repo(tmp_path, *, skills=True, agents=True, workflow=True, config=Tr
     if agents:
         (repo / "AGENTS.md").write_text(
             "# My project\n\nOur own rules.\n\n"
-            f"{hg.AGENTS_BEGIN}\nOLD BLOCK\n{hg.AGENTS_END}\n\nMore of our prose.\n")
+            f"{block}\n\nMore of our prose.\n")
     if workflow:
         wf = repo / ".github" / "workflows"
         wf.mkdir(parents=True)
@@ -89,16 +116,90 @@ def test_upgrade_never_installs_what_is_not_already_there(tmp_path, capsys):
     assert not (repo / ".github").exists()
 
 
-def test_upgrade_replaces_the_block_and_leaves_the_prose_alone(tmp_path, capsys):
+def test_upgrade_replaces_an_unedited_block_and_leaves_the_prose_alone(tmp_path, capsys):
     repo = adopted_repo(tmp_path)
     assert run("upgrade", "--repo", repo) == 0
     capsys.readouterr()
     text = (repo / "AGENTS.md").read_text()
-    assert "OLD BLOCK" not in text
+    assert "hypergraph export` + `hypergraph check` must\n   exit 0.\n<!--" not in text
     assert (ROOT / "templates" / "agents-block.md").read_text().strip() in text
     # everything outside the sentinels is the adopter's, and survives verbatim
     assert text.startswith("# My project\n\nOur own rules.\n")
     assert text.endswith("More of our prose.\n")
+
+
+# ------------------------------------------------- the block adopt writes into
+#
+# The sentinels do not mean "ours to overwrite". hypergraph-adopt's step 8 writes
+# per-project content *inside* them — the contract reconciliation that routes an
+# existing discipline through hypergraph, and the project's epoch note — and 0.0.7
+# replaced the lot with the shipped template, silently. Found on cadex, whose block
+# lost the clause telling agents that `docs/DECISIONS.md` is not superseded.
+
+def edited_block() -> str:
+    """A shipped block with the two things adopt actually adds to one."""
+    return BLOCK_0_0_6.replace(
+        "with a `## State Impact` section. Unrecorded work is invisible to the project.",
+        "with a `## State Impact` section. Unrecorded work is invisible to the project.\n"
+        "   This **complements** `docs/DECISIONS.md` rather than replacing it.",
+    ).replace(
+        "<!-- hypergraph:end -->",
+        "\nThe epoch marker is `winter-rain-7897`; the 14 nodes before it are"
+        " prehistory.\n<!-- hypergraph:end -->")
+
+
+def test_upgrade_does_not_overwrite_a_block_the_adopter_edited(tmp_path, capsys):
+    """The regression. Both additions are the adopt skill's own output."""
+    repo = adopted_repo(tmp_path, block=edited_block())
+    before = (repo / "AGENTS.md").read_text()
+
+    code, out = run_out(capsys, "upgrade", "--repo", repo)
+
+    assert code == 0
+    assert (repo / "AGENTS.md").read_text() == before
+    assert "customized" in out
+    assert "--agents-block" in out
+    assert "docs/DECISIONS.md" in (repo / "AGENTS.md").read_text()
+
+
+def test_upgrade_overwrites_an_edited_block_only_when_asked(tmp_path, capsys):
+    repo = adopted_repo(tmp_path, block=edited_block())
+    assert run("upgrade", "--repo", repo, "--agents-block") == 0
+    out = capsys.readouterr().out
+    text = (repo / "AGENTS.md").read_text()
+    assert "docs/DECISIONS.md" not in text
+    assert (ROOT / "templates" / "agents-block.md").read_text().strip() in text
+    assert "overwrote local edits" in out
+    # and the adopter's prose outside the sentinels is still not ours to touch
+    assert text.startswith("# My project\n\nOur own rules.\n")
+
+
+def test_upgrade_names_the_shipped_block_so_the_adopter_can_merge(tmp_path, capsys):
+    """Reporting drift is only half a remedy; the other half is saying what to
+    compare against."""
+    repo = adopted_repo(tmp_path, block=edited_block())
+    _code, out = run_out(capsys, "upgrade", "--repo", repo)
+    assert "agents-block.md" in out
+    assert "left alone" in out
+
+
+def test_upgrade_is_idempotent_on_a_block_it_just_wrote(tmp_path, capsys):
+    """The block upgrade writes is a shipped one, so the next run reports it
+    unchanged rather than rediscovering it as an edit."""
+    repo = adopted_repo(tmp_path)
+    run("upgrade", "--repo", repo)
+    _code, out = run_out(capsys, "upgrade", "--repo", repo)
+    assert "customized" not in out
+    assert "unchanged" in out
+
+
+def test_shipped_block_digest_is_registered(tmp_path):
+    """The set is hand-maintained, so it needs a tripwire: change the template
+    without adding its digest and every adopter's next upgrade reports their
+    untouched block as customized."""
+    current = (ROOT / "templates" / "agents-block.md").read_text()
+    assert hg.block_digest(current) in hg.SHIPPED_BLOCK_DIGESTS
+    assert hg.block_digest(BLOCK_0_0_6) in hg.SHIPPED_BLOCK_DIGESTS
 
 
 def test_upgrade_writes_through_a_claude_md_symlink_without_breaking_it(tmp_path, capsys):
