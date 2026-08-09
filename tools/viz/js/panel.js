@@ -128,17 +128,36 @@ function legendHTML() {
       <tr><td>${swatch(T().prov)}</td><td>provenance: state node derives from record node</td></tr>
       <tr><td>${swatch(T().impact, true)}</td><td>declared State Impact: record → state target</td></tr>
     </table>
-    ${show.blobs && recVis() ? `<h3>Hyperedge blobs</h3>
-    <div class="meta">Each translucent blob is a hyperedge: one state node wrapping
-    all the record work that declares impact on it; overlapping blobs share record
-    nodes. Click a blob's label to open that state node.</div>` : ""}
-    <p class="hint">The four view chips each answer one question — Timeline: what
-    happened, in order · Frontier: what is true now · Provenance: what each state
-    claim rests on · Clusters: which work belongs to the same claim. The toggles
-    below them mix graphs, node style, layout, and edge types freely.
-    Scroll to zoom · drag background to pan · drag nodes to rearrange ·
-    click a node for full content · Esc to deselect · drag the divider to resize
-    this panel. Use the export menu for SVG/PDF.</p>`;
+    <h3>Views</h3>
+    <table class="stats">
+      <tr><td><b>Timeline</b></td><td>what happened, in order — <code>git log</code>
+        lanes with time along x. A rule marks the high-water mark; the tinted band
+        past it is work not yet reconciled.</td></tr>
+      <tr><td><b>Frontier</b></td><td>what is true now — a status board, broken and
+        blocked and open first. An empty column keeps a labelled rail, because
+        "nothing is broken" is an answer.</td></tr>
+      <tr><td><b>Provenance</b></td><td>what each claim rests on — both graphs side
+        by side. Cross-links start hidden; select or hover a node to see its own,
+        or switch Links to <i>All</i> for one bundled ribbon per claim.</td></tr>
+      <tr><td><b>Clusters</b></td><td>which work belongs to the same claim — each
+        claim's record set as a blob, with a corridor holding far-apart members
+        together and non-members pushing the outline away.</td></tr>
+    </table>
+    <h3>Marks worth knowing</h3>
+    <table class="stats">
+      <tr><td>lane rules</td><td>concurrent threads of work in the Timeline</td></tr>
+      <tr><td>puck</td><td>a claim collapsed to one body; the number is how many
+        record nodes it holds. Open the claim to expand it again.</td></tr>
+      <tr><td>Window</td><td>keeps only the most recent N record nodes, so a long
+        history shrinks the drawing instead of scrolling past it</td></tr>
+    </table>
+    <p class="hint"><b>Keys</b> — <code>1</code>–<code>4</code> pick a view ·
+    <code>/</code> search · <code>f</code> fit · <code>Esc</code> deselect.
+    Scroll to zoom · drag the background to pan · drag nodes to rearrange ·
+    click a node for its full content · drag the divider to resize this panel.
+    No view shrinks below 0.45 — one that does not fit scrolls instead. The
+    layout is deterministic: the same graph always draws the same way. Use the
+    export menu for SVG or PDF.</p>`;
 }
 
 function bindPanel() {

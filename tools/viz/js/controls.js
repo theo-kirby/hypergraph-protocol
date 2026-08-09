@@ -82,9 +82,26 @@ svg.addEventListener("pointerout", e => {
   const g = e.target.closest ? e.target.closest(".node") : null;
   if (g && !g.contains(e.relatedTarget)) setHovered(null);
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") deselect(); });
+// Keyboard: 1-4 pick a view, / searches, f fits, Esc clears. Nothing fires while
+// you are typing, and nothing shadows a browser shortcut (no modifiers here).
+const VIEW_KEYS = ["timeline", "frontier", "provenance", "clusters"];
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    if (document.activeElement === searchBox) searchBox.blur();
+    deselect();
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const typing = document.activeElement === searchBox;
+  if (e.key === "/" && !typing) { e.preventDefault(); searchBox.focus(); return; }
+  if (typing) return;
+  const view = VIEW_KEYS[Number(e.key) - 1];
+  if (view) { applyPreset(view); return; }
+  if (e.key === "f" || e.key === "F") fit();
+});
 
-document.getElementById("search").addEventListener("input", e => {
+const searchBox = document.getElementById("search");
+searchBox.addEventListener("input", e => {
   query = e.target.value.trim().toLowerCase();
   updateDim();
 });

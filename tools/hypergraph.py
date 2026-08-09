@@ -2103,8 +2103,15 @@ VIZ_TEMPLATE = r"""<!doctype html>
   .legend-swatch { display:inline-block; width:22px; height:0; border-top-width:2px;
                    border-top-style:solid; vertical-align:middle; margin-right:8px; }
   .hint { color:var(--muted); font-size:11.5px; margin-top:16px; }
-  .stats td { padding:1px 10px 1px 0; color:var(--ink2); font-size:12px; }
-  .stats td:first-child { color:var(--muted); }
+  .stats td { padding:1px 10px 2px 0; color:var(--ink2); font-size:12px;
+              vertical-align:top; line-height:1.45; }
+  .stats td:first-child { color:var(--muted); white-space:nowrap; }
+  .stats code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size:11px; background:var(--code); padding:0 3px;
+                border-radius:3px; }
+  .hint code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+               font-size:11px; background:var(--code); padding:0 3px;
+               border-radius:3px; }
   @media print {
     header, #side, #divider { display:none !important; }
     body { background:#fff; }
@@ -4595,17 +4602,36 @@ function legendHTML() {
       <tr><td>${swatch(T().prov)}</td><td>provenance: state node derives from record node</td></tr>
       <tr><td>${swatch(T().impact, true)}</td><td>declared State Impact: record → state target</td></tr>
     </table>
-    ${show.blobs && recVis() ? `<h3>Hyperedge blobs</h3>
-    <div class="meta">Each translucent blob is a hyperedge: one state node wrapping
-    all the record work that declares impact on it; overlapping blobs share record
-    nodes. Click a blob's label to open that state node.</div>` : ""}
-    <p class="hint">The four view chips each answer one question — Timeline: what
-    happened, in order · Frontier: what is true now · Provenance: what each state
-    claim rests on · Clusters: which work belongs to the same claim. The toggles
-    below them mix graphs, node style, layout, and edge types freely.
-    Scroll to zoom · drag background to pan · drag nodes to rearrange ·
-    click a node for full content · Esc to deselect · drag the divider to resize
-    this panel. Use the export menu for SVG/PDF.</p>`;
+    <h3>Views</h3>
+    <table class="stats">
+      <tr><td><b>Timeline</b></td><td>what happened, in order — <code>git log</code>
+        lanes with time along x. A rule marks the high-water mark; the tinted band
+        past it is work not yet reconciled.</td></tr>
+      <tr><td><b>Frontier</b></td><td>what is true now — a status board, broken and
+        blocked and open first. An empty column keeps a labelled rail, because
+        "nothing is broken" is an answer.</td></tr>
+      <tr><td><b>Provenance</b></td><td>what each claim rests on — both graphs side
+        by side. Cross-links start hidden; select or hover a node to see its own,
+        or switch Links to <i>All</i> for one bundled ribbon per claim.</td></tr>
+      <tr><td><b>Clusters</b></td><td>which work belongs to the same claim — each
+        claim's record set as a blob, with a corridor holding far-apart members
+        together and non-members pushing the outline away.</td></tr>
+    </table>
+    <h3>Marks worth knowing</h3>
+    <table class="stats">
+      <tr><td>lane rules</td><td>concurrent threads of work in the Timeline</td></tr>
+      <tr><td>puck</td><td>a claim collapsed to one body; the number is how many
+        record nodes it holds. Open the claim to expand it again.</td></tr>
+      <tr><td>Window</td><td>keeps only the most recent N record nodes, so a long
+        history shrinks the drawing instead of scrolling past it</td></tr>
+    </table>
+    <p class="hint"><b>Keys</b> — <code>1</code>–<code>4</code> pick a view ·
+    <code>/</code> search · <code>f</code> fit · <code>Esc</code> deselect.
+    Scroll to zoom · drag the background to pan · drag nodes to rearrange ·
+    click a node for its full content · drag the divider to resize this panel.
+    No view shrinks below 0.45 — one that does not fit scrolls instead. The
+    layout is deterministic: the same graph always draws the same way. Use the
+    export menu for SVG or PDF.</p>`;
 }
 
 function bindPanel() {
@@ -4705,9 +4731,26 @@ svg.addEventListener("pointerout", e => {
   const g = e.target.closest ? e.target.closest(".node") : null;
   if (g && !g.contains(e.relatedTarget)) setHovered(null);
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") deselect(); });
+// Keyboard: 1-4 pick a view, / searches, f fits, Esc clears. Nothing fires while
+// you are typing, and nothing shadows a browser shortcut (no modifiers here).
+const VIEW_KEYS = ["timeline", "frontier", "provenance", "clusters"];
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    if (document.activeElement === searchBox) searchBox.blur();
+    deselect();
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const typing = document.activeElement === searchBox;
+  if (e.key === "/" && !typing) { e.preventDefault(); searchBox.focus(); return; }
+  if (typing) return;
+  const view = VIEW_KEYS[Number(e.key) - 1];
+  if (view) { applyPreset(view); return; }
+  if (e.key === "f" || e.key === "F") fit();
+});
 
-document.getElementById("search").addEventListener("input", e => {
+const searchBox = document.getElementById("search");
+searchBox.addEventListener("input", e => {
   query = e.target.value.trim().toLowerCase();
   updateDim();
 });
@@ -4907,11 +4950,17 @@ document.getElementById("printBtn").addEventListener("click", () => {
   fit();
   setTimeout(() => window.print(), 60);
 });
-document.getElementById("svgBtn").addEventListener("click", () => {
-  exportMenu.hidden = true;
-  let { minX, minY, maxX, maxY } = worldBounds();
-  if (minX > maxX) return;
-  if (show.layout === "layered" && show.graphs === "both") minY -= 80;  // headers
+// The exported SVG is standalone: every mark is styled by attribute, not by a
+// stylesheet, so it survives being dropped into a document or an editor.
+function exportSvg() {
+  // worldBounds already accounts for each layout's own scenery — lane rules and
+  // the date gutter, board column headers, the two-column captions — so every
+  // view exports whole instead of only the four that predate them.
+  const { minX, minY, maxX, maxY } = worldBounds();
+  if (minX > maxX) return null;
+  // A file has no zoom, so it gets full detail regardless of the current one.
+  const k = tfFor().k;
+  applyLod(Infinity);
   const pad = 40;
   const w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
   const out = el("svg", { xmlns: SVGNS, width: w, height: h,
@@ -4922,8 +4971,15 @@ document.getElementById("svgBtn").addEventListener("click", () => {
   const world = document.getElementById("world").cloneNode(true);
   world.removeAttribute("transform");
   out.appendChild(world);
-  const blob = new Blob([new XMLSerializer().serializeToString(out)],
-    { type: "image/svg+xml" });
+  applyLod(k);
+  return new XMLSerializer().serializeToString(out);
+}
+
+document.getElementById("svgBtn").addEventListener("click", () => {
+  exportMenu.hidden = true;
+  const text = exportSvg();
+  if (!text) return;
+  const blob = new Blob([text], { type: "image/svg+xml" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `${DATA.project}-${activePreset() || "custom"}.svg`;

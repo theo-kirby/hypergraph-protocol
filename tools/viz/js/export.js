@@ -12,11 +12,17 @@ document.getElementById("printBtn").addEventListener("click", () => {
   fit();
   setTimeout(() => window.print(), 60);
 });
-document.getElementById("svgBtn").addEventListener("click", () => {
-  exportMenu.hidden = true;
-  let { minX, minY, maxX, maxY } = worldBounds();
-  if (minX > maxX) return;
-  if (show.layout === "layered" && show.graphs === "both") minY -= 80;  // headers
+// The exported SVG is standalone: every mark is styled by attribute, not by a
+// stylesheet, so it survives being dropped into a document or an editor.
+function exportSvg() {
+  // worldBounds already accounts for each layout's own scenery — lane rules and
+  // the date gutter, board column headers, the two-column captions — so every
+  // view exports whole instead of only the four that predate them.
+  const { minX, minY, maxX, maxY } = worldBounds();
+  if (minX > maxX) return null;
+  // A file has no zoom, so it gets full detail regardless of the current one.
+  const k = tfFor().k;
+  applyLod(Infinity);
   const pad = 40;
   const w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
   const out = el("svg", { xmlns: SVGNS, width: w, height: h,
@@ -27,8 +33,15 @@ document.getElementById("svgBtn").addEventListener("click", () => {
   const world = document.getElementById("world").cloneNode(true);
   world.removeAttribute("transform");
   out.appendChild(world);
-  const blob = new Blob([new XMLSerializer().serializeToString(out)],
-    { type: "image/svg+xml" });
+  applyLod(k);
+  return new XMLSerializer().serializeToString(out);
+}
+
+document.getElementById("svgBtn").addEventListener("click", () => {
+  exportMenu.hidden = true;
+  const text = exportSvg();
+  if (!text) return;
+  const blob = new Blob([text], { type: "image/svg+xml" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `${DATA.project}-${activePreset() || "custom"}.svg`;

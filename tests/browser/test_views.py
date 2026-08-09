@@ -13,8 +13,8 @@ before/after of a phase.
 """
 import pytest
 
-from conftest import (VIEWS, load_baseline, measure, open_view, save_baseline,
-                      shoot, updating)
+from conftest import (VIEWPORT, VIEWS, load_baseline, measure, open_view,
+                      save_baseline, shoot, updating)
 
 # Counts must match exactly; geometry is allowed to wobble by this fraction,
 # because text metrics differ slightly between chromium builds.
@@ -193,3 +193,45 @@ def test_level_of_detail_drops_text_as_the_view_shrinks(page):
     scale = measure(page)["scale"]
     assert scale < 0.58, f"the wheel should have zoomed out (scale {scale})"
     assert shown("#nodes text.detail") == 0, "secondary lines must drop out first"
+
+
+def test_svg_export_covers_every_view(browser, viz_html, tmp_path):
+    """Each view exports a standalone SVG that carries its own scenery."""
+    ctx = browser.new_context(viewport=VIEWPORT, color_scheme="light",
+                              accept_downloads=True)
+    page = ctx.new_page()
+    page.goto(f"file://{viz_html}")
+    page.wait_for_selector("#world")
+    expected = {"timeline": "furniture", "frontier": "furniture",
+                "provenance": "RECORD", "clusters": "blobs"}
+    for view, marker in expected.items():
+        open_view(page, view)
+        page.click("#exportBtn")
+        with page.expect_download() as caught:
+            page.click("#svgBtn")
+        path = tmp_path / f"{view}.svg"
+        caught.value.save_as(path)
+        svg = path.read_text()
+        assert svg.startswith("<svg"), f"{view} export is not an SVG"
+        assert marker in svg, f"{view} export lost its {marker} layer"
+        # standalone: no stylesheet, no external reference
+        assert "<style" not in svg and "http://" not in svg.replace(
+            "http://www.w3.org/", "")
+        # full detail regardless of the zoom it was exported at
+        assert 'display: none' not in svg and 'display:none' not in svg
+    ctx.close()
+
+
+def test_keyboard_shortcuts(page):
+    for key, view in (("1", "Timeline"), ("2", "Frontier"),
+                      ("3", "Provenance"), ("4", "Clusters")):
+        page.keyboard.press(key)
+        page.wait_for_timeout(150)
+        assert page.eval_on_selector("#presets button.active", "e => e.textContent") == view
+    page.keyboard.press("/")
+    assert page.evaluate("() => document.activeElement.id") == "search"
+    # typing must not be swallowed by the view shortcuts
+    page.keyboard.type("1")
+    assert page.eval_on_selector("#search", "e => e.value") == "1"
+    page.keyboard.press("Escape")
+    assert page.evaluate("() => document.activeElement.id") != "search"
