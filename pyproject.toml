@@ -56,6 +56,18 @@ build-backend = "hatchling.build"
 include = ["tools/hypergraph.py", "tools/bundle_viz.py", "tools/viz",
            "README.md", "SPEC.md", "LICENSE", "pyproject.toml",
            "skills", "templates", "backend"]
+# `.claude/skills/hypergraph-*` are committed symlinks into `skills/` — the dogfooding
+# install. Hatchling walks with `followlinks=True` and skips any directory whose
+# (st_dev, st_ino) it has already seen, so it materialized the skills under `.claude/`
+# and then dropped the real `skills/` tree as a duplicate: an sdist with no `skills/`
+# at all, whose wheel build then fails on the force-include of it.
+#
+# `exclude` alone does NOT fix that. It filters files out of the *output*, but the
+# walker still descends and still marks the inodes — so both copies disappear. The
+# directory has to be pruned before descent, which is what `skip-excluded-dirs` does.
+# Keep both lines together; either one alone produces a broken release.
+skip-excluded-dirs = true
+exclude = ["/.claude", "/research"]
 
 [tool.uv]
 package = false

@@ -83,3 +83,44 @@ def test_spec_header_matches_pyproject():
     assert found, f"SPEC.md's first line carries no version: {header!r}"
     assert found.group(1) == declared, (
         f"SPEC.md says v{found.group(1)}, pyproject says {declared}")
+
+
+def test_sdist_actually_contains_the_skills_tree(tmp_path):
+    """Build the sdist and look inside it. The static assertions above cannot see this.
+
+    `.claude/skills/hypergraph-*` are committed symlinks into `skills/`, and hatchling
+    walks with `followlinks=True` while skipping any directory whose `(st_dev, st_ino)`
+    it has already seen. So it materialized the skills under `.claude/` and then dropped
+    the real `skills/` as a duplicate — an sdist with no `skills/` at all, whose wheel
+    build fails on the force-include of it. Every declaration in pyproject was correct;
+    only the built artifact was wrong, which is why this test builds one.
+
+    `exclude` alone does not fix it: it filters the output, not the walk. The fix is
+    `skip-excluded-dirs = true`, and this test is what keeps it there.
+    """
+    import shutil
+    import subprocess
+    import tarfile
+
+    if shutil.which("uv") is None:
+        import pytest
+        pytest.skip("uv is not on PATH")
+
+    proc = subprocess.run(["uv", "build", "--sdist", "--out-dir", str(tmp_path)],
+                          cwd=ROOT, capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 0, f"sdist build failed:\n{proc.stderr}"
+
+    sdists = list(tmp_path.glob("*.tar.gz"))
+    assert len(sdists) == 1, f"expected one sdist, got {sdists}"
+    with tarfile.open(sdists[0]) as tar:
+        names = ["/".join(n.split("/")[1:]) for n in tar.getnames()]
+
+    for src in _pyproject()["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]:
+        assert any(n == src or n.startswith(src.rstrip("/") + "/") for n in names), (
+            f"the wheel force-includes {src!r}, but the sdist does not carry it — "
+            "building a wheel from this sdist would fail")
+
+    for never in NEVER_SHIP:
+        assert not any(n.split("/")[0] == never for n in names), f"sdist ships {never}/"
+    assert not any(n.split("/")[0] == ".claude" for n in names), (
+        "sdist ships the .claude symlink tree, which shadows skills/ during the walk")
