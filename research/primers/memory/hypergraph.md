@@ -15,12 +15,13 @@ point: the record grows forever, but the cost of orienting stays flat, because
 you orient on the state graph and follow provenance slugs into history only when
 you need that history.
 
-### Setting up
+### Already set up
 
-Once, at the start: initialize the two graphs with the `local` backend, one root
-each, plus a small state skeleton — one state node per component of the work you
-expect (say 3–6), each `Status: open` with a one-line intent. `.hypergraph/`
-holds the config and the node files; commit them. They travel with the repo.
+Both graphs exist and are empty: `.hypergraph/` holds the config and one root per
+graph, on the `local` backend. Commit that directory — the node files are the
+memory and they travel with the repo. Build the state skeleton as you go: a state
+node per component of the work (say 3–6), each `Status: open` with a one-line
+intent, written in a reconcile pass.
 
 ### The unit of record: a record node
 

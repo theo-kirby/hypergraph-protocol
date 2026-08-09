@@ -35,6 +35,11 @@ returned ids back into the node files. The tool itself never touches the network
 """
 from __future__ import annotations
 
+# Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
+# duplicated rather than read from the installed metadata because this file also
+# runs directly as a `uv run` script, where no distribution metadata exists.
+__version__ = "0.0.3"
+
 import argparse
 import hashlib
 import json
@@ -193,7 +198,18 @@ def split_sections(content: str) -> tuple[str, dict[str, str]]:
     return "\n".join(pre), {k: "\n".join(v).strip() for k, v in sections.items()}
 
 
-def find_root(graph: Graph, configured: dict | None, report: Report, label: str) -> Node | None:
+def find_root(graph: Graph, configured: dict | None, report: Report, label: str,
+              *, config_given: bool = False) -> Node | None:
+    """The graph's root: configured if declared, otherwise inferred if unambiguous.
+
+    Inference is legitimate — a freshly initialised graph has exactly one
+    parentless node — but it must not be *silent* when a config was supplied and
+    simply does not name the root. A stub config that declares neither root read
+    as a clean pass, which is how two arm-C runs concluded their memory system was
+    healthy while the checker was quietly guessing. It is a warning, not a
+    violation: the guess may well be right, and a correct graph should not fail
+    a check over how its roots were located.
+    """
     if configured:
         node = graph.by_slug.get(configured.get("slug") or "") or graph.nodes.get(
             configured.get("node_id") or ""
@@ -205,6 +221,11 @@ def find_root(graph: Graph, configured: dict | None, report: Report, label: str)
         return None
     roots = graph.roots()
     if len(roots) == 1:
+        if config_given:
+            report.add("warning", "I5", roots[0].ref,
+                       f"config declares no `{label}_root:` — inferred "
+                       f"`{roots[0].slug}` as the only parentless node. Declare it "
+                       "so a second root cannot silently change the answer.")
         return roots[0]
     report.add("violation", "I5", "-",
                f"cannot identify {label} root: {len(roots)} parentless nodes in export "
@@ -455,11 +476,44 @@ def check_hwm(record: Graph, state: Graph, record_root: Node | None,
 # ------------------------------------------------------------------------- check
 
 def load_config(path: Path | None) -> dict:
+    """Read `.hypergraph/config.yml`, failing with an instruction rather than a stack.
+
+    An agent on a fresh box ran `check --config .hypergraph/config.yml` before the
+    config existed and got a raw `FileNotFoundError` traceback out of `read_text`.
+    Nothing in it named the missing file as the problem, so the agent inferred the
+    *contents* were wrong and wrote a stub — `backend: local`, no `record_root`,
+    no `state_root`. `check` then reported 0 violations, which looked like a fix
+    and was not: it had silently fallen back to guessing the roots. Two of three
+    arm-C runs did exactly this.
+
+    So: a missing or unparseable config says what is missing and what to do, and
+    `find_root` below refuses to guess quietly.
+    """
     if path is None:
         return {}
     import yaml  # deferred: PEP 723 dep, only needed when --config is passed
 
-    return yaml.safe_load(Path(path).read_text()) or {}
+    path = Path(path)
+    if not path.exists():
+        raise SystemExit(
+            f"check: no config at {path}\n"
+            "  A config declares `record_root:` and `state_root:` so the checker\n"
+            "  knows which node anchors each graph. Either create it (see\n"
+            "  templates/config.yml) or omit --config to let the checker infer\n"
+            "  the roots — it can only do that when each graph has exactly one\n"
+            "  parentless node.")
+    try:
+        loaded = yaml.safe_load(path.read_text())
+    except OSError as exc:
+        raise SystemExit(f"check: cannot read {path}: {exc}") from None
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"check: {path} is not valid YAML: {exc}") from None
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise SystemExit(
+            f"check: {path} must be a YAML mapping, got {type(loaded).__name__}")
+    return loaded
 
 
 def resolve_epoch_cutoff(config: dict, record: Graph, report: Report) -> datetime | None:
@@ -484,13 +538,18 @@ def resolve_epoch_cutoff(config: dict, record: Graph, report: Report) -> datetim
     return node.created
 
 
-def run_check(record_path: Path, state_path: Path, config: dict | None = None) -> Report:
+def run_check(record_path: Path, state_path: Path, config: dict | None = None,
+              *, config_given: bool | None = None) -> Report:
+    if config_given is None:
+        config_given = bool(config)
     config = config or {}
     report = Report()
     record = load_graph(record_path)
     state = load_graph(state_path)
-    record_root = find_root(record, config.get("record_root"), report, "record")
-    state_root = find_root(state, config.get("state_root"), report, "state")
+    record_root = find_root(record, config.get("record_root"), report, "record",
+                            config_given=config_given)
+    state_root = find_root(state, config.get("state_root"), report, "state",
+                           config_given=config_given)
     epoch_cutoff = resolve_epoch_cutoff(config, record, report)
     check_impacts(record, state, record_root, report, epoch_cutoff)
     check_state_nodes(record, state, state_root, report)
@@ -500,7 +559,8 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None) -
 
 def cmd_check(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    report = run_check(args.record, args.state, config)
+    report = run_check(args.record, args.state, config,
+                       config_given=args.config is not None)
     violations, warnings, infos = report.violations(), report.warnings(), report.infos()
     for f in violations:
         print(f"VIOLATION {f}")
@@ -2980,6 +3040,8 @@ renderPanel();
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hypergraph.py", description=__doc__)
+    parser.add_argument("--version", action="version",
+                        version=f"hypergraph-protocol {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_check = sub.add_parser("check", help="validate protocol invariants over graph exports")

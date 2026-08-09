@@ -32,10 +32,11 @@ print = functools.partial(print, flush=True)  # noqa: A001
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from boxlab import analyze, experiment, provision, report, runner, spend  # noqa: E402
+from boxlab import (analyze, experiment, preflight, report, runner,  # noqa: E402
+                    spend)
 from boxlab.arms import ARM_ORDER, compose_primer, get_arm  # noqa: E402
 from boxlab.box_ctl import BoxController  # noqa: E402
-from boxlab.config import LabConfig  # noqa: E402
+from boxlab.config import EXPERIMENT_SLUG, LabConfig  # noqa: E402
 from boxlab.harness import HARNESSES, get_harness  # noqa: E402
 
 # The smoke mission writes one file and stops. No publishing, no network work —
@@ -145,12 +146,18 @@ def cmd_smoke(args) -> int:
         print("      WARNING: machine never answered; continuing anyway")
 
     print(f"[3/6] provisioning for arm {arm.name} …")
-    result = provision.apply(box_id, config, arm, harness, box=ctl,
-                             force=args.force)
+    result, checks = preflight.provision_and_check(
+        box_id, config, arm.name, harness, seed=args.seed, box=ctl,
+        force=args.force)
     if not result.ok:
         print("      FAILED:\n" + result.log[-3000:])
         return _teardown(ctl, box_id, args, code=1)
-    print(f"      ok ({result.log.strip().splitlines()[-1][:60] if result.log else ''})")
+    print(checks.render())
+    if not checks.ok:
+        print("      preflight FAILED on the live box — the guardrails are not "
+              "holding, and a nine-box launch would repeat the last run's "
+              "mistakes.")
+        return _teardown(ctl, box_id, args, code=1)
 
     print("[4/6] launching mission 1 (write a file) …")
     ok, note = runner.launch(box_id, "smoke1", SMOKE_MISSION_1, arm, harness,
@@ -210,6 +217,35 @@ def _teardown(ctl: BoxController, box_id: str, args, *, code: int) -> int:
     return code
 
 
+def cmd_preflight(args) -> int:
+    """Everything checkable before a box exists — and it gates `run`.
+
+    Nine boxes, three hours each, is a couple of hours of wall clock and a
+    non-trivial API bill. The last nine-run launch produced a completed
+    experiment that could not answer its question, for reasons every one of which
+    was visible from a laptop beforehand: a shared Flywheel account, repo names
+    that would collide, an arm whose CLI never installed.
+    """
+    harness = get_harness(args.harness)
+    config = LabConfig.load()
+    arms = list(args.arms)
+    seeds = list(range(1, args.seeds + 1))
+    result = preflight.run_preflight(
+        config, arms=arms, seeds=seeds, harness=harness,
+        experiment=args.experiment, create_repos=not args.no_create_repos)
+    print(result.render())
+    if args.out:
+        Path(args.out).write_text(json.dumps(result.to_dict(), indent=2),
+                                  encoding="utf-8")
+        print(f"\nwrote {args.out}")
+    if result.ok:
+        print("\npreflight PASS — safe to launch.")
+        return 0
+    print("\npreflight FAIL — launching now would spend money on a run that "
+          "cannot be interpreted. Fix the failures above.")
+    return 1
+
+
 def cmd_run(args) -> int:
     """The measured experiment: every arm, every seed, concurrently."""
     harness = get_harness(args.harness)
@@ -238,7 +274,8 @@ def cmd_run(args) -> int:
     results = experiment.run_experiment(
         config, arms=arms, seeds=seeds, harness=harness,
         duration_s=hours * 3600, coldstart_frac=args.coldstart_frac,
-        outdir=outdir, budget_usd=args.budget)
+        outdir=outdir, budget_usd=args.budget, experiment=args.experiment,
+        skip_preflight=args.skip_preflight)
 
     print("\n== results ==")
     for rid in sorted(results):
@@ -345,11 +382,26 @@ def main(argv=None) -> int:
     pp.add_argument("-o", "--out")
     pp.set_defaults(func=cmd_primer)
 
+    pf = sub.add_parser("preflight",
+                        help="assert a launch can produce a valid measurement")
+    pf.add_argument("--arms", nargs="+", choices=ARM_ORDER, default=list(ARM_ORDER))
+    pf.add_argument("--seeds", type=int, default=3, help="seeds per arm")
+    pf.add_argument("--harness", choices=sorted(HARNESSES), default=None)
+    pf.add_argument("--experiment", default=EXPERIMENT_SLUG)
+    pf.add_argument("--no-create-repos", action="store_true",
+                    help="check names without reserving them on GitHub")
+    pf.add_argument("-o", "--out", help="write the report as JSON")
+    pf.set_defaults(func=cmd_preflight)
+
     ps = sub.add_parser("smoke", help="live end-to-end proof on one box")
     ps.add_argument("--arm", choices=ARM_ORDER, default="hypergraph")
     ps.add_argument("--harness", choices=sorted(HARNESSES), default=None)
     ps.add_argument("--box", help="reuse an existing box id")
+    ps.add_argument("--seed", type=int, default=None,
+                    help="run as this seed (default: a dedicated 'smoke' repo)")
     ps.add_argument("--ttl", type=int, default=3600)
+    ps.add_argument("--minutes", type=float, default=None,
+                    help="per-mission budget in minutes (overrides --mission-timeout)")
     ps.add_argument("--mission-timeout", type=float, default=420.0)
     ps.add_argument("--keep-box", action="store_true")
     ps.add_argument("--force", action="store_true",
@@ -366,6 +418,9 @@ def main(argv=None) -> int:
     pr.add_argument("--budget", type=float, default=40.0,
                     help="USD launch gate; running agents always finish")
     pr.add_argument("--outdir", default="research/runs")
+    pr.add_argument("--experiment", default=EXPERIMENT_SLUG)
+    pr.add_argument("--skip-preflight", action="store_true",
+                    help="launch without the pre-launch gate (you should not)")
     pr.add_argument("--yes", action="store_true")
     pr.set_defaults(func=cmd_run)
 
@@ -374,6 +429,8 @@ def main(argv=None) -> int:
     pa.set_defaults(func=cmd_analyze)
 
     args = p.parse_args(argv)
+    if getattr(args, "minutes", None):
+        args.mission_timeout = args.minutes * 60.0
     return args.func(args)
 
 

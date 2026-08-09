@@ -129,12 +129,23 @@ def test_flywheel_arm_gets_the_mcp_config(config):
     assert "fw-key-CCC" in cc_script
 
 
-def test_hypergraph_arm_installs_the_published_package(config):
-    """The arm must test the real adoption route (PyPI), not a dev checkout."""
+def test_hypergraph_arm_installs_the_published_package_at_a_pinned_version(config):
+    """The arm must test the real adoption route (PyPI), not a dev checkout.
+
+    Pinned, and asserted on the box: `uv tool install` reuses a cached tool, so
+    an unpinned install can silently leave a box running last month's version
+    while the write-up names this one.
+    """
+    import re
+    declared = re.search(r'^version = "([^"]+)"',
+                         (ROOT / "pyproject.toml").read_text(), re.M).group(1)
+    assert arms_mod.HYPERGRAPH_VERSION == declared
     for hname in HARNESS_NAMES:
         script = provision.build_script(
             config, arms_mod.get_arm("hypergraph"), get_harness(hname))
-        assert "uv tool install hypergraph-protocol" in script
+        assert f"uv tool install --force 'hypergraph-protocol=={declared}'" in script
+        assert "hypergraph --version" in script
+        assert "FATAL: expected hypergraph-protocol" in script
         assert "FLYWHEEL_API_KEY" not in script
         # `.claude/skills` is a Claude Code convention pi does not read, so the
         # skills bundle must be installed for one harness and omitted for the
@@ -589,3 +600,160 @@ def test_mcp_reads_are_orientation_but_writes_are_not():
     assert is_orientation_tool("mcp__flywheel__flywheel_list_nodes", [])
     assert not is_orientation_tool("mcp__flywheel__flywheel_commit_new_node", [])
     assert not is_orientation_tool("write", [])
+
+
+# ---- isolation: the arms must not be able to reach each other -----------------
+#
+# On the nine-run benchmark they could, and did. Three runs picked the same repo
+# name (`word2vec-skipgram-text8`); two force-pushed over it; one answered a
+# rejected push with `git fetch && git reset --hard FETCH_HEAD`, replacing its
+# tree with another arm's repo — graph, STATE.md and all — and then read it.
+
+def test_the_harness_assigns_the_repo_name_and_it_is_unique_per_run():
+    from boxlab.config import repo_name_for
+    names = [repo_name_for(arm, seed)
+             for arm in ARM_NAMES for seed in (1, 2, 3)]
+    assert len(set(names)) == len(names), names
+    assert repo_name_for("hypergraph", 2) == "boxlab-w2v-hypergraph-s2"
+
+
+def test_publish_helper_refuses_every_argument(config):
+    """`publish-repo <name>` is how three runs picked the same repository."""
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"), seed=1)
+    assert "publish-repo: takes no arguments." in script
+    assert 'if [ "$#" -gt 0 ]; then' in script
+    # The name comes from the conf the harness wrote, never from argv.
+    assert "BOXLAB_REPO_NAME=boxlab-w2v-git-s1" in script
+    assert "BOXLAB_RUN_ID=git-s1" in script
+
+
+def test_publish_helper_never_force_pushes(config):
+    for name in ARM_NAMES:
+        script = provision.build_script(config, arms_mod.get_arm(name),
+                                        get_harness("pi"), seed=2)
+        assert "push --force" not in script
+        assert "--force-with-lease" not in script
+        assert "git push " in script
+
+
+def test_publish_helper_refuses_a_repo_another_run_established(config):
+    """The run-id marker: a repo that is not this run's is never overwritten."""
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"), seed=3)
+    assert ".boxlab-run" in script
+    assert "REFUSING to push" in script
+
+
+def test_each_arm_b_seed_gets_its_own_flywheel_key(config):
+    """Three seeds on one account is three seeds reading each other's nodes."""
+    config.values["FLYWHEEL_API_KEY_FLYWHEEL_S1"] = "fw-per-run-ONE"
+    config.values["FLYWHEEL_API_KEY_FLYWHEEL_S2"] = "fw-per-run-TWO"
+    arm = arms_mod.get_arm("flywheel")
+    s1 = provision.build_script(config, arm, get_harness("pi"), seed=1)
+    s2 = provision.build_script(config, arm, get_harness("pi"), seed=2)
+    assert "fw-per-run-ONE" in s1 and "fw-per-run-TWO" not in s1
+    assert "fw-per-run-TWO" in s2 and "fw-per-run-ONE" not in s2
+    # …and the shared account-wide key reaches neither.
+    assert "fw-key-CCC" not in s1 and "fw-key-CCC" not in s2
+
+
+def test_a_seed_with_no_key_of_its_own_falls_back_only_when_asked(config):
+    from boxlab.config import LabConfig
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key"})
+    assert cfg.flywheel_key_for("flywheel", 1) is None
+    assert cfg.flywheel_key_for("flywheel", 1,
+                                allow_shared=True) == "shared-account-key"
+
+
+def test_isolation_problems_name_both_failure_modes():
+    from boxlab.config import LabConfig
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY_FLYWHEEL_S1": "same-key-xxxxxxxx",
+                            "FLYWHEEL_API_KEY_FLYWHEEL_S2": "same-key-xxxxxxxx"})
+    problems = cfg.flywheel_isolation_problems("flywheel", [1, 2, 3])
+    assert any("seed(s) 3" in p for p in problems), problems
+    assert any("share one Flywheel key" in p for p in problems), problems
+    # All three distinct and present: nothing to report.
+    ok = LabConfig(values={f"FLYWHEEL_API_KEY_FLYWHEEL_S{s}": f"key-{s}-xxxxxxxx"
+                           for s in (1, 2, 3)})
+    assert ok.flywheel_isolation_problems("flywheel", [1, 2, 3]) == []
+
+
+# ---- provisioning correctness -------------------------------------------------
+
+def test_flywheel_install_passes_a_skill_flag_and_fails_loudly(config):
+    """`--mode mcp --yes` exited non-zero on all three arm-B boxes.
+
+    "Non-interactive setup requires one of --install-skill or --skip-skill" —
+    so arm B ran with the HTTP MCP, no CLI, and no contract doc, and spent its
+    opening turns guessing tool names.
+    """
+    script = provision.build_script(config, arms_mod.get_arm("flywheel"),
+                                    get_harness("pi"), seed=1)
+    assert "--skip-skill" in script
+    assert "FATAL: flywheel CLI not runnable after install" in script
+
+
+def test_the_skill_layer_is_present_or_absent_for_BOTH_protocol_arms_together():
+    """Whatever pi cannot read, neither protocol arm gets — or it is a confound.
+
+    `.claude/skills` is a Claude Code convention. Giving arm B a skill there
+    while arm C goes without would hand B a workflow layer C does not have, in
+    the protocol's favour, and the result would measure that instead.
+    """
+    for hname in HARNESS_NAMES:
+        harness = get_harness(hname)
+        b = "install-skill" in arms_mod.get_arm("flywheel").install_for(harness)
+        c = "skills install" in arms_mod.get_arm("hypergraph").install_for(harness)
+        assert b == c == (hname == "claude_code"), (hname, b, c)
+
+
+def test_arm_c_starts_with_an_initialised_empty_graph(config):
+    """Arm B gets an empty Flywheel account; arm C must get the equivalent.
+
+    hypergraph-s1 was given neither, hand-rolled the whole protocol in its second
+    phase, never returned to training, and scored lowest in its arm. That
+    measured whether the tool ships an init path, not whether the protocol helps.
+    """
+    script = provision.build_script(config, arms_mod.get_arm("hypergraph"),
+                                    get_harness("pi"), seed=2)
+    assert "hypergraph new record --root" in script
+    assert "hypergraph new state --root --reconcile" in script
+    assert "record_root:" in script and "state_root:" in script
+    assert "FATAL: seeded hypergraph graph does not pass check" in script
+    # Roots only. A seeded state skeleton would overshoot — arm B is not handed
+    # one, and building it is part of the work under test.
+    assert script.count("hypergraph new state") == 1
+
+
+def test_only_arm_c_is_seeded(config):
+    for name in ("git", "flywheel"):
+        script = provision.build_script(config, arms_mod.get_arm(name),
+                                        get_harness("pi"), seed=1)
+        assert "hypergraph new record --root" not in script
+
+
+# ---- publishing hygiene -------------------------------------------------------
+
+def test_publish_helper_gates_on_file_size(config):
+    """`boxwheel/word2vec-cpu` went public at 2,221 files / 81 MB."""
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"), seed=1)
+    assert f"BOXLAB_MAX_FILE_MB={provision.MAX_PUBLISH_FILE_MB}" in script
+    assert "EXCLUDED" in script
+    assert provision.MAX_PUBLISH_FILE_MB < 100  # GitHub's hard limit
+
+
+def test_publish_gitignore_excludes_the_bulk_but_keeps_the_source(config):
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"), seed=1)
+    # The whole heredoc, not a fixed-width window — a slice that happened to cut
+    # an entry short would fail for a reason unrelated to what is ignored.
+    start = script.index("cat > .gitignore <<'BOXLAB_GITIGNORE_EOF'")
+    body = script[start:script.index("BOXLAB_GITIGNORE_EOF\nfi", start)]
+    for entry in ("venv/", ".venv/", "build/", "data/", "*.so", "*.o",
+                  "text8*", "*.zip", "*.xz", "runs/", "artifacts/vectors*.txt"):
+        assert entry in body, entry
+    # NOT excluded, deliberately: a hand-written train.c IS the control arm's
+    # work. Dropping `*.c` would delete the evidence it is meant to publish.
+    assert "\n*.c\n" not in body

@@ -32,10 +32,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from . import provision, redact, runner
+from . import preflight, provision, redact, runner
 from .arms import Arm, get_arm
 from .box_ctl import BoxController
-from .config import LabConfig
+from .config import EXPERIMENT_SLUG, LabConfig
 from .harness import Harness, get_harness
 from .spend import SpendGuard
 
@@ -54,6 +54,7 @@ TICK_S = 30.0
 class RunSpec:
     arm: str
     seed: int
+    experiment: str = EXPERIMENT_SLUG
 
     @property
     def run_id(self) -> str:
@@ -70,6 +71,14 @@ class RunResult:
     coldstart_at: float = 0.0
     ended_at: float = 0.0
     harvested: bool = False
+    # Did this run write anything to its memory system *before* the cut? A
+    # cold-start measurement over a run with nothing to recover measures nothing:
+    # two of three arm-B seeds wrote nothing before the cut and were scored on
+    # recovering it anyway. Runs where this is False are excluded from the
+    # cold-start statistic and the exclusion count is reported (METRICS.md §2).
+    had_prior_state: Optional[bool] = None
+    prior_state_detail: str = ""
+    preflight_ok: Optional[bool] = None
     events: List[str] = field(default_factory=list)
 
     def log(self, message: str) -> None:
@@ -85,7 +94,11 @@ class RunResult:
             "ok": self.ok, "note": self.note,
             "phase1_launched_at": self.phase1_launched_at,
             "coldstart_at": self.coldstart_at, "ended_at": self.ended_at,
-            "harvested": self.harvested, "events": self.events,
+            "harvested": self.harvested,
+            "had_prior_state": self.had_prior_state,
+            "prior_state_detail": self.prior_state_detail,
+            "preflight_ok": self.preflight_ok,
+            "events": self.events,
         }
 
 
@@ -206,6 +219,58 @@ def _fetch_artifact(ctl: BoxController, box_id: str, remote: str, dest: Path,
     return True
 
 
+def _had_prior_state(ctl: BoxController, box_id: str, config: LabConfig,
+                     arm: Arm, seed: Optional[int]) -> tuple:
+    """Did this run commit anything to its memory system before the cut?
+
+    Measured at the cut, on the box, per arm — because the cold-start measure is
+    otherwise vacuous. On the nine-run benchmark only one of three arm-B seeds
+    had written to Flywheel before the cut; the other two were scored on
+    recovering state that never existed. The one that *did* have six prior nodes
+    failed to find them and rebuilt the whole tree a second time, which is the
+    finding — but it is only visible once the two vacuous runs stop diluting it.
+
+    Returns `(had_state, detail)`. `had_state` is None when the probe itself
+    failed: unknown is not the same as no, and must not be scored as either.
+    """
+    start, end = "__PRIOR_START__", "__PRIOR_END__"
+    if arm.name == "flywheel":
+        key = config.flywheel_key_for(arm.name, seed, allow_shared=True)
+        total = preflight.flywheel_node_count(config.flywheel_api_url, key) if key else None
+        if total is None:
+            return None, "flywheel account unreadable at the cut"
+        return total > 0, f"{total} node(s) in this run's Flywheel account"
+
+    if arm.name == "hypergraph":
+        # The seeded root does not count as the run's own work — a run that wrote
+        # nothing still has one record node, because provisioning made it.
+        script = (f"echo {start}\n"
+                  "ls ~/research/.hypergraph/graph/record/*.md 2>/dev/null | wc -l\n"
+                  f"echo {end}\n")
+        floor = 1
+        label = "record node(s) beyond the seeded root"
+    else:
+        script = (f"echo {start}\n"
+                  "cd ~/research 2>/dev/null && git rev-list --count HEAD 2>/dev/null "
+                  "|| echo 0\n"
+                  f"echo {end}\n")
+        floor = 0
+        label = "commit(s) in ~/research"
+
+    try:
+        _, out = ctl.ssh_exec(box_id, script, timeout=90.0)
+    except Exception as exc:
+        return None, f"probe failed: {exc}"
+    if start not in out or end not in out:
+        return None, "probe framing lost"
+    body = out.split(start, 1)[1].rsplit(end, 1)[0].strip()
+    digits = "".join(ch for ch in body.splitlines()[0] if ch.isdigit()) if body else ""
+    if not digits:
+        return None, f"probe returned no count ({body[:60]!r})"
+    count = int(digits)
+    return count > floor, f"{max(0, count - floor)} {label}"
+
+
 def _write_redacted(path: Path, text: str,
                     secrets: Optional[Dict[str, str]] = None) -> None:
     """Write a harness/provisioning log with credentials stripped.
@@ -246,11 +311,28 @@ def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
             result.log("WARNING machine never answered ssh; continuing")
 
         result.log(f"provisioning arm={arm.name} harness={harness.name}")
-        pr = provision.apply(box_id, config, arm, harness, box=ctl)
+        pr, pf = preflight.provision_and_check(
+            box_id, config, arm.name, harness, seed=spec.seed,
+            experiment=spec.experiment, box=ctl)
         _write_redacted(run_dir / "provision.log", pr.log, secrets)
+        (run_dir / "preflight.json").write_text(
+            json.dumps(pf.to_dict(), indent=2), encoding="utf-8")
+        result.preflight_ok = pf.ok
         if not pr.ok:
             result.note = "provisioning failed"
             result.log(result.note + " (see provision.log)")
+            return result
+        # The assertion BOXLAB_PROVISION_OK was standing in for. It printed on
+        # all three arm-B boxes whose Flywheel CLI had failed to install, and
+        # those runs went on to produce numbers nobody could interpret. A box
+        # that cannot run its arm costs a box; a box that runs it badly costs the
+        # experiment.
+        for check in pf.checks:
+            result.log(check.render().strip())
+        if not pf.ok:
+            result.note = ("preflight failed: "
+                           + "; ".join(c.name for c in pf.failures))
+            result.log(result.note)
             return result
 
         # The run's clock starts at the first launch, so every arm gets the same
@@ -273,6 +355,13 @@ def _run_one(spec: RunSpec, config: LabConfig, harness: Harness,
             if runner.is_alive(box_id, harness, box=ctl) is False:
                 result.log("phase 1 process exited early")
                 break
+
+        # Measured BEFORE the kill, while the session's work is at its fullest.
+        # This is the gate on whether this run's cold-start number means anything.
+        result.had_prior_state, result.prior_state_detail = _had_prior_state(
+            ctl, box_id, config, arm, spec.seed)
+        result.log(f"prior state at the cut: {result.had_prior_state} "
+                   f"({result.prior_state_detail})")
 
         result.log("cold-start cut: killing the session")
         runner.kill_mission(box_id, harness, box=ctl)
@@ -346,11 +435,26 @@ def run_experiment(config: LabConfig, *, arms: List[str], seeds: List[int],
                    duration_s: float = 3 * 3600,
                    coldstart_frac: float = 0.5,
                    outdir: Path = Path("research/runs"),
-                   budget_usd: Optional[float] = None) -> Dict[str, RunResult]:
+                   budget_usd: Optional[float] = None,
+                   experiment: str = EXPERIMENT_SLUG,
+                   skip_preflight: bool = False) -> Dict[str, RunResult]:
     """Run every (arm, seed) concurrently and return the results by run id."""
     harness = harness or get_harness()
     for arm in arms:
         config.require(arm, harness.auth_env)
+
+    # Before a single box exists, and therefore before a single cent. Every
+    # failure this catches — a shared Flywheel account, a repo name already
+    # taken, a drifted primer — would have produced a completed run that could
+    # not answer the question it was launched to answer.
+    if not skip_preflight:
+        report = preflight.run_preflight(config, arms=arms, seeds=seeds,
+                                         harness=harness, experiment=experiment)
+        print(report.render(), flush=True)
+        if not report.ok:
+            raise RuntimeError(
+                "preflight failed — refusing to launch. Fix these and re-run:\n"
+                + "\n".join(f"  - {c.name}: {c.detail}" for c in report.failures))
 
     guard = None
     if budget_usd is not None:
@@ -361,7 +465,8 @@ def run_experiment(config: LabConfig, *, arms: List[str], seeds: List[int],
         print(guard.report(), flush=True)
 
     outdir.mkdir(parents=True, exist_ok=True)
-    specs = [RunSpec(arm=a, seed=s) for s in seeds for a in arms]
+    specs = [RunSpec(arm=a, seed=s, experiment=experiment)
+             for s in seeds for a in arms]
     ttl = int(duration_s + TTL_SLACK_S)
     results: Dict[str, RunResult] = {}
     threads = []
