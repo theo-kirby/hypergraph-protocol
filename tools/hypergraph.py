@@ -17,9 +17,11 @@ check exits 1 on any I2/I4/I5/I6/I7 violation (see SPEC.md). Warnings (I1 proxie
 and info lines never affect the exit code.
 
 viz emits a self-contained interactive HTML file (no network, no JS dependencies)
-with four views — Timeline (record graph as git-log lanes), Frontier (state graph
-as a status board), Provenance (both graphs with cross-graph links) and Clusters
-(impact sets as distance-field blobs). Open it straight from file://. The page is
+with five views — Timeline (record graph as git-log lanes), Frontier (state graph
+as a status board), Provenance (both graphs with cross-graph links), Clusters
+(impact sets as distance-field blobs) and Everything (the default: all of it at
+once). Open it straight from file://. A `viz: blob:` block in the config presets
+the blob geometry the page's tuning sliders edit. The page is
 authored under tools/viz/ and bundled into VIZ_TEMPLATE by tools/bundle_viz.py;
 `--dev` reads those sources instead. `--format excaligraph` emits a graph spec for
 `excaligraph build` instead, for hand-editable figures. `--live` additionally
@@ -1182,6 +1184,10 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
         "links": links,
         "reconciliation": {"high_water_mark": hwm, "reconciled_at": ts,
                            "high_water_frontier": frontier},
+        # Page settings, not graph data — the `viz:` block of the config, baked in
+        # so a tuning you like travels with the repo rather than with one browser.
+        # `viz --live` deliberately does not swap this on refresh (see live.js).
+        "settings": {"blob": (config.get("viz") or {}).get("blob") or {}},
     }
 
 
@@ -4490,12 +4496,15 @@ VIZ_TEMPLATE = r"""<!doctype html>
   #divider.collapsed svg { transform:scaleX(-1); }
   #side { width:400px; flex:none; display:flex; flex-direction:column; min-width:0;
           background:var(--surface); overflow:hidden; }
-  #controls { flex:none; padding:12px 18px; border-bottom:1px solid var(--grid); }
+  /* Open the tuning panel and this block gets tall. It scrolls itself rather
+     than squeezing the node panel out of existence below it. */
+  #controls { flex:none; max-height:72%; overflow-y:auto; padding:12px 18px;
+              border-bottom:1px solid var(--grid); }
   #search { width:100%; font:inherit; font-size:12.5px; padding:5px 10px;
             border-radius:8px; border:1px solid var(--grid); background:var(--page);
             color:var(--ink); outline:none; }
   #search:focus { border-color:var(--accent); }
-  #presets { display:flex; gap:6px; margin-top:10px; }
+  #presets { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
   #presets button { flex:1; border:1px solid var(--grid); background:transparent;
                     color:var(--ink2); font:inherit; font-size:12px; padding:4px 0;
                     border-radius:999px; cursor:pointer; white-space:nowrap; }
@@ -4519,6 +4528,46 @@ VIZ_TEMPLATE = r"""<!doctype html>
                   color:var(--ink2); cursor:pointer; white-space:nowrap; }
   .checks label.off { opacity:.45; }
   .checks input { accent-color:var(--accent); margin:0; }
+  /* arrange: move the whole drawing without changing what is drawn */
+  #arrange { display:flex; flex-wrap:wrap; align-items:center; gap:6px;
+             margin-top:12px; }
+  #arrange .lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+                  color:var(--muted); width:48px; flex:none; }
+  #arrange button { border:1px solid var(--grid); background:var(--page);
+                    color:var(--ink2); font:inherit; font-size:12px;
+                    padding:3px 9px; border-radius:8px; cursor:pointer;
+                    white-space:nowrap; }
+  #arrange button:hover { color:var(--ink); border-color:var(--muted); }
+  #arrange button[hidden] { display:none; }
+  /* blob tuning: collapsed by default, so it costs nothing until you open it */
+  #tuning { margin-top:12px; }
+  #tuning summary { font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+                    color:var(--muted); cursor:pointer; list-style:none;
+                    padding:2px 0; }
+  #tuning summary::-webkit-details-marker { display:none; }
+  #tuning summary::before { content:"▸ "; }
+  #tuning[open] summary::before { content:"▾ "; }
+  #tuning summary:hover { color:var(--ink2); }
+  #sliders { margin-top:8px; }
+  .tunegroup { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+               color:var(--muted); margin:10px 0 4px; }
+  .tunegroup:first-child { margin-top:0; }
+  .row { margin-bottom:9px; }
+  .row .rowhead { display:flex; justify-content:space-between; align-items:baseline;
+                  font-size:12px; color:var(--ink2); }
+  .row .value { font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size:11px; color:var(--muted); }
+  .row .value.changed { color:var(--accent); }
+  .row .value.changed::after { content:" •"; }
+  .row .hint { color:var(--muted); font-size:11px; margin-top:1px; line-height:1.4; }
+  input[type=range] { width:100%; accent-color:var(--accent); margin:2px 0 0;
+                      display:block; }
+  .tunebtns { display:flex; gap:6px; margin-top:4px; }
+  .tunebtns button { border:1px solid var(--grid); background:var(--page);
+                     color:var(--ink2); font:inherit; font-size:12px;
+                     padding:3px 10px; border-radius:8px; cursor:pointer;
+                     white-space:nowrap; }
+  .tunebtns button:hover { color:var(--ink); border-color:var(--muted); }
   #panel { flex:1; overflow-y:auto; padding:16px 18px;
            font-size:13px; line-height:1.55; }
   #panel h2 { font-size:14.5px; line-height:1.35; margin-bottom:6px; }
@@ -4604,6 +4653,7 @@ VIZ_TEMPLATE = r"""<!doctype html>
         <button data-preset="frontier" title="What is true now, and what is open">Frontier</button>
         <button data-preset="provenance" title="Which record work each state claim rests on">Provenance</button>
         <button data-preset="clusters" title="Which work belongs to the same claim">Clusters</button>
+        <button data-preset="everything" title="Everything on">Everything</button>
       </div>
       <div id="toggles">
         <div class="seg" data-key="graphs">
@@ -4668,6 +4718,22 @@ VIZ_TEMPLATE = r"""<!doctype html>
           <label><input type="checkbox" data-key="blobs">Hyperedge blobs</label>
         </div>
       </div>
+      <div id="arrange">
+        <span class="lbl">Arrange</span>
+        <button id="arSpread" title="More space between everything">Spread</button>
+        <button id="arTighten" title="Pull everything back in">Tighten</button>
+        <button id="arShuffle" title="A different force layout">Shuffle</button>
+        <button id="arRelax" title="Settle from where things are now">Relax</button>
+        <button id="arReset" title="Back to the original layout, recomputed">Reset</button>
+      </div>
+      <details id="tuning">
+        <summary>Blob tuning</summary>
+        <div id="sliders"></div>
+        <div class="tunebtns">
+          <button id="tuneReset">Reset</button>
+          <button id="tuneCopy">Copy as YAML</button>
+        </div>
+      </details>
     </div>
     <div id="panel"></div>
   </aside>
@@ -4719,19 +4785,23 @@ const bySlug = {};
 DATA.record.nodes.forEach(n => bySlug[n.slug] = { graph: "record", node: n });
 DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
 
-// Display state: one unified view driven by toggles. The four views below are
+// Display state: one unified view driven by toggles. The five views below are
 // named after the job they do; any custom mix of toggles is equally valid.
+//
+// These values are the `everything` preset, which is also what the page boots
+// into (boot.js). They are kept in step by hand: `applyPreset` assigns over this
+// object at boot, so a disagreement would never show — it would just be a lie.
 const show = {
-  graphs: "record",   // "record" | "state" | "both"
+  graphs: "both",     // "record" | "state" | "both"
   style:  "circles",  // "cards" | "circles"
   layout: "force",    // "timeline" | "board" | "layered" | "force"
   xaxis:  "rank",     // timeline only: "rank" (even) | "time" (real dates)
   board:  "status",   // board only: "status" columns | "tree" architecture
   window: "all",      // record graph: "all" or the most recent N by chrono
-  links:  "focus",    // cross-graph links: "focus" | "all" | "none"
+  links:  "all",      // cross-graph links: "focus" | "all" | "none"
   tree:   true,       // intra-graph parent edges
-  impact: false,      // include impact links among the cross-graph ones
-  prov:   false,      // include provenance links among them (needs graphs both)
+  impact: true,       // include impact links among the cross-graph ones
+  prov:   true,       // include provenance links among them (needs graphs both)
   blobs:  true,       // hyperedge blobs (needs the record graph visible)
 };
 const recVis = () => show.graphs !== "state";
@@ -4751,9 +4821,16 @@ function segHidden(key) {
 }
 // Pan/zoom + node positions are cached per layout signature; edge/blob toggles
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
+// The shuffle seed *is* part of the signature — shuffling back to a seed you had
+// before restores that whole arrangement, drags and all, out of `positions`.
 const layoutKey = () => [show.layout, show.graphs, show.style, show.xaxis,
-                         show.board, show.window,
+                         show.board, show.window, forceSeed,
                          [...collapsed].sort().join(",")].join(":");
+
+// Bumped once per drag frame and once per Arrange action. Positions are mutated
+// in place, so nothing else in a cache key changes when a node moves; anything
+// keyed on where things are (the blob outlines, the obstacle grid) folds this in.
+let posEpoch = 0;
 
 // Hyperedges collapsed to a single puck. Held here rather than in `show` because
 // it is a set of slugs, and because it belongs to the graph rather than to the
@@ -4776,9 +4853,12 @@ function registerPucks() {
   });
 }
 
-// Four views, each named after its job. Timeline = what happened, in order.
+// Five views, each named after its job. Timeline = what happened, in order.
 // Frontier = what is true now, and what is open. Provenance = which record work
 // each state claim rests on. Clusters = which work belongs to the same claim.
+// Everything = all of it at once, which is the page's default: it shows what is
+// there before it shows you a slice of it. The four focused views are one click
+// away, and each of them is quieter on purpose.
 const PRESETS = {
   timeline:   { graphs:"record", style:"cards",   layout:"timeline",
                 xaxis:"rank", board:"status", links:"focus", window:"all",
@@ -4792,6 +4872,9 @@ const PRESETS = {
   clusters:   { graphs:"record", style:"circles", layout:"force",
                 xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:true, impact:false, prov:false, blobs:true },
+  everything: { graphs:"both",   style:"circles", layout:"force",
+                xaxis:"rank", board:"status", links:"all",   window:"all",
+                tree:true, impact:true,  prov:true,  blobs:true },
 };
 // Pre-rename deep links keep working: #record #state #combo #combination #hyper.
 const VIEW_ALIASES = { record:"timeline", state:"frontier", combo:"provenance",
@@ -4879,15 +4962,24 @@ function hyperedges() {
   return _hyper;
 }
 
-// FNV-1a hash of a slug -> [0,1). Deterministic jitter source so the force
+// FNV-1a hash of a string -> [0,1). Deterministic jitter source so the force
 // layout is identical on every load (no randomness anywhere in this page).
-function hashSlug(s) {
+function fnv1a(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return h / 4294967296;
+}
+
+// Shuffle asks for *a different* arrangement, not a random one, so it walks a
+// counter rather than reaching for a random number. Seed 0 hashes byte-for-byte
+// as the unseeded hash did, so the layout you get on load never moves; 1, 2, 3…
+// each give one other arrangement, reproducibly — an exported SVG still matches.
+let forceSeed = 0;
+function hashSlug(s) {
+  return fnv1a(forceSeed ? s + "#" + forceSeed : s);
 }
 
 // ---------------------------------------------------------------- quadtree
@@ -5345,16 +5437,10 @@ const CLUSTER_TICKS = 260, NODE_TICKS = 240;
 // and it stays as the reference the approximation is tested against.
 const BH_MIN_NODES = 120;
 
-// FNV-1a -> [0,1): the page's only source of jitter, and it is a pure
-// function of the slug — so every load lays out identically.
-function hashSlug(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h / 4294967296;
-}
+// Jitter throughout this file comes from `hashSlug` (core.js): FNV-1a of the
+// slug, so every load lays out identically. It used to be declared here too,
+// with an identical body — two hoisted declarations in one scope, where the
+// later one silently won. The seeded copy in core.js is now the only one.
 
 // Radius a hyperedge needs to hold its members without crowding them.
 function clusterRadius(h) {
@@ -5493,7 +5579,7 @@ function simTick(pos, nodes, springs, homes, alpha) {
 // Springs come from graph *structure* (parent edges + cross-links), never from
 // the edge display toggles, so the layout is stable under checkbox flips.
 // Node iteration order is DATA array order (record then state): deterministic.
-function runSim(pos, homes) {
+function runSim(pos, homes, ticks, alpha0) {
   const nodes = [];
   const springs = [];
   // Parent edges pull only weakly here: in this view the grouping is the
@@ -5509,8 +5595,9 @@ function runSim(pos, homes) {
     if (pos[l.record] && pos[l.state])
       springs.push([l.record, l.state, 0.012, 170]);
   });
-  let alpha = 1.0;
-  for (let t = 0; t < NODE_TICKS; t++) {
+  let alpha = alpha0 || 1.0;
+  const n = ticks || NODE_TICKS;
+  for (let t = 0; t < n; t++) {
     simTick(pos, nodes, springs, homes || {}, alpha);
     alpha *= 0.985;
   }
@@ -5572,6 +5659,48 @@ function layoutForce(pos) {
   return pos;
 }
 
+// ------------------------------------------------------------------- relax
+// Settle the arrangement that is on screen *now*, rather than computing a new
+// one. Every home comes from the current centroid of a hyperedge's members, so
+// a cluster you dragged across the canvas stays where you put it and only the
+// overlaps inside it come apart. Short and cool: this is a nudge, not a redo.
+// The full layout runs 240 ticks from alpha 1 and ends cold, near 0.03. Relax
+// starts at 0.15 and lands in the same place, so on an already-settled drawing
+// it barely moves anything — reheating past that is not settling, it is a redo
+// wearing the wrong label.
+const RELAX_TICKS = 90, RELAX_ALPHA = 0.15;
+
+function relaxLayout(pos) {
+  const H = hyperedges(), centre = {};
+  H.list.forEach(h => {
+    let x = 0, y = 0, n = 0;
+    h.members.forEach(m => { const p = pos[m]; if (p) { x += p.x; y += p.y; n++; } });
+    if (n) centre[h.state] = { x: x / n, y: y / n };
+  });
+  const homes = {};
+  DATA.record.nodes.forEach(n => {
+    if (!pos[n.slug]) return;
+    const owners = (H.memberOf[n.slug] || []).filter(st => centre[st]);
+    if (!owners.length) return;
+    let x = 0, y = 0;
+    owners.forEach(st => { x += centre[st].x; y += centre[st].y; });
+    homes[n.slug] = { x: x / owners.length, y: y / owners.length,
+                      weight: owners.length > 1 ? 0.10 : 0.22 };
+  });
+  DATA.state.nodes.forEach(n => {
+    if (pos[n.slug] && centre[n.slug])
+      homes[n.slug] = { x: centre[n.slug].x, y: centre[n.slug].y, weight: 0.18 };
+  });
+  // A node no claim ever cited has no home to go to, and the sim's fallback is a
+  // slow pull toward the origin — over 90 ticks that walks a far-out node a few
+  // hundred px, which is exactly the "it moved my thing" this button avoids. So
+  // anchor it where it already is, loosely enough that overlaps still come apart.
+  for (const slug in pos) if (!homes[slug])
+    homes[slug] = { x: pos[slug].x, y: pos[slug].y, weight: 0.06 };
+  runSim(pos, homes, RELAX_TICKS, RELAX_ALPHA);
+  return pos;
+}
+
 // ------------------------------------------------------------------- blobs
 // Organic outlines around a set of nodes: the geometry behind a hyperedge.
 //
@@ -5598,8 +5727,12 @@ function layoutForce(pos) {
 // same points, every time — which is the rule this page is held to anyway.
 
 // Tuned for this page's scale (nodes are 32px circles or ~160-240px cards).
+// Every field here is live: the Blob tuning sliders (tuning.js) write straight
+// into this object, and each reach below is read at call time, so a slider moves
+// the geometry with no re-plumbing. `fillOpacity` is a percentage.
 const BLOB = { padding: 15, corridor: 10, smoothing: 18, clearance: 11,
-               resolution: 5, tolerance: 1.4, maxPoints: 220 };
+               resolution: 5, tolerance: 1.4, maxPoints: 220, dragCoarsen: 2.5,
+               fillOpacity: 14, strokeWidth: 1.2, labelSize: 10.5 };
 const BLOB_MAX_SAMPLES = 60000;   // per blob; coarsen rather than stall
 // Total grid samples one render may spend across *all* blobs. 12 blobs still get
 // the full 60k each; 59 blobs get 12k each and coarsen instead of taking seven
@@ -5610,7 +5743,7 @@ const BLOB_SAMPLE_BUDGET = 720000;
 // set — see traceContour.
 const BLOB_TILE = 24;
 // Below this zoom the field's detail is invisible anyway, so the cheap hull is
-// the honest choice; it is also what a drag uses, to keep the frame rate.
+// the honest choice. A drag no longer falls back to it — see blobFieldMode.
 const BLOB_FIELD_MIN_ZOOM = 0.3;
 
 // ------------------------------------------------------- fast fallback: hull
@@ -6031,9 +6164,12 @@ function rotateToExtreme(loop) {
 function finishLoop(loop) {
   const anchored = rotateToExtreme(loop);
   const open = anchored.concat([anchored[0]]);
+  // A drag traces on a coarser grid, so it has fewer real points to keep;
+  // holding the full budget there would only preserve the grid's own steps.
+  const maxPoints = blobDragging ? BLOB.maxPoints * 0.6 : BLOB.maxPoints;
   let simplified = douglasPeucker(open, BLOB.tolerance);
   let attempt = BLOB.tolerance;      // coarsen rather than emit hundreds of points
-  while (simplified.length > BLOB.maxPoints && attempt < 512) {
+  while (simplified.length > maxPoints && attempt < 512) {
     attempt *= 1.6;
     simplified = douglasPeucker(open, attempt);
   }
@@ -6063,9 +6199,14 @@ function blobShapes(slugs, pos) {
 function blobOutline(members, avoid, sampleCap) {
   if (!members.length) return [];
   const links = corridorSegments(members, avoid, BLOB.clearance + BLOB.corridor);
+  // A drag keeps the real field — the shape it makes is the whole point — and
+  // pays for the frame rate with a coarser grid instead of with a convex hull.
+  // Sampling is quadratic in the pitch, so 2.5x here is about 1/6 of the work.
+  const pitch = BLOB.resolution * (blobDragging ? BLOB.dragCoarsen : 1);
   // The field is positive everywhere outside this margin, which keeps the
-  // contour off the edge of the grid and so keeps every loop closed.
-  const margin = BLOB.padding + BLOB.corridor + BLOB.smoothing + BLOB.resolution * 3;
+  // contour off the edge of the grid and so keeps every loop closed. It is three
+  // cells of whatever pitch this pass uses, so a coarse pass stays closed too.
+  const margin = BLOB.padding + BLOB.corridor + BLOB.smoothing + pitch * 3;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const { box } of members) {
     minX = Math.min(minX, box.x); minY = Math.min(minY, box.y);
@@ -6085,7 +6226,7 @@ function blobOutline(members, avoid, sampleCap) {
     box.x - reach <= bounds.maxX && box.x + box.width + reach >= bounds.minX &&
     box.y - reach <= bounds.maxY && box.y + box.height + reach >= bounds.minY);
 
-  let resolution = BLOB.resolution;
+  let resolution = pitch;
   const cap = Math.max(4000, Math.min(BLOB_MAX_SAMPLES, sampleCap || BLOB_MAX_SAMPLES));
   const samples = ((bounds.maxX - bounds.minX) / resolution + 1) *
                   ((bounds.maxY - bounds.minY) / resolution + 1);
@@ -6111,9 +6252,13 @@ function blobOutline(members, avoid, sampleCap) {
 // blobOutline filter them is 30,000 box tests per render before any sampling
 // starts. A spatial hash over the node boxes, built once per render, answers
 // "which non-members reach into this blob's span?" directly.
+//
+// `posEpoch` is in the key because a drag mutates `pos` in place: the node count
+// and the layout signature both stay exactly what they were, so without it a
+// node dragged into a cluster would never become an obstacle for that cluster.
 let _avoidGrid = null, _avoidGridKey = "";
 function avoidGrid(pos) {
-  const key = Object.keys(pos).length + ":" + layoutKey();
+  const key = Object.keys(pos).length + ":" + posEpoch + ":" + layoutKey();
   if (_avoidGrid && _avoidGridKey === key) return _avoidGrid;
   const items = [];
   for (const slug in pos) {
@@ -6144,18 +6289,24 @@ function blobAvoidShapes(memberSet, pos) {
   return blobShapes(others, pos);
 }
 
-// True when the distance field is worth computing: the cheap hull is used while
-// dragging and when zoomed too far out for the detail to show.
+// True when the distance field is worth computing. Only the zoom decides: below
+// BLOB_FIELD_MIN_ZOOM the field's detail cannot be seen, so the cheap hull is
+// honest there. A drag stays on the field and coarsens the grid instead —
+// swapping in the hull mid-drag replaced the shape with a much larger one, which
+// read as the blob breaking rather than as a deliberate saving.
 let blobDragging = false;
 function blobFieldMode() {
-  return !blobDragging && tfFor().k >= BLOB_FIELD_MIN_ZOOM;
+  return tfFor().k >= BLOB_FIELD_MIN_ZOOM;
 }
 
 // Cached per hyperedge so a re-render (theme flip, dim pass) does not recompute
-// the field. Keyed by the positions the field was built from.
+// the field. Keyed by the positions the field was built from — *and* by
+// `posEpoch`, because the outline also depends on where the non-members are:
+// dragging one of those through a blob leaves every member position untouched,
+// and a member-only key would then hand back the pre-drag shape.
 const blobCache = new Map();
 function blobGeometry(h, pos) {
-  const key = h.state + "|" + h.members.map(s => {
+  const key = posEpoch + "|" + h.state + "|" + h.members.map(s => {
     const p = pos[s];
     return p ? Math.round(p.x) + "," + Math.round(p.y) : "-";
   }).join(";");
@@ -6204,10 +6355,21 @@ function outlineAnchors(loops, members, pos) {
           { x: cx, y: (top + bottom) / 2 }];
 }
 
+// Anchoring every label reads every outline, and a drag repaints one or two
+// blobs — computing the other twelve fields to place labels that are not moving
+// would cost more than the drag itself. So a drag anchors on whatever geometry
+// each blob last had; pointerup redraws the layer and the labels land exactly.
+function labelLoops(h, pos) {
+  if (!blobFieldMode()) return null;
+  if (!blobDragging) return blobGeometry(h, pos);
+  const hit = blobCache.get(h.state);
+  return hit ? hit.value : null;
+}
+
 function blobLabelPositions(pos) {
   const placed = [], out = {};
   hyperedges().list.forEach(h => {
-    const loops = blobFieldMode() ? blobGeometry(h, pos) : null;
+    const loops = labelLoops(h, pos);
     const anchors = outlineAnchors(loops, h.members, pos);
     const w = h.state.length * 6.3;
     const clear = c => !placed.some(p =>
@@ -6221,6 +6383,223 @@ function blobLabelPositions(pos) {
     out[h.state] = chosen;
   });
   return out;
+}
+
+// Which blobs a node at its current position can bend, whether or not it is a
+// member of them. A non-member is subtracted from the field, so moving one into
+// a cluster changes that cluster's outline — the repaint during a drag has to
+// cover those, not only the blobs the dragged node belongs to.
+function blobsTouching(slug, pos) {
+  const p = pos[slug];
+  if (!p) return [];
+  const d = dimsOf(slug);
+  const reach = BLOB.padding + BLOB.corridor + BLOB.smoothing + BLOB.clearance + 40;
+  const x0 = p.x - d.w / 2 - reach, x1 = p.x + d.w / 2 + reach;
+  const y0 = p.y - d.h / 2 - reach, y1 = p.y + d.h / 2 + reach;
+  const out = [];
+  hyperedges().list.forEach(h => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    h.members.forEach(m => {
+      const q = pos[m];
+      if (!q) return;
+      const dm = dimsOf(m);
+      minX = Math.min(minX, q.x - dm.w / 2); maxX = Math.max(maxX, q.x + dm.w / 2);
+      minY = Math.min(minY, q.y - dm.h / 2); maxY = Math.max(maxY, q.y + dm.h / 2);
+    });
+    if (isFinite(minX) && minX <= x1 && maxX >= x0 && minY <= y1 && maxY >= y0)
+      out.push(h.state);
+  });
+  return out;
+}
+
+// ------------------------------------------------------------------ tuning
+// Live controls for the blob geometry, in the shape excaligraph's playground
+// uses: one row per knob — label, current value, a dot when you have moved it
+// off the default, and a line saying what it does.
+//
+// Every knob is a field of BLOB, and every reach in blob.js reads BLOB at call
+// time, so writing the field *is* the plumbing. Nothing here touches `show`:
+// activePreset() compares every key of that object against each preset, so a
+// key the presets do not carry would darken every chip forever.
+//
+// Precedence: the hard defaults in blob.js, then the `viz.blob` block of
+// .hypergraph/config.yml (baked into the page as DATA.settings.blob), then
+// whatever this browser last saved. Reset drops the saved values and returns to
+// what the config says — which is the point of putting the block in the config:
+// a tuning you like travels with the repo instead of with your laptop.
+
+const TUNE_STORE = "hypergraph.viz.blob";
+
+const SLIDERS = [
+  { key: "padding", group: "Shape", min: 0, max: 60, step: 1,
+    hint: "Stand-off from each node's outline. It also rounds the outer corners." },
+  { key: "corridor", group: "Shape", min: 0, max: 40, step: 1,
+    hint: "Half-width of the band along the spanning tree — what keeps far-apart " +
+          "members one body instead of separate islands." },
+  { key: "smoothing", group: "Shape", min: 0, max: 60, step: 1,
+    hint: "How softly the parts merge. This is the fillet: 0 gives hard seams " +
+          "where two members meet." },
+  { key: "clearance", group: "Shape", min: 0, max: 40, step: 1,
+    hint: "How far the outline stays off a node that is not a member." },
+  { key: "resolution", group: "Tracing", min: 2, max: 20, step: 1,
+    hint: "Grid step for tracing the outline — smaller follows the true shape " +
+          "and costs more." },
+  { key: "tolerance", group: "Tracing", min: 0.2, max: 6, step: 0.1,
+    hint: "How far a point may be dropped from the traced line. Higher is " +
+          "simpler and flatter." },
+  { key: "maxPoints", group: "Tracing", min: 40, max: 400, step: 10,
+    hint: "Cap on points per outline. Past it, tracing coarsens rather than " +
+          "emit hundreds." },
+  { key: "dragCoarsen", group: "Tracing", min: 1, max: 5, step: 0.5,
+    hint: "How much coarser the grid goes while you drag a node. Raise it if a " +
+          "big cluster feels heavy." },
+  { key: "fillOpacity", group: "Style", min: 0, max: 60, step: 1,
+    hint: "Fill strength, in percent. Dark mode adds 4 on top." },
+  { key: "strokeWidth", group: "Style", min: 0, max: 5, step: 0.5,
+    hint: "Outline weight. 0 leaves the fill alone." },
+  { key: "labelSize", group: "Style", min: 7, max: 20, step: 0.5,
+    hint: "Type size of the claim slug drawn on the blob." },
+];
+
+// What Reset returns to: the hard defaults, overlaid by the config block. Filled
+// in by initTuning before anything has had a chance to move.
+const TUNE_BASE = {};
+
+function tuneClamp(spec, value) {
+  const n = Number(value);
+  if (!isFinite(n)) return null;
+  return Math.min(spec.max, Math.max(spec.min, n));
+}
+
+// localStorage is unavailable in some file:// sandboxes, and a page that throws
+// there would be worse than one that simply does not remember.
+function storedTuning() {
+  try {
+    return JSON.parse(localStorage.getItem(TUNE_STORE) || "{}") || {};
+  } catch (err) { return {}; }
+}
+function saveTuning() {
+  const out = {};
+  SLIDERS.forEach(s => { if (BLOB[s.key] !== TUNE_BASE[s.key]) out[s.key] = BLOB[s.key]; });
+  try {
+    if (Object.keys(out).length) localStorage.setItem(TUNE_STORE, JSON.stringify(out));
+    else localStorage.removeItem(TUNE_STORE);
+  } catch (err) { /* no store: the sliders still work for this session */ }
+}
+
+function tuneFormat(spec, value) {
+  return spec.step < 1 ? value.toFixed(1) : String(value);
+}
+
+function buildSliders() {
+  const box = document.getElementById("sliders");
+  if (!box) return;
+  box.textContent = "";
+  let group = null;
+  SLIDERS.forEach(spec => {
+    if (spec.group !== group) {
+      group = spec.group;
+      const head = document.createElement("div");
+      head.className = "tunegroup";
+      head.textContent = group;
+      box.appendChild(head);
+    }
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML =
+      `<div class="rowhead"><span class="name">${spec.key}</span>` +
+      `<span class="value" data-for="${spec.key}"></span></div>` +
+      `<input type="range" min="${spec.min}" max="${spec.max}" step="${spec.step}">` +
+      `<div class="hint">${esc(spec.hint)}</div>`;
+    const input = row.querySelector("input");
+    input.value = BLOB[spec.key];
+    input.addEventListener("input", () => {
+      const v = tuneClamp(spec, input.value);
+      if (v === null) return;
+      BLOB[spec.key] = v;
+      markSlider(spec, v);
+      saveTuning();
+      applyTuning();
+    });
+    box.appendChild(row);
+    markSlider(spec, BLOB[spec.key]);
+  });
+}
+
+function markSlider(spec, value) {
+  const cell = document.querySelector(`#sliders .value[data-for="${spec.key}"]`);
+  if (!cell) return;
+  cell.textContent = tuneFormat(spec, value);
+  cell.classList.toggle("changed", value !== TUNE_BASE[spec.key]);
+}
+
+// Geometry and style both live in BLOB, so one repaint covers either. The cache
+// is keyed on positions, which have not moved, so it has to be dropped by hand.
+function applyTuning() {
+  if (!show.blobs || !recVis()) return;
+  blobCache.clear();
+  redrawBlobs();
+}
+
+function resetTuning() {
+  SLIDERS.forEach(spec => { BLOB[spec.key] = TUNE_BASE[spec.key]; });
+  try { localStorage.removeItem(TUNE_STORE); } catch (err) { /* nothing to drop */ }
+  buildSliders();
+  applyTuning();
+}
+
+// The whole block, not only what moved: a config you paste should say what the
+// page will do, without the reader holding the defaults in their head.
+function tuningYaml() {
+  const lines = ["viz:", "  blob:"];
+  SLIDERS.forEach(spec => lines.push(`    ${spec.key}: ${tuneFormat(spec, BLOB[spec.key])}`));
+  return lines.join("\n") + "\n";
+}
+
+function copyTuning(btn) {
+  const text = tuningYaml();
+  const done = ok => {
+    btn.textContent = ok ? "Copied" : "Copy failed";
+    setTimeout(() => { btn.textContent = "Copy as YAML"; }, 1400);
+  };
+  // A file:// page may have no clipboard API at all; the textarea route is the
+  // old one and still works there.
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => done(true), () => done(fallbackCopy(text)));
+    return;
+  }
+  done(fallbackCopy(text));
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+function initTuning() {
+  const cfg = (DATA.settings && DATA.settings.blob) || {};
+  SLIDERS.forEach(spec => {
+    const fromConfig = tuneClamp(spec, cfg[spec.key]);
+    TUNE_BASE[spec.key] = fromConfig === null ? BLOB[spec.key] : fromConfig;
+    BLOB[spec.key] = TUNE_BASE[spec.key];
+  });
+  const saved = storedTuning();
+  SLIDERS.forEach(spec => {
+    const v = tuneClamp(spec, saved[spec.key]);
+    if (v !== null) BLOB[spec.key] = v;
+  });
+  buildSliders();
+  document.getElementById("tuneReset").addEventListener("click", resetTuning);
+  const copy = document.getElementById("tuneCopy");
+  copy.addEventListener("click", () => copyTuning(copy));
 }
 
 // Which edges exist is decided by the display toggles; how they are drawn is
@@ -6634,9 +7013,11 @@ function drawBlobs(pos) {
     const d = blobPathFor(h, pos);
     if (!d) return;
     const color = T().cat[h.ci % T().cat.length];
+    // One opacity knob, plus the 4-point lift dark mode has always had: the same
+    // fill reads weaker on a dark page than on a light one.
     const path = el("path", { d, fill: color,
-      "fill-opacity": theme === "dark" ? 0.18 : 0.14,
-      stroke: color, "stroke-opacity": 0.45, "stroke-width": 1.2,
+      "fill-opacity": (BLOB.fillOpacity + (theme === "dark" ? 4 : 0)) / 100,
+      stroke: color, "stroke-opacity": 0.45, "stroke-width": BLOB.strokeWidth,
       "data-state": h.state, "pointer-events": "none" });
     const tip = el("title");
     tip.textContent = bySlug[h.state].node.title + " (" + h.state + ")";
@@ -6644,7 +7025,7 @@ function drawBlobs(pos) {
     const lp = lps[h.state];
     const label = el("text", { x: lp.x, y: lp.y, class: "bloblabel",
       "data-slug": h.state, cursor: "pointer", "font-family": MONO,
-      "font-size": 10.5, "text-anchor": "middle", fill: color }, h.state);
+      "font-size": BLOB.labelSize, "text-anchor": "middle", fill: color }, h.state);
     layer.appendChild(path);
     layer.appendChild(label);
     blobEls[h.state] = { path, label };
@@ -6652,11 +7033,16 @@ function drawBlobs(pos) {
   return layer;
 }
 
+// Repaint the blobs one moved node can have changed: the ones it belongs to,
+// and the ones it is now close enough to push away from as a non-member. Two
+// blobs on a busy frame, against fourteen for a full redraw.
 function updateBlobs(slug) {
   const pos = posFor(), H = hyperedges();
-  (H.memberOf[slug] || []).forEach(st => {
+  const touched = new Set(H.memberOf[slug] || []);
+  blobsTouching(slug, pos).forEach(st => touched.add(st));
+  touched.forEach(st => {
     const be = blobEls[st];
-    if (be) be.path.setAttribute("d", blobPathFor(H.index[st], pos));
+    if (be && H.index[st]) be.path.setAttribute("d", blobPathFor(H.index[st], pos));
   });
   const lps = blobLabelPositions(pos);  // placement involves every label
   for (const st in blobEls) {
@@ -7073,6 +7459,9 @@ function legendHTML() {
       <tr><td><b>Clusters</b></td><td>which work belongs to the same claim — each
         claim's record set as a blob, with a corridor holding far-apart members
         together and non-members pushing the outline away.</td></tr>
+      <tr><td><b>Everything</b></td><td>the default: both graphs, blobs, and every
+        cross-link at once. Busy on purpose — it shows what is there before it
+        shows you a slice of it, and the four views above are one key away.</td></tr>
     </table>
     <h3>Marks worth knowing</h3>
     <table class="stats">
@@ -7082,10 +7471,14 @@ function legendHTML() {
       <tr><td>Window</td><td>keeps only the most recent N record nodes, so a long
         history shrinks the drawing instead of scrolling past it</td></tr>
     </table>
-    <p class="hint"><b>Keys</b> — <code>1</code>–<code>4</code> pick a view ·
+    <p class="hint"><b>Keys</b> — <code>1</code>–<code>5</code> pick a view ·
     <code>/</code> search · <code>f</code> fit · <code>Esc</code> deselect.
     Scroll to zoom · drag the background to pan · drag nodes to rearrange ·
     click a node for its full content · drag the divider to resize this panel.
+    <b>Arrange</b> moves the whole drawing — spread, tighten, relax from where
+    things are, shuffle to another seeded arrangement, or reset. <b>Blob tuning</b>
+    edits the outline geometry live and copies it as a <code>viz:</code> block for
+    <code>.hypergraph/config.yml</code>.
     No view shrinks below 0.45 — one that does not fit scrolls instead. The
     layout is deterministic: the same graph always draws the same way. Use the
     export menu for SVG or PDF.</p>`;
@@ -7105,7 +7498,7 @@ function toggleCollapse(state) {
 }
 
 // -------------------------------------------------------------- interaction
-let drag = null;
+let drag = null, blobRaf = 0;
 svg.addEventListener("pointerdown", e => {
   const lbl = e.target.closest ? e.target.closest(".bloblabel") : null;
   const nodeG = e.target.closest ? e.target.closest(".node") : null;
@@ -7147,9 +7540,18 @@ svg.addEventListener("pointermove", e => {
       if (eg.from === drag.slug || eg.to === drag.slug || eg.state === drag.slug)
         crossEls[i].setAttribute("d", crossPath(eg, pos));
     });
-    // The distance field is too costly per frame; drag on the cheap hull and
-    // put the real outline back on pointerup.
-    if (show.blobs && recVis()) { blobDragging = true; updateBlobs(drag.slug); }
+    // Keep the real outline while dragging — a blob that turns into a big hull
+    // the moment you touch it reads as breakage. `blobDragging` now only picks
+    // the coarse grid (BLOB.dragCoarsen), and one repaint per animation frame
+    // means a fast pointer costs frames, not recomputes.
+    if (show.blobs && recVis()) {
+      blobDragging = true;
+      if (!blobRaf) blobRaf = requestAnimationFrame(() => {
+        blobRaf = 0;
+        posEpoch++;          // positions moved in place; invalidate what caches them
+        updateBlobs(drag ? drag.slug : null);
+      });
+    }
   }
 });
 svg.addEventListener("pointerup", e => {
@@ -7162,9 +7564,11 @@ svg.addEventListener("pointerup", e => {
     else deselect();
   }
   const wasDragging = blobDragging;
+  if (blobRaf) { cancelAnimationFrame(blobRaf); blobRaf = 0; }
   drag = null;
   blobDragging = false;
-  if (wasDragging && show.blobs && recVis()) redrawBlobs();
+  // Full quality, once, from the final positions.
+  if (wasDragging && show.blobs && recVis()) { posEpoch++; redrawBlobs(); }
 });
 svg.addEventListener("wheel", e => {
   e.preventDefault();
@@ -7188,9 +7592,9 @@ svg.addEventListener("pointerout", e => {
   const g = e.target.closest ? e.target.closest(".node") : null;
   if (g && !g.contains(e.relatedTarget)) setHovered(null);
 });
-// Keyboard: 1-4 pick a view, / searches, f fits, Esc clears. Nothing fires while
+// Keyboard: 1-5 pick a view, / searches, f fits, Esc clears. Nothing fires while
 // you are typing, and nothing shadows a browser shortcut (no modifiers here).
-const VIEW_KEYS = ["timeline", "frontier", "provenance", "clusters"];
+const VIEW_KEYS = ["timeline", "frontier", "provenance", "clusters", "everything"];
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     if (document.activeElement === searchBox) searchBox.blur();
@@ -7311,6 +7715,11 @@ function syncControls() {
     cb.disabled = off;
     cb.closest("label").classList.toggle("off", off);
   });
+  // Spread, Tighten and Reset mean something in any layout. Shuffle and Relax
+  // are the force sim's own, so outside it they are hidden rather than dimmed.
+  const force = show.layout === "force";
+  document.getElementById("arShuffle").hidden = !force;
+  document.getElementById("arRelax").hidden = !force;
 }
 
 // Lanes is about the record graph and Board about the state graph, so picking
@@ -7383,6 +7792,55 @@ divider.addEventListener("pointerup", () => {
     applySide();
   }
   sideDrag = null;
+});
+
+// ------------------------------------------------------------------ arrange
+// Five ways to move the whole drawing, none of them random. Spread and Tighten
+// scale about the centroid, so the structure is preserved exactly and only the
+// breathing room changes. Relax settles from where things are now, keeping your
+// drags. Shuffle asks the layout for another arrangement, by seed. Reset throws
+// the current arrangement away and recomputes it.
+const ARRANGE_STEP = 1.15;
+
+function scaleLayout(factor) {
+  const pos = posFor(), slugs = Object.keys(pos);
+  if (!slugs.length) return;
+  let cx = 0, cy = 0;
+  slugs.forEach(s => { cx += pos[s].x; cy += pos[s].y; });
+  cx /= slugs.length; cy /= slugs.length;
+  slugs.forEach(s => {
+    pos[s].x = cx + (pos[s].x - cx) * factor;
+    pos[s].y = cy + (pos[s].y - cy) * factor;
+  });
+}
+
+// Every arrangement change moves nodes in place, which no other cache key sees.
+function arranged() {
+  posEpoch++;
+  renderAll();
+}
+
+const ARRANGE = {
+  arSpread:  () => { scaleLayout(ARRANGE_STEP); arranged(); },
+  arTighten: () => { scaleLayout(1 / ARRANGE_STEP); arranged(); },
+  arRelax:   () => { relaxLayout(posFor()); arranged(); },
+  // The seed is part of layoutKey, so each shuffle's arrangement is kept under
+  // its own key, drags and all. Shuffle only walks forward; Reset puts the seed
+  // back to 0, which is what makes any earlier one reachable again — shuffle
+  // twice from there and you get exactly the arrangement you had.
+  arShuffle: () => { forceSeed++; posEpoch++; rerender(); },
+  arReset:   () => {
+    forceSeed = 0;
+    const k = layoutKey();
+    delete positions[k];
+    delete fitDone[k];
+    posEpoch++;
+    rerender();
+  },
+};
+document.getElementById("arrange").addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (btn && ARRANGE[btn.id]) ARRANGE[btn.id]();
 });
 
 document.getElementById("fitBtn").addEventListener("click", fit);
@@ -7495,6 +7953,9 @@ function pulseNode(slug) {
 // Swap in a fresh payload. Everything derived from DATA has to be dropped, and
 // the list is the point: a cache that survives a data swap is a stale drawing
 // that looks live.
+// DATA.settings is deliberately *not* swapped: it carries the config's blob
+// tuning, which belongs to the page rather than to the graph. A refresh that
+// reset it would pull a slider out from under you mid-adjustment.
 function adoptData(fresh) {
   const before = new Set(Object.keys(bySlug));
   DATA.record = fresh.record;
@@ -7549,15 +8010,18 @@ function startLive() {
 }
 
 // -------------------------------------------------------------------- boot
-// Deep links: #timeline | #frontier | #provenance | #clusters selects that view
-// (the pre-rename hashes #record #state #combo #combination #hyper still work,
-// see VIEW_ALIASES); #<slug> jumps to a node.
+// Deep links: #timeline | #frontier | #provenance | #clusters | #everything
+// selects that view (the pre-rename hashes #record #state #combo #combination
+// #hyper still work, see VIEW_ALIASES); #<slug> jumps to a node.
 document.body.dataset.theme = theme;
 applySide();
 registerPucks();   // synthetic entries for collapsed hyperedges
+initTuning();      // BLOB gets its config/stored values before anything is drawn
 const boot = decodeURIComponent(location.hash.slice(1));
 const bootView = VIEW_ALIASES[boot] || boot;
-applyPreset(PRESETS[bootView] ? bootView : "clusters");
+// Default to everything on: show what is in the graph first, then let the four
+// focused views take things away. One click, or one number key, gets there.
+applyPreset(PRESETS[bootView] ? bootView : "everything");
 if (bySlug[boot]) jumpTo(boot);
 renderPanel();
 startLive();   // no-op unless `viz --live` set DATA.live

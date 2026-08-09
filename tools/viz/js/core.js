@@ -41,19 +41,23 @@ const bySlug = {};
 DATA.record.nodes.forEach(n => bySlug[n.slug] = { graph: "record", node: n });
 DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
 
-// Display state: one unified view driven by toggles. The four views below are
+// Display state: one unified view driven by toggles. The five views below are
 // named after the job they do; any custom mix of toggles is equally valid.
+//
+// These values are the `everything` preset, which is also what the page boots
+// into (boot.js). They are kept in step by hand: `applyPreset` assigns over this
+// object at boot, so a disagreement would never show — it would just be a lie.
 const show = {
-  graphs: "record",   // "record" | "state" | "both"
+  graphs: "both",     // "record" | "state" | "both"
   style:  "circles",  // "cards" | "circles"
   layout: "force",    // "timeline" | "board" | "layered" | "force"
   xaxis:  "rank",     // timeline only: "rank" (even) | "time" (real dates)
   board:  "status",   // board only: "status" columns | "tree" architecture
   window: "all",      // record graph: "all" or the most recent N by chrono
-  links:  "focus",    // cross-graph links: "focus" | "all" | "none"
+  links:  "all",      // cross-graph links: "focus" | "all" | "none"
   tree:   true,       // intra-graph parent edges
-  impact: false,      // include impact links among the cross-graph ones
-  prov:   false,      // include provenance links among them (needs graphs both)
+  impact: true,       // include impact links among the cross-graph ones
+  prov:   true,       // include provenance links among them (needs graphs both)
   blobs:  true,       // hyperedge blobs (needs the record graph visible)
 };
 const recVis = () => show.graphs !== "state";
@@ -73,9 +77,16 @@ function segHidden(key) {
 }
 // Pan/zoom + node positions are cached per layout signature; edge/blob toggles
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
+// The shuffle seed *is* part of the signature — shuffling back to a seed you had
+// before restores that whole arrangement, drags and all, out of `positions`.
 const layoutKey = () => [show.layout, show.graphs, show.style, show.xaxis,
-                         show.board, show.window,
+                         show.board, show.window, forceSeed,
                          [...collapsed].sort().join(",")].join(":");
+
+// Bumped once per drag frame and once per Arrange action. Positions are mutated
+// in place, so nothing else in a cache key changes when a node moves; anything
+// keyed on where things are (the blob outlines, the obstacle grid) folds this in.
+let posEpoch = 0;
 
 // Hyperedges collapsed to a single puck. Held here rather than in `show` because
 // it is a set of slugs, and because it belongs to the graph rather than to the
@@ -98,9 +109,12 @@ function registerPucks() {
   });
 }
 
-// Four views, each named after its job. Timeline = what happened, in order.
+// Five views, each named after its job. Timeline = what happened, in order.
 // Frontier = what is true now, and what is open. Provenance = which record work
 // each state claim rests on. Clusters = which work belongs to the same claim.
+// Everything = all of it at once, which is the page's default: it shows what is
+// there before it shows you a slice of it. The four focused views are one click
+// away, and each of them is quieter on purpose.
 const PRESETS = {
   timeline:   { graphs:"record", style:"cards",   layout:"timeline",
                 xaxis:"rank", board:"status", links:"focus", window:"all",
@@ -114,6 +128,9 @@ const PRESETS = {
   clusters:   { graphs:"record", style:"circles", layout:"force",
                 xaxis:"rank", board:"status", links:"focus", window:"all",
                 tree:true, impact:false, prov:false, blobs:true },
+  everything: { graphs:"both",   style:"circles", layout:"force",
+                xaxis:"rank", board:"status", links:"all",   window:"all",
+                tree:true, impact:true,  prov:true,  blobs:true },
 };
 // Pre-rename deep links keep working: #record #state #combo #combination #hyper.
 const VIEW_ALIASES = { record:"timeline", state:"frontier", combo:"provenance",
@@ -201,14 +218,23 @@ function hyperedges() {
   return _hyper;
 }
 
-// FNV-1a hash of a slug -> [0,1). Deterministic jitter source so the force
+// FNV-1a hash of a string -> [0,1). Deterministic jitter source so the force
 // layout is identical on every load (no randomness anywhere in this page).
-function hashSlug(s) {
+function fnv1a(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return h / 4294967296;
+}
+
+// Shuffle asks for *a different* arrangement, not a random one, so it walks a
+// counter rather than reaching for a random number. Seed 0 hashes byte-for-byte
+// as the unseeded hash did, so the layout you get on load never moves; 1, 2, 3…
+// each give one other arrangement, reproducibly — an exported SVG still matches.
+let forceSeed = 0;
+function hashSlug(s) {
+  return fnv1a(forceSeed ? s + "#" + forceSeed : s);
 }
 

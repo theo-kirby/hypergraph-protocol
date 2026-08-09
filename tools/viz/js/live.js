@@ -49,6 +49,9 @@ function pulseNode(slug) {
 // Swap in a fresh payload. Everything derived from DATA has to be dropped, and
 // the list is the point: a cache that survives a data swap is a stale drawing
 // that looks live.
+// DATA.settings is deliberately *not* swapped: it carries the config's blob
+// tuning, which belongs to the page rather than to the graph. A refresh that
+// reset it would pull a slider out from under you mid-adjustment.
 function adoptData(fresh) {
   const before = new Set(Object.keys(bySlug));
   DATA.record = fresh.record;

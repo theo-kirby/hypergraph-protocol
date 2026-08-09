@@ -42,6 +42,7 @@
         <button data-preset="frontier" title="What is true now, and what is open">Frontier</button>
         <button data-preset="provenance" title="Which record work each state claim rests on">Provenance</button>
         <button data-preset="clusters" title="Which work belongs to the same claim">Clusters</button>
+        <button data-preset="everything" title="Everything on">Everything</button>
       </div>
       <div id="toggles">
         <div class="seg" data-key="graphs">
@@ -106,6 +107,22 @@
           <label><input type="checkbox" data-key="blobs">Hyperedge blobs</label>
         </div>
       </div>
+      <div id="arrange">
+        <span class="lbl">Arrange</span>
+        <button id="arSpread" title="More space between everything">Spread</button>
+        <button id="arTighten" title="Pull everything back in">Tighten</button>
+        <button id="arShuffle" title="A different force layout">Shuffle</button>
+        <button id="arRelax" title="Settle from where things are now">Relax</button>
+        <button id="arReset" title="Back to the original layout, recomputed">Reset</button>
+      </div>
+      <details id="tuning">
+        <summary>Blob tuning</summary>
+        <div id="sliders"></div>
+        <div class="tunebtns">
+          <button id="tuneReset">Reset</button>
+          <button id="tuneCopy">Copy as YAML</button>
+        </div>
+      </details>
     </div>
     <div id="panel"></div>
   </aside>

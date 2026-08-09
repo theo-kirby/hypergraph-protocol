@@ -25,6 +25,17 @@ state_md: STATE.md
 # mirror: Flywheel stays a regenerable projection, refreshed after each reconcile.
 graph_dir: .hypergraph/graph
 
+# Optional viz page settings. Only `blob:` is read today — it presets the geometry
+# the page's "Blob tuning" sliders edit, so a tuning you like travels with the repo
+# instead of with one browser. Every key is optional; "Copy as YAML" in the panel
+# writes the whole block for you. Left out here on purpose: this project's page runs
+# on the shipped defaults, and a block pinning them would only go stale.
+#
+# viz:
+#   blob:
+#     padding: 15
+#     smoothing: 18
+
 # Optional one-way mirror (backend/mirror.md). Absent → `push` is a no-op, exit 0.
 # `mirror_account_id` is the account that owns the mirror roots: without it, a run
 # with a key from a different account reports "the graph is missing" instead of

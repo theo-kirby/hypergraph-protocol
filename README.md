@@ -75,8 +75,8 @@ files without recording anything, and a publish job refreshes the mirror on merg
 - **[tools/hypergraph.py](tools/hypergraph.py)** — single-file uv script: `check`
   validates the mechanical invariants over JSON graph exports (CI-ready, nonzero exit
   on violations); `render` generates `STATE.md` (frontier first, architecture tree
-  below); `viz` emits a self-contained interactive HTML visualization — four views
-  (Timeline, Frontier, Provenance, Clusters), each with a layout that fits its data
+  below); `viz` emits a self-contained interactive HTML visualization — five views
+  (Timeline, Frontier, Provenance, Clusters, Everything), each with a layout that fits its data
   (zero JS dependencies, no network; opens straight from `file://`), or an
   excaligraph spec for hand-editable excalidraw figures; `export`/`import`/`new`/
   `update` are the storage layer, `hwm` reports the reconciliation frontier, and
@@ -158,7 +158,7 @@ hypergraph viz    --record .hypergraph/cache/record.json --state .hypergraph/cac
 open .hypergraph/viz.html          # interactive: pan/zoom, click nodes, search; SVG/PDF export
 ```
 
-The page has four views, each named after the question it answers, and each with a
+The page has five views, each named after the question it answers, and each with a
 layout that fits the shape of its data:
 
 - **Timeline** — the record graph as `git log --graph` lanes, time along x. A
@@ -178,16 +178,49 @@ layout that fits the shape of its data:
   a signed distance field (per-member outline, a corridor along a spanning tree,
   smooth merging, and non-members pushing the boundary away) rather than a convex
   hull, which would swallow whatever sat between three far-apart members.
+- **Everything** — the default. Both graphs, circles, blobs, and every cross-graph
+  ribbon at once. It is busy, deliberately: the page shows you what is in the graph
+  before it shows you a slice of it, and the four focused views above are one click
+  or one number key away.
 
 Underneath, a **Display** section mixes the pieces freely: graph visibility,
 node style, layout, cross-link mode and per-species edge toggles. Nothing fits
 below 0.45 zoom — a view that does not fit scrolls instead of shrinking to
 illegibility. The layout is deterministic: no randomness anywhere, so two renders
-of the same graph give identical output. The sidebar is resizable (drag the
-divider) and collapsible (click it); exports live in the header's download menu.
-Deep links: `viz.html#timeline`, `#frontier`, `#provenance`, `#clusters`, or
-`#<any-slug>` to jump to a node. The pre-rename hashes (`#record`, `#state`,
-`#combo`, `#hyper`) still resolve.
+of the same graph give identical output. **Arrange** moves the whole drawing without
+changing what is drawn — spread, tighten, relax from where things are now, shuffle
+to another arrangement (a seed, not a die roll, so it stays reproducible), or reset
+to the original. Drag a node and the blob around it keeps its real traced shape; it
+coarsens the sampling grid rather than falling back to a hull. The sidebar is
+resizable (drag the divider) and collapsible (click it); exports live in the
+header's download menu. Deep links: `viz.html#everything`, `#timeline`,
+`#frontier`, `#provenance`, `#clusters`, or `#<any-slug>` to jump to a node. The
+pre-rename hashes (`#record`, `#state`, `#combo`, `#hyper`) still resolve.
+
+**Blob tuning** in the sidebar edits the outline geometry live — padding, corridor,
+smoothing, clearance, the tracing grid, and the fill/stroke/label style. The panel
+remembers your changes in the browser. To make a tuning travel with the repo, hit
+*Copy as YAML* and paste the block into `.hypergraph/config.yml`:
+
+```yaml
+viz:
+  blob:
+    padding: 15       # stand-off from each node's outline
+    corridor: 10      # half-width of the band along the spanning tree
+    smoothing: 18     # how softly the parts merge (the fillet)
+    clearance: 11     # how far the outline stays off a non-member
+    resolution: 5     # grid step for tracing — smaller is truer and costs more
+    tolerance: 1.4    # how far a point may be dropped from the traced line
+    maxPoints: 220    # cap on points per outline
+    dragCoarsen: 2.5  # how much coarser the grid goes while dragging
+    fillOpacity: 14   # percent; dark mode adds 4
+    strokeWidth: 1.2
+    labelSize: 10.5
+```
+
+Every key is optional and any you leave out keeps its default. The precedence is
+defaults → this block → whatever you last moved in the browser; *Reset* drops the
+browser's copy and returns to the block.
 
 ### Excalidraw figures
 

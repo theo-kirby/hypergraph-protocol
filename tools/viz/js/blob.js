@@ -24,8 +24,12 @@
 // same points, every time — which is the rule this page is held to anyway.
 
 // Tuned for this page's scale (nodes are 32px circles or ~160-240px cards).
+// Every field here is live: the Blob tuning sliders (tuning.js) write straight
+// into this object, and each reach below is read at call time, so a slider moves
+// the geometry with no re-plumbing. `fillOpacity` is a percentage.
 const BLOB = { padding: 15, corridor: 10, smoothing: 18, clearance: 11,
-               resolution: 5, tolerance: 1.4, maxPoints: 220 };
+               resolution: 5, tolerance: 1.4, maxPoints: 220, dragCoarsen: 2.5,
+               fillOpacity: 14, strokeWidth: 1.2, labelSize: 10.5 };
 const BLOB_MAX_SAMPLES = 60000;   // per blob; coarsen rather than stall
 // Total grid samples one render may spend across *all* blobs. 12 blobs still get
 // the full 60k each; 59 blobs get 12k each and coarsen instead of taking seven
@@ -36,7 +40,7 @@ const BLOB_SAMPLE_BUDGET = 720000;
 // set — see traceContour.
 const BLOB_TILE = 24;
 // Below this zoom the field's detail is invisible anyway, so the cheap hull is
-// the honest choice; it is also what a drag uses, to keep the frame rate.
+// the honest choice. A drag no longer falls back to it — see blobFieldMode.
 const BLOB_FIELD_MIN_ZOOM = 0.3;
 
 // ------------------------------------------------------- fast fallback: hull
@@ -457,9 +461,12 @@ function rotateToExtreme(loop) {
 function finishLoop(loop) {
   const anchored = rotateToExtreme(loop);
   const open = anchored.concat([anchored[0]]);
+  // A drag traces on a coarser grid, so it has fewer real points to keep;
+  // holding the full budget there would only preserve the grid's own steps.
+  const maxPoints = blobDragging ? BLOB.maxPoints * 0.6 : BLOB.maxPoints;
   let simplified = douglasPeucker(open, BLOB.tolerance);
   let attempt = BLOB.tolerance;      // coarsen rather than emit hundreds of points
-  while (simplified.length > BLOB.maxPoints && attempt < 512) {
+  while (simplified.length > maxPoints && attempt < 512) {
     attempt *= 1.6;
     simplified = douglasPeucker(open, attempt);
   }
@@ -489,9 +496,14 @@ function blobShapes(slugs, pos) {
 function blobOutline(members, avoid, sampleCap) {
   if (!members.length) return [];
   const links = corridorSegments(members, avoid, BLOB.clearance + BLOB.corridor);
+  // A drag keeps the real field — the shape it makes is the whole point — and
+  // pays for the frame rate with a coarser grid instead of with a convex hull.
+  // Sampling is quadratic in the pitch, so 2.5x here is about 1/6 of the work.
+  const pitch = BLOB.resolution * (blobDragging ? BLOB.dragCoarsen : 1);
   // The field is positive everywhere outside this margin, which keeps the
-  // contour off the edge of the grid and so keeps every loop closed.
-  const margin = BLOB.padding + BLOB.corridor + BLOB.smoothing + BLOB.resolution * 3;
+  // contour off the edge of the grid and so keeps every loop closed. It is three
+  // cells of whatever pitch this pass uses, so a coarse pass stays closed too.
+  const margin = BLOB.padding + BLOB.corridor + BLOB.smoothing + pitch * 3;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const { box } of members) {
     minX = Math.min(minX, box.x); minY = Math.min(minY, box.y);
@@ -511,7 +523,7 @@ function blobOutline(members, avoid, sampleCap) {
     box.x - reach <= bounds.maxX && box.x + box.width + reach >= bounds.minX &&
     box.y - reach <= bounds.maxY && box.y + box.height + reach >= bounds.minY);
 
-  let resolution = BLOB.resolution;
+  let resolution = pitch;
   const cap = Math.max(4000, Math.min(BLOB_MAX_SAMPLES, sampleCap || BLOB_MAX_SAMPLES));
   const samples = ((bounds.maxX - bounds.minX) / resolution + 1) *
                   ((bounds.maxY - bounds.minY) / resolution + 1);
@@ -537,9 +549,13 @@ function blobOutline(members, avoid, sampleCap) {
 // blobOutline filter them is 30,000 box tests per render before any sampling
 // starts. A spatial hash over the node boxes, built once per render, answers
 // "which non-members reach into this blob's span?" directly.
+//
+// `posEpoch` is in the key because a drag mutates `pos` in place: the node count
+// and the layout signature both stay exactly what they were, so without it a
+// node dragged into a cluster would never become an obstacle for that cluster.
 let _avoidGrid = null, _avoidGridKey = "";
 function avoidGrid(pos) {
-  const key = Object.keys(pos).length + ":" + layoutKey();
+  const key = Object.keys(pos).length + ":" + posEpoch + ":" + layoutKey();
   if (_avoidGrid && _avoidGridKey === key) return _avoidGrid;
   const items = [];
   for (const slug in pos) {
@@ -570,18 +586,24 @@ function blobAvoidShapes(memberSet, pos) {
   return blobShapes(others, pos);
 }
 
-// True when the distance field is worth computing: the cheap hull is used while
-// dragging and when zoomed too far out for the detail to show.
+// True when the distance field is worth computing. Only the zoom decides: below
+// BLOB_FIELD_MIN_ZOOM the field's detail cannot be seen, so the cheap hull is
+// honest there. A drag stays on the field and coarsens the grid instead —
+// swapping in the hull mid-drag replaced the shape with a much larger one, which
+// read as the blob breaking rather than as a deliberate saving.
 let blobDragging = false;
 function blobFieldMode() {
-  return !blobDragging && tfFor().k >= BLOB_FIELD_MIN_ZOOM;
+  return tfFor().k >= BLOB_FIELD_MIN_ZOOM;
 }
 
 // Cached per hyperedge so a re-render (theme flip, dim pass) does not recompute
-// the field. Keyed by the positions the field was built from.
+// the field. Keyed by the positions the field was built from — *and* by
+// `posEpoch`, because the outline also depends on where the non-members are:
+// dragging one of those through a blob leaves every member position untouched,
+// and a member-only key would then hand back the pre-drag shape.
 const blobCache = new Map();
 function blobGeometry(h, pos) {
-  const key = h.state + "|" + h.members.map(s => {
+  const key = posEpoch + "|" + h.state + "|" + h.members.map(s => {
     const p = pos[s];
     return p ? Math.round(p.x) + "," + Math.round(p.y) : "-";
   }).join(";");
@@ -630,10 +652,21 @@ function outlineAnchors(loops, members, pos) {
           { x: cx, y: (top + bottom) / 2 }];
 }
 
+// Anchoring every label reads every outline, and a drag repaints one or two
+// blobs — computing the other twelve fields to place labels that are not moving
+// would cost more than the drag itself. So a drag anchors on whatever geometry
+// each blob last had; pointerup redraws the layer and the labels land exactly.
+function labelLoops(h, pos) {
+  if (!blobFieldMode()) return null;
+  if (!blobDragging) return blobGeometry(h, pos);
+  const hit = blobCache.get(h.state);
+  return hit ? hit.value : null;
+}
+
 function blobLabelPositions(pos) {
   const placed = [], out = {};
   hyperedges().list.forEach(h => {
-    const loops = blobFieldMode() ? blobGeometry(h, pos) : null;
+    const loops = labelLoops(h, pos);
     const anchors = outlineAnchors(loops, h.members, pos);
     const w = h.state.length * 6.3;
     const clear = c => !placed.some(p =>
@@ -645,6 +678,33 @@ function blobLabelPositions(pos) {
     }
     placed.push({ x: chosen.x, y: chosen.y, w });
     out[h.state] = chosen;
+  });
+  return out;
+}
+
+// Which blobs a node at its current position can bend, whether or not it is a
+// member of them. A non-member is subtracted from the field, so moving one into
+// a cluster changes that cluster's outline — the repaint during a drag has to
+// cover those, not only the blobs the dragged node belongs to.
+function blobsTouching(slug, pos) {
+  const p = pos[slug];
+  if (!p) return [];
+  const d = dimsOf(slug);
+  const reach = BLOB.padding + BLOB.corridor + BLOB.smoothing + BLOB.clearance + 40;
+  const x0 = p.x - d.w / 2 - reach, x1 = p.x + d.w / 2 + reach;
+  const y0 = p.y - d.h / 2 - reach, y1 = p.y + d.h / 2 + reach;
+  const out = [];
+  hyperedges().list.forEach(h => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    h.members.forEach(m => {
+      const q = pos[m];
+      if (!q) return;
+      const dm = dimsOf(m);
+      minX = Math.min(minX, q.x - dm.w / 2); maxX = Math.max(maxX, q.x + dm.w / 2);
+      minY = Math.min(minY, q.y - dm.h / 2); maxY = Math.max(maxY, q.y + dm.h / 2);
+    });
+    if (isFinite(minX) && minX <= x1 && maxX >= x0 && minY <= y1 && maxY >= y0)
+      out.push(h.state);
   });
   return out;
 }

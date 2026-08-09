@@ -1,5 +1,5 @@
 // -------------------------------------------------------------- interaction
-let drag = null;
+let drag = null, blobRaf = 0;
 svg.addEventListener("pointerdown", e => {
   const lbl = e.target.closest ? e.target.closest(".bloblabel") : null;
   const nodeG = e.target.closest ? e.target.closest(".node") : null;
@@ -41,9 +41,18 @@ svg.addEventListener("pointermove", e => {
       if (eg.from === drag.slug || eg.to === drag.slug || eg.state === drag.slug)
         crossEls[i].setAttribute("d", crossPath(eg, pos));
     });
-    // The distance field is too costly per frame; drag on the cheap hull and
-    // put the real outline back on pointerup.
-    if (show.blobs && recVis()) { blobDragging = true; updateBlobs(drag.slug); }
+    // Keep the real outline while dragging — a blob that turns into a big hull
+    // the moment you touch it reads as breakage. `blobDragging` now only picks
+    // the coarse grid (BLOB.dragCoarsen), and one repaint per animation frame
+    // means a fast pointer costs frames, not recomputes.
+    if (show.blobs && recVis()) {
+      blobDragging = true;
+      if (!blobRaf) blobRaf = requestAnimationFrame(() => {
+        blobRaf = 0;
+        posEpoch++;          // positions moved in place; invalidate what caches them
+        updateBlobs(drag ? drag.slug : null);
+      });
+    }
   }
 });
 svg.addEventListener("pointerup", e => {
@@ -56,9 +65,11 @@ svg.addEventListener("pointerup", e => {
     else deselect();
   }
   const wasDragging = blobDragging;
+  if (blobRaf) { cancelAnimationFrame(blobRaf); blobRaf = 0; }
   drag = null;
   blobDragging = false;
-  if (wasDragging && show.blobs && recVis()) redrawBlobs();
+  // Full quality, once, from the final positions.
+  if (wasDragging && show.blobs && recVis()) { posEpoch++; redrawBlobs(); }
 });
 svg.addEventListener("wheel", e => {
   e.preventDefault();
@@ -82,9 +93,9 @@ svg.addEventListener("pointerout", e => {
   const g = e.target.closest ? e.target.closest(".node") : null;
   if (g && !g.contains(e.relatedTarget)) setHovered(null);
 });
-// Keyboard: 1-4 pick a view, / searches, f fits, Esc clears. Nothing fires while
+// Keyboard: 1-5 pick a view, / searches, f fits, Esc clears. Nothing fires while
 // you are typing, and nothing shadows a browser shortcut (no modifiers here).
-const VIEW_KEYS = ["timeline", "frontier", "provenance", "clusters"];
+const VIEW_KEYS = ["timeline", "frontier", "provenance", "clusters", "everything"];
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     if (document.activeElement === searchBox) searchBox.blur();
@@ -205,6 +216,11 @@ function syncControls() {
     cb.disabled = off;
     cb.closest("label").classList.toggle("off", off);
   });
+  // Spread, Tighten and Reset mean something in any layout. Shuffle and Relax
+  // are the force sim's own, so outside it they are hidden rather than dimmed.
+  const force = show.layout === "force";
+  document.getElementById("arShuffle").hidden = !force;
+  document.getElementById("arRelax").hidden = !force;
 }
 
 // Lanes is about the record graph and Board about the state graph, so picking
@@ -277,6 +293,55 @@ divider.addEventListener("pointerup", () => {
     applySide();
   }
   sideDrag = null;
+});
+
+// ------------------------------------------------------------------ arrange
+// Five ways to move the whole drawing, none of them random. Spread and Tighten
+// scale about the centroid, so the structure is preserved exactly and only the
+// breathing room changes. Relax settles from where things are now, keeping your
+// drags. Shuffle asks the layout for another arrangement, by seed. Reset throws
+// the current arrangement away and recomputes it.
+const ARRANGE_STEP = 1.15;
+
+function scaleLayout(factor) {
+  const pos = posFor(), slugs = Object.keys(pos);
+  if (!slugs.length) return;
+  let cx = 0, cy = 0;
+  slugs.forEach(s => { cx += pos[s].x; cy += pos[s].y; });
+  cx /= slugs.length; cy /= slugs.length;
+  slugs.forEach(s => {
+    pos[s].x = cx + (pos[s].x - cx) * factor;
+    pos[s].y = cy + (pos[s].y - cy) * factor;
+  });
+}
+
+// Every arrangement change moves nodes in place, which no other cache key sees.
+function arranged() {
+  posEpoch++;
+  renderAll();
+}
+
+const ARRANGE = {
+  arSpread:  () => { scaleLayout(ARRANGE_STEP); arranged(); },
+  arTighten: () => { scaleLayout(1 / ARRANGE_STEP); arranged(); },
+  arRelax:   () => { relaxLayout(posFor()); arranged(); },
+  // The seed is part of layoutKey, so each shuffle's arrangement is kept under
+  // its own key, drags and all. Shuffle only walks forward; Reset puts the seed
+  // back to 0, which is what makes any earlier one reachable again — shuffle
+  // twice from there and you get exactly the arrangement you had.
+  arShuffle: () => { forceSeed++; posEpoch++; rerender(); },
+  arReset:   () => {
+    forceSeed = 0;
+    const k = layoutKey();
+    delete positions[k];
+    delete fitDone[k];
+    posEpoch++;
+    rerender();
+  },
+};
+document.getElementById("arrange").addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (btn && ARRANGE[btn.id]) ARRANGE[btn.id]();
 });
 
 document.getElementById("fitBtn").addEventListener("click", fit);

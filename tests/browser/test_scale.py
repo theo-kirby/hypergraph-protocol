@@ -35,12 +35,14 @@ def large_page(browser, large_html):
 
 
 def test_five_hundred_nodes_paint_within_budget(large_page, large_html):
+    """First paint is the Everything view — both graphs, blobs and every ribbon.
+    That is the heaviest thing the page draws, and now the thing it opens with."""
     started = time.time()
     large_page.goto(f"file://{large_html}")
     large_page.wait_for_selector("#nodes g.node", timeout=60_000)
     elapsed = time.time() - started
     m = measure(large_page)
-    assert m["nodes"] == 500 and m["blobs"] == 59
+    assert m["nodes"] == 560 and m["blobs"] == 59   # 500 record + 60 state
     assert large_page.errors == []
     assert elapsed < FIRST_PAINT_BUDGET, (
         f"first paint took {elapsed:.2f}s for 500 nodes and 59 blobs "

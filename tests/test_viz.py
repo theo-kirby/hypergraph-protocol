@@ -209,6 +209,20 @@ def test_payload_carries_timeline_and_board_facts():
     assert st[data["state"]["root"]]["prov_count"] == 0
 
 
+def test_payload_carries_the_viz_settings_block():
+    """`viz: blob:` in the config presets the page's tuning sliders, so a tuning
+    travels with the repo. No config, no settings — but always the key."""
+    record = hg.load_graph(CLEAN / "record.json")
+    state = hg.load_graph(CLEAN / "state.json")
+    assert hg.build_viz_data(record, state)["settings"] == {"blob": {}}
+    assert hg.build_viz_data(record, state, {})["settings"] == {"blob": {}}
+    assert hg.build_viz_data(record, state,
+                             {"other": 1})["settings"] == {"blob": {}}
+    tuned = {"viz": {"blob": {"padding": 24, "smoothing": 30}}}
+    assert hg.build_viz_data(record, state, tuned)["settings"] == \
+        {"blob": {"padding": 24, "smoothing": 30}}
+
+
 def test_render_viz_emits_selfcontained_html():
     html = hg.render_viz(CLEAN / "record.json", CLEAN / "state.json")
     assert html.startswith("<!doctype html>")
@@ -235,6 +249,43 @@ def test_template_preset_toggle_machinery():
                    'id="svgBtn"', 'id="printBtn"'):
         assert marker in tpl
     assert 'id="tabs"' not in tpl  # the tab bar is gone
+
+
+def test_template_boots_into_everything_with_arrange_controls():
+    """The page opens showing the whole graph, and can be rearranged by hand."""
+    tpl = hg.VIZ_TEMPLATE
+    # the fifth chip goes last, so the four focused views keep their order
+    assert tpl.index('data-preset="clusters"') < tpl.index('data-preset="everything"')
+    assert 'applyPreset(PRESETS[bootView] ? bootView : "everything")' in tpl
+    for button in ("arSpread", "arTighten", "arShuffle", "arRelax", "arReset"):
+        assert f'id="{button}"' in tpl, f"{button} missing from the arrange row"
+    # Shuffle varies a seed, never a clock or a random source (see the guard in
+    # test_template_force_view_machinery).
+    assert "forceSeed" in tpl and "relaxLayout" in tpl
+
+
+def test_template_carries_the_blob_tuning_panel():
+    tpl = hg.VIZ_TEMPLATE
+    for marker in ('id="tuning"', 'id="sliders"', 'id="tuneReset"', 'id="tuneCopy"',
+                   "const SLIDERS", "initTuning", 'type="range"'):
+        assert marker in tpl
+    # every slider writes a real BLOB field, or it would move nothing
+    m = re.search(r"const BLOB = \{(.*?)\};", tpl, re.S)
+    assert m, "BLOB defaults not found"
+    for key in ("padding", "corridor", "smoothing", "clearance", "resolution",
+                "tolerance", "maxPoints", "dragCoarsen", "fillOpacity",
+                "strokeWidth", "labelSize"):
+        assert f"{key}:" in m.group(1), f"slider {key} is not a BLOB field"
+
+
+def test_template_keeps_the_field_while_dragging():
+    """A drag coarsens the grid; it must not fall back to the convex hull, which
+    is a much larger shape and reads as the blob breaking."""
+    tpl = hg.VIZ_TEMPLATE
+    assert "return tfFor().k >= BLOB_FIELD_MIN_ZOOM;" in tpl
+    assert "!blobDragging && tfFor().k" not in tpl
+    # position-dependent caches take the epoch, or a drag hands back stale shapes
+    assert tpl.count("posEpoch") >= 5
 
 
 def test_template_keeps_pre_rename_deep_link_aliases():

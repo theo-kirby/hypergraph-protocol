@@ -54,12 +54,15 @@
   #divider.collapsed svg { transform:scaleX(-1); }
   #side { width:400px; flex:none; display:flex; flex-direction:column; min-width:0;
           background:var(--surface); overflow:hidden; }
-  #controls { flex:none; padding:12px 18px; border-bottom:1px solid var(--grid); }
+  /* Open the tuning panel and this block gets tall. It scrolls itself rather
+     than squeezing the node panel out of existence below it. */
+  #controls { flex:none; max-height:72%; overflow-y:auto; padding:12px 18px;
+              border-bottom:1px solid var(--grid); }
   #search { width:100%; font:inherit; font-size:12.5px; padding:5px 10px;
             border-radius:8px; border:1px solid var(--grid); background:var(--page);
             color:var(--ink); outline:none; }
   #search:focus { border-color:var(--accent); }
-  #presets { display:flex; gap:6px; margin-top:10px; }
+  #presets { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
   #presets button { flex:1; border:1px solid var(--grid); background:transparent;
                     color:var(--ink2); font:inherit; font-size:12px; padding:4px 0;
                     border-radius:999px; cursor:pointer; white-space:nowrap; }
@@ -83,6 +86,46 @@
                   color:var(--ink2); cursor:pointer; white-space:nowrap; }
   .checks label.off { opacity:.45; }
   .checks input { accent-color:var(--accent); margin:0; }
+  /* arrange: move the whole drawing without changing what is drawn */
+  #arrange { display:flex; flex-wrap:wrap; align-items:center; gap:6px;
+             margin-top:12px; }
+  #arrange .lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+                  color:var(--muted); width:48px; flex:none; }
+  #arrange button { border:1px solid var(--grid); background:var(--page);
+                    color:var(--ink2); font:inherit; font-size:12px;
+                    padding:3px 9px; border-radius:8px; cursor:pointer;
+                    white-space:nowrap; }
+  #arrange button:hover { color:var(--ink); border-color:var(--muted); }
+  #arrange button[hidden] { display:none; }
+  /* blob tuning: collapsed by default, so it costs nothing until you open it */
+  #tuning { margin-top:12px; }
+  #tuning summary { font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+                    color:var(--muted); cursor:pointer; list-style:none;
+                    padding:2px 0; }
+  #tuning summary::-webkit-details-marker { display:none; }
+  #tuning summary::before { content:"▸ "; }
+  #tuning[open] summary::before { content:"▾ "; }
+  #tuning summary:hover { color:var(--ink2); }
+  #sliders { margin-top:8px; }
+  .tunegroup { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+               color:var(--muted); margin:10px 0 4px; }
+  .tunegroup:first-child { margin-top:0; }
+  .row { margin-bottom:9px; }
+  .row .rowhead { display:flex; justify-content:space-between; align-items:baseline;
+                  font-size:12px; color:var(--ink2); }
+  .row .value { font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size:11px; color:var(--muted); }
+  .row .value.changed { color:var(--accent); }
+  .row .value.changed::after { content:" •"; }
+  .row .hint { color:var(--muted); font-size:11px; margin-top:1px; line-height:1.4; }
+  input[type=range] { width:100%; accent-color:var(--accent); margin:2px 0 0;
+                      display:block; }
+  .tunebtns { display:flex; gap:6px; margin-top:4px; }
+  .tunebtns button { border:1px solid var(--grid); background:var(--page);
+                     color:var(--ink2); font:inherit; font-size:12px;
+                     padding:3px 10px; border-radius:8px; cursor:pointer;
+                     white-space:nowrap; }
+  .tunebtns button:hover { color:var(--ink); border-color:var(--muted); }
   #panel { flex:1; overflow-y:auto; padding:16px 18px;
            font-size:13px; line-height:1.55; }
   #panel h2 { font-size:14.5px; line-height:1.35; margin-bottom:6px; }

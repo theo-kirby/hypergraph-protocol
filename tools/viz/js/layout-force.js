@@ -17,16 +17,10 @@ const CLUSTER_TICKS = 260, NODE_TICKS = 240;
 // and it stays as the reference the approximation is tested against.
 const BH_MIN_NODES = 120;
 
-// FNV-1a -> [0,1): the page's only source of jitter, and it is a pure
-// function of the slug — so every load lays out identically.
-function hashSlug(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h / 4294967296;
-}
+// Jitter throughout this file comes from `hashSlug` (core.js): FNV-1a of the
+// slug, so every load lays out identically. It used to be declared here too,
+// with an identical body — two hoisted declarations in one scope, where the
+// later one silently won. The seeded copy in core.js is now the only one.
 
 // Radius a hyperedge needs to hold its members without crowding them.
 function clusterRadius(h) {
@@ -165,7 +159,7 @@ function simTick(pos, nodes, springs, homes, alpha) {
 // Springs come from graph *structure* (parent edges + cross-links), never from
 // the edge display toggles, so the layout is stable under checkbox flips.
 // Node iteration order is DATA array order (record then state): deterministic.
-function runSim(pos, homes) {
+function runSim(pos, homes, ticks, alpha0) {
   const nodes = [];
   const springs = [];
   // Parent edges pull only weakly here: in this view the grouping is the
@@ -181,8 +175,9 @@ function runSim(pos, homes) {
     if (pos[l.record] && pos[l.state])
       springs.push([l.record, l.state, 0.012, 170]);
   });
-  let alpha = 1.0;
-  for (let t = 0; t < NODE_TICKS; t++) {
+  let alpha = alpha0 || 1.0;
+  const n = ticks || NODE_TICKS;
+  for (let t = 0; t < n; t++) {
     simTick(pos, nodes, springs, homes || {}, alpha);
     alpha *= 0.985;
   }
@@ -241,5 +236,47 @@ function layoutForce(pos) {
   seedClustered(pos, centres, homes);
   if (!recVis()) for (const s in pos) if (bySlug[s].graph === "record") delete pos[s];
   runSim(pos, homes);
+  return pos;
+}
+
+// ------------------------------------------------------------------- relax
+// Settle the arrangement that is on screen *now*, rather than computing a new
+// one. Every home comes from the current centroid of a hyperedge's members, so
+// a cluster you dragged across the canvas stays where you put it and only the
+// overlaps inside it come apart. Short and cool: this is a nudge, not a redo.
+// The full layout runs 240 ticks from alpha 1 and ends cold, near 0.03. Relax
+// starts at 0.15 and lands in the same place, so on an already-settled drawing
+// it barely moves anything — reheating past that is not settling, it is a redo
+// wearing the wrong label.
+const RELAX_TICKS = 90, RELAX_ALPHA = 0.15;
+
+function relaxLayout(pos) {
+  const H = hyperedges(), centre = {};
+  H.list.forEach(h => {
+    let x = 0, y = 0, n = 0;
+    h.members.forEach(m => { const p = pos[m]; if (p) { x += p.x; y += p.y; n++; } });
+    if (n) centre[h.state] = { x: x / n, y: y / n };
+  });
+  const homes = {};
+  DATA.record.nodes.forEach(n => {
+    if (!pos[n.slug]) return;
+    const owners = (H.memberOf[n.slug] || []).filter(st => centre[st]);
+    if (!owners.length) return;
+    let x = 0, y = 0;
+    owners.forEach(st => { x += centre[st].x; y += centre[st].y; });
+    homes[n.slug] = { x: x / owners.length, y: y / owners.length,
+                      weight: owners.length > 1 ? 0.10 : 0.22 };
+  });
+  DATA.state.nodes.forEach(n => {
+    if (pos[n.slug] && centre[n.slug])
+      homes[n.slug] = { x: centre[n.slug].x, y: centre[n.slug].y, weight: 0.18 };
+  });
+  // A node no claim ever cited has no home to go to, and the sim's fallback is a
+  // slow pull toward the origin — over 90 ticks that walks a far-out node a few
+  // hundred px, which is exactly the "it moved my thing" this button avoids. So
+  // anchor it where it already is, loosely enough that overlaps still come apart.
+  for (const slug in pos) if (!homes[slug])
+    homes[slug] = { x: pos[slug].x, y: pos[slug].y, weight: 0.06 };
+  runSim(pos, homes, RELAX_TICKS, RELAX_ALPHA);
   return pos;
 }

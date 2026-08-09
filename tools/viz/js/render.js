@@ -409,9 +409,11 @@ function drawBlobs(pos) {
     const d = blobPathFor(h, pos);
     if (!d) return;
     const color = T().cat[h.ci % T().cat.length];
+    // One opacity knob, plus the 4-point lift dark mode has always had: the same
+    // fill reads weaker on a dark page than on a light one.
     const path = el("path", { d, fill: color,
-      "fill-opacity": theme === "dark" ? 0.18 : 0.14,
-      stroke: color, "stroke-opacity": 0.45, "stroke-width": 1.2,
+      "fill-opacity": (BLOB.fillOpacity + (theme === "dark" ? 4 : 0)) / 100,
+      stroke: color, "stroke-opacity": 0.45, "stroke-width": BLOB.strokeWidth,
       "data-state": h.state, "pointer-events": "none" });
     const tip = el("title");
     tip.textContent = bySlug[h.state].node.title + " (" + h.state + ")";
@@ -419,7 +421,7 @@ function drawBlobs(pos) {
     const lp = lps[h.state];
     const label = el("text", { x: lp.x, y: lp.y, class: "bloblabel",
       "data-slug": h.state, cursor: "pointer", "font-family": MONO,
-      "font-size": 10.5, "text-anchor": "middle", fill: color }, h.state);
+      "font-size": BLOB.labelSize, "text-anchor": "middle", fill: color }, h.state);
     layer.appendChild(path);
     layer.appendChild(label);
     blobEls[h.state] = { path, label };
@@ -427,11 +429,16 @@ function drawBlobs(pos) {
   return layer;
 }
 
+// Repaint the blobs one moved node can have changed: the ones it belongs to,
+// and the ones it is now close enough to push away from as a non-member. Two
+// blobs on a busy frame, against fourteen for a full redraw.
 function updateBlobs(slug) {
   const pos = posFor(), H = hyperedges();
-  (H.memberOf[slug] || []).forEach(st => {
+  const touched = new Set(H.memberOf[slug] || []);
+  blobsTouching(slug, pos).forEach(st => touched.add(st));
+  touched.forEach(st => {
     const be = blobEls[st];
-    if (be) be.path.setAttribute("d", blobPathFor(H.index[st], pos));
+    if (be && H.index[st]) be.path.setAttribute("d", blobPathFor(H.index[st], pos));
   });
   const lps = blobLabelPositions(pos);  // placement involves every label
   for (const st in blobEls) {

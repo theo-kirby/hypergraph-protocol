@@ -12,6 +12,7 @@
     "js/layout-columns.js",
     "js/layout-force.js",
     "js/blob.js",
+    "js/tuning.js",
     "js/render.js",
     "js/panel.js",
     "js/controls.js",

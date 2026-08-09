@@ -143,6 +143,9 @@ function legendHTML() {
       <tr><td><b>Clusters</b></td><td>which work belongs to the same claim — each
         claim's record set as a blob, with a corridor holding far-apart members
         together and non-members pushing the outline away.</td></tr>
+      <tr><td><b>Everything</b></td><td>the default: both graphs, blobs, and every
+        cross-link at once. Busy on purpose — it shows what is there before it
+        shows you a slice of it, and the four views above are one key away.</td></tr>
     </table>
     <h3>Marks worth knowing</h3>
     <table class="stats">
@@ -152,10 +155,14 @@ function legendHTML() {
       <tr><td>Window</td><td>keeps only the most recent N record nodes, so a long
         history shrinks the drawing instead of scrolling past it</td></tr>
     </table>
-    <p class="hint"><b>Keys</b> — <code>1</code>–<code>4</code> pick a view ·
+    <p class="hint"><b>Keys</b> — <code>1</code>–<code>5</code> pick a view ·
     <code>/</code> search · <code>f</code> fit · <code>Esc</code> deselect.
     Scroll to zoom · drag the background to pan · drag nodes to rearrange ·
     click a node for its full content · drag the divider to resize this panel.
+    <b>Arrange</b> moves the whole drawing — spread, tighten, relax from where
+    things are, shuffle to another seeded arrangement, or reset. <b>Blob tuning</b>
+    edits the outline geometry live and copies it as a <code>viz:</code> block for
+    <code>.hypergraph/config.yml</code>.
     No view shrinks below 0.45 — one that does not fit scrolls instead. The
     layout is deterministic: the same graph always draws the same way. Use the
     export menu for SVG or PDF.</p>`;
