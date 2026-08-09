@@ -35,6 +35,8 @@ Status: working
 
 **The I1 citation checker had a silent hole, and it is fixed** [rec: clever-ledge-6588]. Claim units were `bullets or paragraphs` — either, never both — so a `## Current` section containing any bullet had its prose paragraphs excluded from the citation check **entirely**, and most state nodes mix the two. Units were also single lines, so a citation that wrapped onto a continuation read as missing; that produced 27 false warnings on one adopted repo and taught its agent to reflow correct prose. A unit is now a bullet with its continuation lines, or a paragraph, with headings, fenced code blocks and colon lead-ins to a bullet list excluded as structure rather than claims. The fix earned itself immediately: it found 3 uncited claims in cadex and 8 in neural-whoop that both repos' passing `check` had never looked at.
 
+**`check` gains exactly one thing to say about tags, and it is a warning** [rec: clear-moss-4527]. Where `.hypergraph/tags.yml` exists, a tag name on a node that the vocabulary does not declare is reported; where it does not exist, `check` says nothing about tags at all. Never a violation: no invariant reads a tag, so failing a build over one would invent an obligation the spec does not carry. It is also the *only* brake on a taxonomy nothing enforces, now that the record skill teaches tagging — which makes whether this project's own vocabulary stays coherent a thing to watch rather than a thing that is settled [rec: simple-ocean-1716].
+
 ## Negative knowledge
 
 - [scope: parsing flywheel_export_subgraph output | confidence: high | evidence: steep-cell-5173] the export encodes edges as incoming_ids/outgoing_ids, not parent_ids — a parser reading only parent_ids sees every node as a root.
@@ -70,3 +72,4 @@ Status: working
 - vast-rain-4873 — two reproduced checker defects: timestamp-based HWM enumeration and undetected conflict markers
 - placid-ridge-4035 — ancestry enumeration, conflict-marker detection, hwm and check --since; suite to 282
 - long-peak-1620 — sdist packaging defect from the dogfooding symlinks; build-and-inspect test added
+- clear-moss-4527 — the one tag rule check gained: an undeclared name is a warning, only where a vocabulary is declared

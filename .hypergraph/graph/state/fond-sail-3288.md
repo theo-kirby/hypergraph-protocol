@@ -69,6 +69,22 @@ itself. The nested-marker design was tried first and rejected: on cadex the ADR-
 clause is woven into the *middle of numbered item 2*, so no pair of markers separates
 it. **Shipped in 0.0.8**, so the destructive behaviour is no longer live for an adopter who upgrades, and the status returns to `working` [rec: clever-ledge-6588]. The 0.0.8 template is registered in `SHIPPED_BLOCK_DIGESTS`, so a block still untouched is refreshed automatically and only an edited one is reported and left alone.
 
+**The path now has two halves, and the split is the point** [rec: clear-moss-4527].
+`upgrade` refreshes *copies* of shipped files and every effect of it is
+`git checkout`-reversible. **`hypergraph heal`** repairs *graph content* — the
+retroactive-repair capability below — and rewrites node files while spending a
+mirror-write budget that cannot be un-spent. So they are separate commands with
+opposite defaults: `heal` is detect-only until `--apply`, the one inverted default in
+this tooling, and plain detected drift exits **0** rather than 1 for the same reason
+`check`'s version skew is a warning — a capability that landed after your adoption is
+not a broken invariant. `upgrade` closes by listing the heals that apply, computed
+**offline** from each healer's `blocked_by`.
+
+Heals are deliberately **not keyed off `hypergraph_version:`** [rec: clear-moss-4527]. The stamp records which
+release wrote this repo's copies; letting `upgrade` bump it while a graph repair was
+still outstanding would make it assert something it never checked. That would turn "not
+a compatibility floor" from a documented property into a false one.
+
 A second gap, smaller: on a repo adopted before the stamp, `check` emits only the
 "predates the stamp" info, so the case where the **CLI** is the older half cannot be
 reported at all. cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so
@@ -86,3 +102,4 @@ reported at all. cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so
 - long-peak-1620 — the CI-template/CLI skew that showed copied artifacts drift out of step with the CLI
 - open-eagle-4603 — the fix: a block is ours to replace only while its digest is one we shipped
 - vast-valley-5745 — first run on a real adopted repo: the sentinel block's project-specific half is overwritten, and a pre-stamp repo cannot report a CLI-is-older skew
+- clear-moss-4527 — the path splits: `upgrade` for reversible copies, `heal` for graph content, with upgrade pointing at the heals that apply

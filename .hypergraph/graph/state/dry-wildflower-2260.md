@@ -32,6 +32,7 @@ Status: working
 - Open: the rewritten skills **have not yet been run by an agent that read them as skills**. Claude Code loads skills at session start, so both the dogfooding symlinks and the single-path bodies become live on the next cold start [rec: jolly-arbor-9572] [rec: calm-sand-3399].
 - reconcile gained the maintainer-on-main rule in its When-To-Use, frontier guidance in the HWM step (usually one slug, several after a merge, and what to do when `check` names `hwm --suggest`), and a guardrail to start from `sync` rather than a bare `check` after a merge. Its publish step now names all three stand-down cases in one sentence instead of one [rec: placid-ridge-4035].
 - record gained the converse, which is what a contributor needs: recording is safe on any branch, fork or machine, because record nodes are one file each and merge without conflict — and it is the *whole* obligation, because the maintainer reconciles after the merge [rec: placid-ridge-4035].
+- **record now teaches tagging, and the guidance is mostly about restraint** [rec: clear-moss-4527]: read `.hypergraph/tags.yml`, use declared names only, add one with `hypergraph tags add` and never by hand, and in a repo with no `tags.yml` **tag nothing**. The load-bearing sentence is that a tag is a way to *find* nodes and not a way to assert things about them — no invariant reads one, so a claim living only as a tag is invisible to `check` and to reconcile. adopt's step 5 gains what travels and what does not, and its step 6 gains the pointer-tag routing; two of its prose references to "tags" meaning *git* tags were renamed to stop the collision.
 
 ## Negative knowledge
 
@@ -56,3 +57,4 @@ Status: working
 - calm-sand-3399 — the five skills go single-path; acceptance grep returns zero hits
 - vast-rain-4873 — parallel-work investigation: reconcile needs a publish-branch gate and the contributors-record rule
 - placid-ridge-4035 — reconcile gains the maintainer-on-main rule and frontier guidance; record covers contributors
+- clear-moss-4527 — record gains a tagging step built around restraint; adopt gains what travels and the pointer-tag routing

@@ -28,7 +28,9 @@ Status: working
 - The mirror projects the repo, never the archive. `local-adapter.md` separates the two `import` cases explicitly — re-homing a graph you own (no `--fork`; the source stays the push target) from adopting somebody else's (`--fork` mandatory) — because getting it wrong is silent in both directions: the first omits the whole legacy history from every push, the second duplicates the entire graph [rec: tender-moss-3792].
 - Re-parenting an existing mirror node (`nodes:add-parent` / `nodes:remove-parent`): add first, then remove, so the child is never momentarily parentless; all four optimistic-lock revisions are required and the add bumps the child's revision, so re-read between calls. Verified live on two a3go nodes [rec: tender-moss-3792] [rec: northern-willow-0469].
 - `nodes:commit-new` also requires `local_temp_node_id`; omitting it is a server-side 422, so nothing is created. Identity can come back nested under `node: {node_id, slug_name, revision}` [rec: northern-willow-0469].
-- Optional ops stay unimplemented: artifacts (op 9) and tags (op 10), used by nothing [rec: old-dawn-8747].
+- **Op 10 (tags) is implemented; op 9 (artifacts) is not** [rec: clear-moss-4527]. A tag is a `tags:` list of *names* in node frontmatter, with the vocabulary — colours, `one_only`/`track_history`, and whatever id a backend minted — in a committed `.hypergraph/tags.yml` keyed by graph kind, because declaration is per graph root and there are two. **Names are the portable identity**, for the same reason `parents:` holds slugs: every store mints its own tag ids, so an id is as local to a store as a mirror's slug is. `synth_tag` derives a colour pair from `sha256(name)`, which is what keeps `tags.yml` optional — an undeclared name still works, and two machines agree on its colour without coordinating.
+- **A tag is annotation, and no invariant reads one.** INTERFACE says so as a contract note rather than leaving it to be discovered: a claim that exists only as a tag is invisible to the protocol, so the home for a claim is a node body. `check` is tag-blind with exactly one exception — where `tags.yml` exists, an undeclared name is a *warning*, never a violation [rec: clear-moss-4527].
+- **Assignment is an atomic replace, and that property is load-bearing.** A re-issued assignment cannot duplicate anything, so a 409 on one may be re-read and re-issued in place — the only operation here where that is safe. A *declaration* has no such property (deleting a tag definition un-tags every node that used it), so an implementation must resolve an existing name before declaring, always [rec: clear-moss-4527].
 
 ## Negative knowledge
 
@@ -49,3 +51,4 @@ Status: working
 - northern-willow-0469 — re-parenting and commit-new payload shape proven live on a3go
 - silver-ember-3035 — INTERFACE.md re-scoped as a portability contract; mirroring moved to backend/mirror.md
 - calm-sand-3399 — flywheel-adapter.md renamed and demoted to CLI internals
+- clear-moss-4527 — op 10 shipped: names as the portable identity, tags.yml, and the contract note that no invariant reads a tag
