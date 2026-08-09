@@ -28,8 +28,19 @@ day-zero project. Nothing to decide.
 
 ## Workflow
 
-1. **Inventory.** Detect the mode; read the repo (README, docs, experiment logs,
-   git shape). Mode A: resolve **all** graph anchors — the root(s) *plus any index
+1. **Inventory.** Start with the computed facts, then read for judgment:
+   ```
+   hypergraph adopt --survey          # add --json to consume it structurally
+   ```
+   One call for the git shape (first commit, contributors, commit clusters as
+   candidate eras, highest-churn paths), top-level source dirs, doc inventory, test
+   framework, and **whether `CLAUDE.md` is a symlink to `AGENTS.md`** — which step 6
+   must not break. It replaces roughly fifteen exploratory bash calls; spend what it
+   saves on reading the docs it lists.
+
+   The candidate eras are a *suggestion* about where an epoch might fall, not a
+   decision. Then detect the mode and read the repo properly. Mode A: resolve
+   **all** graph anchors — the root(s) *plus any index
    nodes the repo's docs declare as anchors* (docs saying "node X is the system of
    record" make X an anchor even if it isn't the root). Then pull them in one call:
    ```
@@ -48,8 +59,7 @@ day-zero project. Nothing to decide.
      gain a mandatory `archive:` block naming the legacy roots, each with a `title` —
      **artifacts do not survive import** (node files have no artifact op), so
      the archive reference is the only pointer to them. For graphs above ~1000 nodes,
-     offer
-     **epoch-split**: import only the recent epoch and leave older history on the
+     offer **epoch-split**: import only the recent epoch and leave older history on the
      archive (never truncate — the archive keeps everything); it is also how you
      mirror less history when a full push would be thousands of creates.
    - **Mode B**: author the prehistory record node(s) from README/docs/CHANGELOG/git
@@ -64,8 +74,8 @@ day-zero project. Nothing to decide.
    epoch-split only → the marker becomes the record **root** of the local graph
    (`--root`, no other root exists locally) and records the archive lineage in its
    content, since local files cannot parent on slugs that don't resolve locally.
-   Write `epoch: {marker: <slug>}` to the config so `check` exempts strictly-older
-   nodes from I2.
+   The config's `epoch:` block is written in step 5 (`adopt --marker`), which is what
+   makes `check` exempt strictly-older nodes from I2.
 4. **Distillation → state graph.** The state skeleton must reflect what is *actually
    known*, not an empty template:
    - Architecture components from the repo + graph (3–8 nodes, init granularity).
@@ -73,20 +83,36 @@ day-zero project. Nothing to decide.
      claims, key decisions, and dead ends. If the graph exceeds one context window,
      fan out subagent readers per branch and merge their briefs.
    - **Id-prefix→slug resolution**: docs citing raw node-id prefixes (e.g.
-     `b3ea0b95`) are mapped to slugs via the export before writing provenance —
-     never cite a prefix.
+     `b3ea0b95`) must be mapped to slugs before you write provenance — never cite a
+     prefix. `hypergraph adopt --resolve-prefixes --against <export.json>` does the
+     mapping across every tracked doc and **reports ambiguity rather than guessing**;
+     hex tokens matching no node (mostly git SHAs) are listed apart.
    - Dead ends land as **negative knowledge** with real evidence slugs (legacy slugs
      are valid — they resolve in the imported record graph; in mode B cite the
      prehistory/marker nodes).
    - Statuses honest: a claim the docs contradict is `broken`, unverified is `open`,
      don't default everything to `working`.
-   - **Interview the user** for invisible dead ends: "what did you try that didn't
-     work and would waste a fresh agent's day?" — the graph can't tell you.
+   - **Interview the user.** This is the part nothing can compute, and it is the
+     highest-value cargo in the whole adoption. Ask all five, explicitly:
+     1. What did you try that didn't work, and would waste a fresh agent's day?
+     2. What in the docs is now false?
+     3. What is the most fragile part — what breaks when touched?
+     4. What is blocked on something outside this repo?
+     5. What are you deliberately *not* doing, and why?
+     Answers 1–2 become negative knowledge and `broken` statuses; 4 becomes
+     `blocked`; 5 belongs in a decision record node, not the state graph.
    - Every claim cites resolvable slugs (legacy or marker). `check` enforces this.
-5. **Init tail** (init steps 5–8): advance the HWM to the marker; write
-   `.hypergraph/config.yml` from [config.example.yml](references/config.example.yml)
-   (`graph_dir`, `epoch:`, and `archive:` in mode A); gitignore `.hypergraph/cache/`;
-   `hypergraph export` → `render` → `check` **exit 0**; commit.
+5. **Init tail.** Let the CLI write the mechanical parts — hand-written YAML is a
+   proven failure mode (a stub config once made `check` report 0 violations while it
+   silently guessed the roots):
+   ```
+   hypergraph adopt --init                 # mints both roots, writes a valid config
+   hypergraph adopt --marker <slug>        # records the epoch, refusing a slug that
+                                           # does not resolve
+   ```
+   Then by hand: add `archive:` in mode A, advance the HWM to the marker, gitignore
+   `.hypergraph/cache/`, and `hypergraph export` → `render` → `check` **exit 0**
+   before you commit.
 
 6. **Onboarding install.**
    - Append [agents-block.md](references/agents-block.md) to the repo's `AGENTS.md`
@@ -96,8 +122,9 @@ day-zero project. Nothing to decide.
      conflicting discipline (e.g. "commit findings as <other system> nodes"), amend
      those sections to route through hypergraph — never leave two contradictory
      contracts standing.
-   - **Never break a CLAUDE.md→AGENTS.md symlink**: check with `ls -la` / `readlink`
-     first and edit the symlink's *target*, not the symlink.
+   - **Never break a CLAUDE.md→AGENTS.md symlink**: step 1's survey already reported
+     whether either file is a link and where it points. Edit the *target*, never the
+     link.
    - Write `.hypergraph/AGENTS.md`: the full onboarding — the four non-negotiables
      expanded, this project's graph roots and epoch, where the archive lives (mode
      A), the skills to use, and the check command verbatim.
@@ -112,6 +139,11 @@ day-zero project. Nothing to decide.
   source is ambiguous, say so in the claim rather than rounding up to certainty.
 - Don't inflate the state graph: 3–8 components with honest statuses beat 20 nodes
   of aspiration. Negative knowledge is the highest-value cargo — mine for it.
+- **The CLI computes facts; you write claims.** `--survey`, `--resolve-prefixes`,
+  `--pull` and `--init` deliberately generate no prose: no prehistory bodies, no
+  `## Current` text, no negative-knowledge entries. A claim nobody derived from
+  evidence they read is not re-derivable, which breaks I8 by definition — and it is
+  exactly the aspirational template-filling these guardrails exist to prevent.
 - Mode A needs read access to the legacy graph. If `mirror pull` cannot reach it,
   authenticate first (`hypergraph mirror doctor` says what is wrong) — do not fall
   back to a repo-docs-only adoption of a graph-bearing project, which silently

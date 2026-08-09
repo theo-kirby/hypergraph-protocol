@@ -3386,6 +3386,386 @@ def mirror_pull(transport, args: argparse.Namespace, *, out_dir: Path) -> int:
     return 0
 
 
+# ------------------------------------------------------------------- adoption
+# Affordances for hypergraph-adopt. These compute *facts* — git shape, doc
+# inventory, id-prefix resolution, a valid config — so the adopting agent spends
+# its budget on judgment instead of mechanics.
+#
+# Deliberately absent: generated prose. No prehistory bodies, no `## Current`
+# claims, no negative-knowledge entries. That would produce exactly the
+# aspirational template-filling adopt's guardrails forbid, and it breaks I8 by
+# definition: a claim nobody derived from evidence they read is not re-derivable.
+# **The CLI computes facts; the agent writes claims.**
+
+DOC_PATTERNS = ("README", "CHANGELOG", "CONTRIBUTING", "ARCHITECTURE", "DESIGN",
+                "ROADMAP", "NOTES", "TODO", "HISTORY", "ADR", "RFC")
+SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", "dist",
+             "build", "target", ".mypy_cache", ".pytest_cache", ".idea", ".vscode"}
+ERA_GAP_DAYS = 21   # a quiet stretch this long reads as a boundary between eras
+
+
+def _git(repo: Path, *args: str) -> str:
+    try:
+        proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                              text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def survey_git(repo: Path) -> dict:
+    """Repo shape from git alone: age, contributors, candidate eras, churn."""
+    log = _git(repo, "log", "--reverse", "--date=short",
+               "--pretty=format:%H\t%ad\t%an\t%s")
+    rows = [line.split("\t", 3) for line in log.splitlines() if "\t" in line]
+    if not rows:
+        return {"is_repo": bool(_git(repo, "rev-parse", "--git-dir")), "commits": 0}
+
+    contributors: dict[str, int] = {}
+    for row in rows:
+        if len(row) >= 3:
+            contributors[row[2]] = contributors.get(row[2], 0) + 1
+
+    # Candidate eras: runs of commits with no gap longer than ERA_GAP_DAYS. These
+    # are a *suggestion* for where an adoption epoch might fall — the agent decides.
+    eras: list[dict] = []
+    previous = None
+    for sha, date, *_rest in rows:
+        day = datetime.fromisoformat(date).date()
+        if previous is not None and (day - previous).days > ERA_GAP_DAYS and eras:
+            eras[-1]["end"] = str(previous)
+            eras.append({"start": str(day), "end": str(day), "commits": 0,
+                         "first_sha": sha})
+        elif not eras:
+            eras.append({"start": str(day), "end": str(day), "commits": 0,
+                         "first_sha": sha})
+        eras[-1]["commits"] += 1
+        eras[-1]["end"] = str(day)
+        previous = day
+
+    churn: dict[str, int] = {}
+    for line in _git(repo, "log", "--name-only", "--pretty=format:").splitlines():
+        line = line.strip()
+        if line:
+            churn[line] = churn.get(line, 0) + 1
+
+    return {
+        "is_repo": True,
+        "commits": len(rows),
+        "first_commit": {"sha": rows[0][0][:12], "date": rows[0][1],
+                         "subject": rows[0][3] if len(rows[0]) > 3 else ""},
+        "last_commit": {"sha": rows[-1][0][:12], "date": rows[-1][1],
+                        "subject": rows[-1][3] if len(rows[-1]) > 3 else ""},
+        "contributors": sorted(({"name": n, "commits": c} for n, c in contributors.items()),
+                               key=lambda e: -e["commits"]),
+        "eras": eras,
+        "churn": [{"path": p, "changes": c} for p, c in
+                  sorted(churn.items(), key=lambda kv: -kv[1])[:15]],
+    }
+
+
+def survey_layout(repo: Path) -> dict:
+    """Source dirs, docs, tests, and the onboarding files adopt has to edit."""
+    source_dirs, docs = [], []
+    for entry in sorted(repo.iterdir()):
+        if entry.name in SKIP_DIRS or entry.name.startswith("."):
+            continue
+        if entry.is_dir():
+            files = sum(1 for _ in entry.rglob("*") if _.is_file())
+            source_dirs.append({"path": entry.name, "files": files})
+        elif entry.suffix.lower() in (".md", ".rst", ".txt"):
+            if any(entry.stem.upper().startswith(p) for p in DOC_PATTERNS):
+                docs.append(entry.name)
+    for pattern in ("docs", "doc", "adr", "rfcs", "design"):
+        directory = repo / pattern
+        if directory.is_dir():
+            docs += [str(p.relative_to(repo)) for p in sorted(directory.rglob("*.md"))][:40]
+
+    tests = []
+    if (repo / "pyproject.toml").exists() or (repo / "setup.py").exists():
+        tests.append("pytest" if (repo / "tests").is_dir() or (repo / "test").is_dir()
+                     else "python (no tests/ dir found)")
+    if (repo / "package.json").exists():
+        tests.append("node")
+    if (repo / "go.mod").exists():
+        tests.append("go test")
+    if (repo / "Cargo.toml").exists():
+        tests.append("cargo test")
+
+    # adopt must append to AGENTS.md and must never break a CLAUDE.md → AGENTS.md
+    # symlink. That was `ls -la` plus `readlink` by hand; make it mechanical.
+    onboarding = {}
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        path = repo / name
+        entry = {"exists": path.exists() or path.is_symlink(),
+                 "is_symlink": path.is_symlink()}
+        if path.is_symlink():
+            entry["target"] = str(path.readlink())
+            entry["target_exists"] = path.exists()
+        if path.exists() and not path.is_dir():
+            text = path.read_text(errors="replace")
+            entry["bytes"] = len(text)
+            entry["has_hypergraph_block"] = "<!-- hypergraph:begin -->" in text
+        onboarding[name] = entry
+
+    return {"source_dirs": source_dirs, "docs": sorted(set(docs)), "tests": tests,
+            "onboarding": onboarding,
+            "already_adopted": (repo / ".hypergraph" / "config.yml").exists()}
+
+
+def adopt_survey(repo: Path) -> dict:
+    return {"repo": str(repo), "surveyed_at": utc_now(),
+            "git": survey_git(repo), "layout": survey_layout(repo)}
+
+
+def print_survey(survey: dict) -> None:
+    git, layout = survey["git"], survey["layout"]
+    print(f"# Survey of {survey['repo']}\n")
+    if layout["already_adopted"]:
+        print("ALREADY ADOPTED — .hypergraph/config.yml exists. Use orient/record "
+              "instead of adopt.\n")
+    if not git.get("is_repo"):
+        print("Not a git repository — mode B has only the working tree to go on.\n")
+    elif git.get("commits"):
+        first, last = git["first_commit"], git["last_commit"]
+        print(f"## Git\n\n{git['commits']} commits, {first['date']} → {last['date']}, "
+              f"{len(git['contributors'])} contributor(s)")
+        print(f"  first: {first['sha']} {first['subject'][:60]}")
+        print(f"  head:  {last['sha']} {last['subject'][:60]}")
+        top = ", ".join(f"{c['name']} ({c['commits']})" for c in git["contributors"][:5])
+        print(f"  top:   {top}")
+        print(f"\n## Candidate eras (gaps > {ERA_GAP_DAYS} days — *suggestions*, not epochs)\n")
+        for era in git["eras"]:
+            print(f"  {era['start']} → {era['end']}  {era['commits']:>5} commits")
+        print("\n## Highest-churn paths\n")
+        for row in git["churn"][:10]:
+            print(f"  {row['changes']:>5}  {row['path']}")
+
+    print("\n## Layout\n")
+    for entry in layout["source_dirs"]:
+        print(f"  {entry['files']:>5} files  {entry['path']}/")
+    print(f"\n  tests: {', '.join(layout['tests']) or 'none detected'}")
+    print(f"\n## Docs ({len(layout['docs'])})\n")
+    for doc in layout["docs"][:25]:
+        print(f"  {doc}")
+    if len(layout["docs"]) > 25:
+        print(f"  … and {len(layout['docs']) - 25} more")
+
+    print("\n## Onboarding files\n")
+    for name, entry in layout["onboarding"].items():
+        if not entry["exists"]:
+            print(f"  {name}: absent")
+        elif entry["is_symlink"]:
+            state = "resolves" if entry.get("target_exists") else "BROKEN"
+            print(f"  {name}: symlink → {entry.get('target')} ({state}) — edit the "
+                  "TARGET, never the link")
+        else:
+            print(f"  {name}: {entry['bytes']} bytes, hypergraph block: "
+                  f"{'present' if entry.get('has_hypergraph_block') else 'absent'}")
+
+    print("\nThe CLI computed the facts above. The claims — what actually works, what "
+          "is broken,\nwhat was tried and abandoned — are yours to write, from evidence "
+          "you read.")
+
+
+def resolve_id_prefixes(repo: Path, against: Path) -> dict:
+    """Map raw node-id prefixes cited in tracked docs to slugs.
+
+    Docs written before adoption often cite `b3ea0b95` rather than a slug, and the
+    protocol's pointer currency is slugs. Hex tokens that match no node id are left
+    alone and reported separately — most of them are git SHAs."""
+    nodes = _load_export_nodes(against)
+    by_id = {nid.replace("-", "").lower(): raw for nid, raw in nodes.items()}
+    tracked = [line for line in _git(repo, "ls-files").splitlines() if line.strip()]
+    token_re = re.compile(r"\b[0-9a-f]{8,}\b")
+
+    hits: dict[str, dict] = {}
+    unmatched: dict[str, int] = {}
+    for rel in tracked:
+        path = repo / rel
+        if path.suffix.lower() not in (".md", ".rst", ".txt", ".yml", ".yaml", ".json"):
+            continue
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        for token in set(token_re.findall(text)):
+            flat = token.replace("-", "").lower()
+            matches = [raw for key, raw in by_id.items() if key.startswith(flat)]
+            if not matches:
+                unmatched[token] = unmatched.get(token, 0) + 1
+                continue
+            entry = hits.setdefault(token, {"prefix": token, "files": [],
+                                            "candidates": []})
+            entry["files"].append(rel)
+            entry["candidates"] = [
+                {"node_id": str(m.get("node_id") or m.get("id")),
+                 "slug": str(m.get("slug_name") or m.get("slug") or ""),
+                 "title": str(m.get("title") or "")} for m in matches]
+    return {"resolved": [h for h in hits.values() if len(h["candidates"]) == 1],
+            "ambiguous": [h for h in hits.values() if len(h["candidates"]) > 1],
+            "unmatched_hex_tokens": sorted(unmatched)}
+
+
+def create_root_node(graph_dir: Path, kind: str, title: str, body: str) -> str:
+    """Mint a parentless graph root, through the same primitives `new --root` uses.
+
+    Exists so adopt can write a *valid* config in one step. Hand-written YAML is a
+    proven failure mode: a stub config with no roots once made `check` report 0
+    violations while it silently guessed them (see `load_config`)."""
+    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in GRAPH_KINDS}
+    roots = [s for s, n in existing[kind].items() if not n.parents]
+    if roots:
+        raise LocalGraphError(f"the {kind} graph already has a root: {', '.join(roots)}")
+    slug = mint_slug(set(existing["record"]) | set(existing["state"]))
+    created_at = utc_now()
+    if kind == "record":
+        content = compose_record_content(body, [], None, None, True)
+    else:
+        content = compose_state_content(body, "", [], [], None, created_at, True)
+    _report_and_raise(
+        validate_node_content(kind, slug, title, content, created_at,
+                              local_graph(existing["record"], "record"),
+                              local_graph(existing["state"], "state"), True),
+        f"new {kind} root `{slug}`")
+    meta = {"node_id": node_id_for(slug), "slug": slug, "title": title,
+            "created_at": created_at, "parents": [], "summary": ""}
+    directory = graph_kind_dir(graph_dir, kind)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{slug}.md").write_text(render_node_file(meta, content))
+    return slug
+
+
+def cmd_adopt(args: argparse.Namespace) -> int:
+    repo = Path(args.repo or ".").resolve()
+
+    if args.survey:
+        survey = adopt_survey(repo)
+        if args.json:
+            print(json.dumps(survey, indent=2, ensure_ascii=False))
+        else:
+            print_survey(survey)
+        return 0
+
+    if args.pull:
+        config = load_config(args.config)
+        transport, _journal, _pacer, cache_dir = mirror_session(config, args)
+        return mirror_pull(transport, args, out_dir=args.out_dir or cache_dir)
+
+    if args.resolve_prefixes:
+        if not args.against:
+            raise LocalGraphError(
+                "adopt --resolve-prefixes needs --against <legacy-export.json>")
+        result = resolve_id_prefixes(repo, args.against)
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        for hit in result["resolved"]:
+            node = hit["candidates"][0]
+            print(f"{hit['prefix']} → {node['slug']}   {node['title'][:60]}")
+            for rel in sorted(set(hit["files"]))[:5]:
+                print(f"      cited in {rel}")
+        for hit in result["ambiguous"]:
+            print(f"AMBIGUOUS {hit['prefix']} matches "
+                  f"{len(hit['candidates'])} nodes — resolve by hand, never guess")
+        print(f"\nresolved {len(result['resolved'])}, "
+              f"ambiguous {len(result['ambiguous'])}, "
+              f"{len(result['unmatched_hex_tokens'])} hex token(s) matched no node "
+              "(most will be git SHAs)")
+        return 1 if result["ambiguous"] else 0
+
+    if args.init:
+        return adopt_init(repo, args)
+
+    if args.marker:
+        return adopt_marker(repo, args)
+
+    raise LocalGraphError(
+        "adopt needs one of --survey, --pull, --init, --marker, --resolve-prefixes. "
+        "The judgment parts — distilling state, writing prehistory, interviewing the "
+        "user — are the hypergraph-adopt skill's job, not this command's.")
+
+
+def adopt_init(repo: Path, args: argparse.Namespace) -> int:
+    """Mint both roots and write a *valid* config.
+
+    Hand-written YAML is a proven failure mode: a stub config with no roots once made
+    `check` report 0 violations while silently guessing them (see `load_config`)."""
+    config_path = Path(args.config) if args.config else repo / ".hypergraph" / "config.yml"
+    if config_path.exists() and not args.force:
+        raise LocalGraphError(
+            f"{config_path} already exists — this project is initialized. Use "
+            "orient/record/reconcile, or pass --force to overwrite.")
+    project = args.project or repo.name
+    graph_dir = args.graph_dir or (repo / DEFAULT_GRAPH_DIR)
+
+    def body(path, fallback):
+        return Path(path).read_text() if path else fallback
+
+    record_body = body(args.record_body,
+                       f"Append-only record graph root for {project}.\n\n"
+                       "Every unit of work lands here as a node with a declared "
+                       "`## State Impact` (SPEC I1/I2).\n")
+    state_body = body(args.state_body,
+                      f"Distilled state graph root for {project}.\n\n"
+                      "What is true now: architecture, what works, what is broken or "
+                      "open. Rewritten only by reconcile (SPEC I3).\n")
+
+    record_slug = create_root_node(graph_dir, "record", f"{project} — record", record_body)
+    state_slug = create_root_node(graph_dir, "state", f"{project} — state", state_body)
+    try:
+        declared_graph_dir = Path(graph_dir).resolve().relative_to(repo)
+    except ValueError:
+        declared_graph_dir = Path(graph_dir)
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        f"# .hypergraph/config.yml — written by `hypergraph adopt --init`.\n"
+        f"project: {project}\n\n"
+        f"record_root:\n  node_id: {node_id_for(record_slug)}\n  slug: {record_slug}\n\n"
+        f"state_root:\n  node_id: {node_id_for(state_slug)}\n  slug: {state_slug}\n\n"
+        f"cache_dir: .hypergraph/cache\n"
+        f"state_md: STATE.md\n"
+        f"graph_dir: {declared_graph_dir}\n")
+    print(f"record root: {record_slug}")
+    print(f"state root:  {state_slug}")
+    print(f"wrote {config_path}")
+    print("\nNext: import or author the history, then `hypergraph adopt --marker "
+          "<slug>` once the epoch marker node exists.")
+    return 0
+
+
+def adopt_marker(repo: Path, args: argparse.Namespace) -> int:
+    """Record the adoption epoch, after checking the marker actually resolves."""
+    config_path = Path(args.config) if args.config else repo / ".hypergraph" / "config.yml"
+    if not config_path.exists():
+        raise LocalGraphError(f"{config_path} does not exist — run adopt --init first")
+    config = load_config(config_path)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    if not Path(graph_dir).is_absolute():
+        graph_dir = repo / graph_dir
+    nodes = load_local_nodes(graph_dir, "record", missing_ok=True)
+    if args.marker not in nodes:
+        raise LocalGraphError(
+            f"`{args.marker}` is not a record node under {graph_dir}. The epoch marker "
+            "must resolve, or `check` exempts nothing and every legacy node is held to "
+            "full I2 compliance.")
+    text = config_path.read_text()
+    if "epoch:" in text:
+        raise LocalGraphError(
+            f"{config_path} already declares an `epoch:` block — a project has one "
+            "adoption epoch. Edit it by hand if the marker genuinely changed.")
+    config_path.write_text(
+        text.rstrip("\n") + "\n\n"
+        "# Adoption epoch (SPEC: Adoption epochs). Record nodes created strictly\n"
+        "# before this marker are legacy history, exempt from I2 in `check`.\n"
+        f"epoch:\n  marker: {args.marker}\n")
+    older = sum(1 for n in nodes.values() if n.created_at < nodes[args.marker].created_at)
+    print(f"epoch marker: {args.marker} ({nodes[args.marker].created_at})")
+    print(f"appended epoch: to {config_path} — {older} older record node(s) now exempt")
+    return 0
+
+
 # Self-contained page: no network requests, no JS dependencies. All SVG styling is
 # via attributes (not CSS classes) so the "Download SVG" export is standalone.
 # --- BEGIN GENERATED VIZ TEMPLATE ---
@@ -6735,6 +7115,38 @@ def main(argv: list[str] | None = None) -> int:
     p_mirror.add_argument("--out-dir", type=Path,
                           help="pull: where to write record.json/state.json")
     p_mirror.set_defaults(func=cmd_mirror)
+
+    # ---- adoption: compute the facts an adopting agent would otherwise gather by
+    # hand. Never the claims — see the module comment above `cmd_adopt`.
+    p_adopt = sub.add_parser("adopt", help="survey a repo, pull a legacy graph, "
+                                           "mint roots, resolve id prefixes")
+    graph_args(p_adopt)
+    mirror_args(p_adopt)
+    p_adopt.add_argument("--repo", type=Path, help="repo root (default: cwd)")
+    p_adopt.add_argument("--json", action="store_true", help="machine-readable output")
+    p_adopt.add_argument("--survey", action="store_true",
+                         help="git shape, candidate eras, churn, docs, tests, and "
+                              "AGENTS.md/CLAUDE.md symlink status")
+    p_adopt.add_argument("--pull", action="store_true",
+                         help="export a legacy hosted graph (same as `mirror pull`)")
+    p_adopt.add_argument("--init", action="store_true",
+                         help="mint both graph roots and write a valid config")
+    p_adopt.add_argument("--marker", metavar="SLUG",
+                         help="record the adoption epoch, after checking it resolves")
+    p_adopt.add_argument("--resolve-prefixes", action="store_true",
+                         help="map raw node-id prefixes cited in tracked docs to slugs")
+    p_adopt.add_argument("--against", type=Path, metavar="EXPORT.JSON",
+                         help="--resolve-prefixes: the legacy export to resolve against")
+    p_adopt.add_argument("--project", help="--init: project name (default: repo dir name)")
+    p_adopt.add_argument("--record-body", type=Path, help="--init: record root body file")
+    p_adopt.add_argument("--state-body", type=Path, help="--init: state root body file")
+    p_adopt.add_argument("--force", action="store_true",
+                         help="--init: overwrite an existing config")
+    p_adopt.add_argument("--out-dir", type=Path, help="--pull: where to write the exports")
+    p_adopt.add_argument("--node-id", action="append", metavar="ID")
+    p_adopt.add_argument("--record-node-id", action="append", metavar="ID")
+    p_adopt.add_argument("--state-node-id", action="append", metavar="ID")
+    p_adopt.set_defaults(func=cmd_adopt)
 
     args = parser.parse_args(argv)
     if getattr(args, "command", None) == "import" and not (args.record or args.state):

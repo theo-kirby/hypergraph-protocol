@@ -17,6 +17,12 @@ import pytest
 
 from graph_fixtures import LOCAL, hg, local_graph_copy, mirror_export_of, pushed_graph
 
+
+def run_out(capsys, *argv):
+    capsys.readouterr()
+    code = run(*argv)
+    return code, capsys.readouterr().out
+
 # deliberately not `fw-`-prefixed: `landed()` uses that prefix to count
 # the nodes this push created, and the roots pre-exist.
 RECORD_ROOT = "host-root-record"
@@ -700,3 +706,161 @@ def test_live_mirror_round_trip(tmp_path, capsys):
                 transport.delete_node(node_id, mode="cascade")
             except hg.MirrorError as exc:
                 print(f"  cleanup failed for {node_id}: {exc}", file=sys.stderr)
+
+
+# ------------------------------------------------------------------- adoption
+
+def scratch_repo(tmp_path):
+    """A tiny repo with a real git history, for the survey."""
+    repo = tmp_path / "adoptee"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "main.py").write_text("print('hi')\n")
+    (repo / "README.md").write_text("# adoptee\n\nA project with a past.\n")
+    (repo / "pyproject.toml").write_text("[project]\nname='adoptee'\n")
+    (repo / "tests").mkdir()
+    import subprocess as sp
+    sp.run(["git", "init", "-q"], cwd=repo, check=True)
+    sp.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    sp.run(["git", "config", "user.name", "Tester"], cwd=repo, check=True)
+    sp.run(["git", "add", "-A"], cwd=repo, check=True)
+    sp.run(["git", "commit", "-qm", "first commit"], cwd=repo, check=True)
+    return repo
+
+
+def test_survey_reports_git_shape_layout_and_onboarding(tmp_path):
+    repo = scratch_repo(tmp_path)
+    survey = hg.adopt_survey(repo)
+    assert survey["git"]["is_repo"] and survey["git"]["commits"] == 1
+    assert survey["git"]["contributors"][0]["name"] == "Tester"
+    assert {"path": "src", "files": 1} in survey["layout"]["source_dirs"]
+    assert "README.md" in survey["layout"]["docs"]
+    assert "pytest" in survey["layout"]["tests"]
+    assert survey["layout"]["already_adopted"] is False
+
+
+def test_survey_reports_a_claude_md_symlink_rather_than_making_the_agent_readlink(tmp_path):
+    """adopt must never break a CLAUDE.md → AGENTS.md symlink. Make it mechanical."""
+    repo = scratch_repo(tmp_path)
+    (repo / "AGENTS.md").write_text("# Agents\n")
+    (repo / "CLAUDE.md").symlink_to("AGENTS.md")
+    onboarding = hg.adopt_survey(repo)["layout"]["onboarding"]
+    assert onboarding["CLAUDE.md"]["is_symlink"] is True
+    assert onboarding["CLAUDE.md"]["target"] == "AGENTS.md"
+    assert onboarding["CLAUDE.md"]["target_exists"] is True
+    assert onboarding["AGENTS.md"]["is_symlink"] is False
+    assert onboarding["AGENTS.md"]["has_hypergraph_block"] is False
+
+
+def test_survey_of_a_non_repo_does_not_crash(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert hg.adopt_survey(plain)["git"]["commits"] == 0
+
+
+def test_adopt_init_writes_a_config_that_checks_clean(tmp_path, capsys):
+    """A hand-written stub config once made `check` report 0 violations falsely, by
+    silently guessing the roots. This writes a real one."""
+    repo = scratch_repo(tmp_path)
+    graph_dir = repo / ".hypergraph" / "graph"
+    config = repo / ".hypergraph" / "config.yml"
+    assert run("adopt", "--repo", repo, "--init", "--config", config,
+               "--graph-dir", graph_dir) == 0
+    capsys.readouterr()
+    cache = tmp_path / "cache"
+    assert run("export", "--graph-dir", graph_dir, "--out-dir", cache) == 0
+    report = hg.run_check(cache / "record.json", cache / "state.json",
+                          hg.load_config(config), config_given=True)
+    assert report.violations() == [] and report.warnings() == []
+    capsys.readouterr()
+
+
+def test_adopt_init_refuses_to_overwrite_an_initialized_project(tmp_path, capsys):
+    repo = scratch_repo(tmp_path)
+    config = repo / ".hypergraph" / "config.yml"
+    graph_dir = repo / ".hypergraph" / "graph"
+    run("adopt", "--repo", repo, "--init", "--config", config, "--graph-dir", graph_dir)
+    assert run("adopt", "--repo", repo, "--init", "--config", config,
+               "--graph-dir", graph_dir) == 2
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_adopt_marker_refuses_a_slug_that_does_not_resolve(tmp_path, capsys):
+    """An unresolvable marker exempts nothing, silently — every legacy node then
+    fails I2 instead of being legacy."""
+    repo = scratch_repo(tmp_path)
+    config = repo / ".hypergraph" / "config.yml"
+    graph_dir = repo / ".hypergraph" / "graph"
+    run("adopt", "--repo", repo, "--init", "--config", config, "--graph-dir", graph_dir)
+    capsys.readouterr()
+    assert run("adopt", "--repo", repo, "--marker", "absent-node-9999",
+               "--config", config, "--graph-dir", graph_dir) == 2
+    assert "is not a record node" in capsys.readouterr().err
+    assert "epoch:" not in config.read_text()
+
+
+def test_adopt_marker_appends_a_resolvable_epoch(tmp_path, capsys):
+    repo = scratch_repo(tmp_path)
+    config = repo / ".hypergraph" / "config.yml"
+    graph_dir = repo / ".hypergraph" / "graph"
+    run("adopt", "--repo", repo, "--init", "--config", config, "--graph-dir", graph_dir)
+    root = next(iter(hg.load_local_nodes(graph_dir, "record")))
+    body = tmp_path / "b.md"
+    body.write_text("## What\n\nAdopted.\n")
+    code, out = run_out(capsys, "new", "record", "--graph-dir", graph_dir,
+                        "--title", "Adopted Hypergraph", "--body", body,
+                        "--parent", root, "--none", "epoch marker")
+    assert code == 0
+    marker = out.split()[0]
+    assert run("adopt", "--repo", repo, "--marker", marker, "--config", config,
+               "--graph-dir", graph_dir) == 0
+    assert f"marker: {marker}" in config.read_text()
+    # one epoch per project — a second call must not append a rival block
+    assert run("adopt", "--repo", repo, "--marker", marker, "--config", config,
+               "--graph-dir", graph_dir) == 2
+    assert config.read_text().count("epoch:") == 1
+    capsys.readouterr()
+
+
+def test_resolve_prefixes_maps_cited_id_prefixes_to_slugs(tmp_path):
+    """Docs written before adoption cite raw id prefixes; the pointer currency is slugs."""
+    repo = scratch_repo(tmp_path)
+    export = tmp_path / "legacy.json"
+    export.write_text(json.dumps({"nodes": [
+        {"node_id": "b3ea0b95-1111-2222-3333-444444444444",
+         "slug_name": "wise-anchor-1001", "title": "The one they cite"},
+        {"node_id": "cccccccc-1111-2222-3333-444444444444",
+         "slug_name": "brave-otter-1002", "title": "Another"}]}))
+    (repo / "README.md").write_text(
+        "The system of record is b3ea0b95. Unrelated sha: deadbeefcafe1234.\n")
+    import subprocess as sp
+    sp.run(["git", "add", "-A"], cwd=repo, check=True)
+    sp.run(["git", "commit", "-qm", "docs"], cwd=repo, check=True)
+
+    result = hg.resolve_id_prefixes(repo, export)
+    resolved = {r["prefix"]: r["candidates"][0]["slug"] for r in result["resolved"]}
+    assert resolved == {"b3ea0b95": "wise-anchor-1001"}
+    assert result["ambiguous"] == []
+    # a git sha resolves to nothing and is reported apart, not guessed at
+    assert "deadbeefcafe1234" in result["unmatched_hex_tokens"]
+
+
+def test_resolve_prefixes_reports_ambiguity_instead_of_guessing(tmp_path):
+    repo = scratch_repo(tmp_path)
+    export = tmp_path / "legacy.json"
+    export.write_text(json.dumps({"nodes": [
+        {"node_id": "abcd1234-1111-0000-0000-000000000001", "slug_name": "wise-anchor-1001"},
+        {"node_id": "abcd1234-1111-0000-0000-000000000002", "slug_name": "brave-otter-1002"}]}))
+    (repo / "README.md").write_text("See abcd1234 for the design.\n")
+    import subprocess as sp
+    sp.run(["git", "add", "-A"], cwd=repo, check=True)
+    sp.run(["git", "commit", "-qm", "docs"], cwd=repo, check=True)
+    result = hg.resolve_id_prefixes(repo, export)
+    assert result["resolved"] == []
+    assert len(result["ambiguous"]) == 1
+    assert len(result["ambiguous"][0]["candidates"]) == 2
+
+
+def test_adopt_with_no_mode_flag_says_what_it_does_and_does_not_do(tmp_path, capsys):
+    assert run("adopt", "--repo", tmp_path) == 2
+    err = capsys.readouterr().err
+    assert "--survey" in err and "skill" in err
