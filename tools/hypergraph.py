@@ -58,7 +58,7 @@ from __future__ import annotations
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.0.6"
+__version__ = "0.0.7"
 
 import argparse
 import hashlib

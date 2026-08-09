@@ -3,7 +3,7 @@
 # ships it as the module `hypergraph_protocol` with a `hypergraph` entry point.
 [project]
 name = "hypergraph-protocol"
-version = "0.0.6"
+version = "0.0.7"
 description = "Hypergraph: a two-graph protocol (append-only record graph + distilled state graph) for keeping research projects legible to fresh agents. Checker, STATE.md renderer, and interactive visualizer."
 readme = "README.md"
 license = "MIT"

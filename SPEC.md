@@ -1,4 +1,4 @@
-# Hypergraph Protocol — v0.0.6
+# Hypergraph Protocol — v0.0.7
 
 Hypergraph is a protocol for maintaining **two graphs per research project**, kept as
 [markdown files committed in the repo](backend/local-adapter.md):
