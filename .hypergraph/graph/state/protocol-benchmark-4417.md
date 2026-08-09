@@ -49,7 +49,11 @@ Fixed **before** the second launch and with no access to its data, because the f
 
 ### Open
 
-- **Blocked on the Operator before anything spends:** rotation of the four exposed keys (`OPENROUTER_API_KEY`, `GITHUB_TOKEN`, `FLYWHEEL_API_KEY`, `BOX_API_KEY`), and three distinct Flywheel accounts, one per arm-B seed. Preflight reaches 19/20 against live GitHub and Flywheel and fails on exactly that gap [rec: staid-field-2723].
+- **PARKED by Operator decision (2026-08-09), unblocked but deliberately not started.** The hardened harness is finished and verified; nothing spends until the Operator resumes [rec: sweet-wave-7885].
+- **Keys rotated.** `OPENROUTER_API_KEY`, `GITHUB_TOKEN` and `FLYWHEEL_API_KEY` were rotated by the Operator; `BOX_API_KEY` was deleted outright, which costs nothing — `box_ctl` shells out to the `box` CLI, which carries its own auth, and the lab resolves that variable only to display it in `creds` [rec: sweet-wave-7885].
+- **Three Flywheel accounts could not be created, so arm B runs on one — a DECLARED, ASYMMETRIC confound.** Arm B's seeds can list, read and overwrite each other's nodes; arms A and C keep full isolation, so a reader who discounts arm B entirely still has a valid A-vs-C comparison. Attribution survives where isolation did not: preflight captures the account's full node-id set before launch (verified live: 458 ids) and `had_prior_state` reads only nodes created after it. Opt-in via `--shared-flywheel`; without the flag a multi-seed arm-B launch still hard-fails. Declared in METRICS.md rev-1 [rec: sweet-wave-7885].
+- **Preflight is 21/21** with `--shared-flywheel` against live GitHub and Flywheel, and 19/20 without it — failing only on the three per-run keys that do not exist [rec: sweet-wave-7885].
+- **Named and not implemented**, for whoever resumes: a harness-seeded per-run root node in Flywheel and a per-run tag on every node the run creates. Both narrow attribution; neither restores isolation. Only separate accounts do that [rec: sweet-wave-7885].
 - **OpenRouter's `usage` field** appeared not to move immediately after a live run, so the spend guard may be partially blind *during* a run and reliable only between runs [rec: scarlet-orchard-8774].
 - **Under pi, both protocol arms run without their skills layer** — a narrower test than either packaged product offers, biasing against both [rec: scarlet-orchard-8774] [rec: staid-field-2723].
 - The lab ships nothing: both hatchling targets are allow-lists, verified by building the artifacts, and `tests/test_packaging.py` fails if `research/` is ever added [rec: twilight-wood-1934].
@@ -70,3 +74,4 @@ Fixed **before** the second launch and with no access to its data, because the f
 - northern-tree-5868 — pilot: capability confirmed, self-grading bias measured, three harness defects fixed
 - ancient-dew-4488 — M5: nine runs complete, $2.18, null result at n=3; 0/3-vs-6/6 flagged as post-hoc
 - staid-field-2723 — the first run reclassified as uncontrolled; harness hardened across isolation, provisioning, credentials and publishing; preflight gate added; METRICS.md re-pre-registered as rev-1
+- sweet-wave-7885 — Operator decision: one Flywheel account for arm B declared as an asymmetric confound; keys rotated; relaunch parked
