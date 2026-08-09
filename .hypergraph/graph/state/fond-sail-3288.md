@@ -9,11 +9,11 @@ summary: ''
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 1
-  pushed_at: '2026-08-09T16:30:11+00:00'
-  content_sha256: a4ed4bd58449afebf5e7b712d5b93a1bde8848c411fd109f1d3a0d7abff9b267
+  revision: 2
+  pushed_at: '2026-08-09T18:08:20+00:00'
+  content_sha256: 7ef3e1910988bc89ef62031f82118e5c547af6cfc7ca9fcea128b819a591e6b5
 ---
-Status: working
+Status: broken
 
 ## Current
 
@@ -30,7 +30,8 @@ it will not drop CI into a repo that never had it, and that same rule is what st
 repo-scoped command writing outside the repo it was pointed at. Skills are replaced
 wholesale so a file removed upstream is pruned (plain `skills install` merges, so it
 cannot); the AGENTS.md block is replaced between its sentinels with the adopter's own
-prose intact and a `CLAUDE.md → AGENTS.md` symlink written through rather than broken;
+prose *outside* them intact — but everything **inside** them is overwritten, which
+is the defect below — and a `CLAUDE.md → AGENTS.md` symlink written through rather than broken;
 drifted workflows are reported and left alone until `--workflows`, because they are
 the one copied artifact adopters genuinely edit [rec: ancient-bluff-9706].
 
@@ -45,12 +46,30 @@ called `check --since` before that flag existed [rec: long-peak-1620], and the 0
 high-water-mark change needed a migration nobody could have known to run without
 `check` naming it [rec: long-peak-1620].
 
+**Broken, found on the first run against a repo that had used the feature it destroys.**
+`upgrade` replaces the *whole* sentinel block with the shipped template, and the adopt
+skill's step 8 deliberately writes per-project content into that block. On cadex it
+deleted the clause reconciling the record graph with `docs/DECISIONS.md` — required
+under "contract reconciliation" — and the epoch-marker note naming the marker slug and
+prehistory count. The two skills disagree about who owns the inside of the sentinels:
+`adopt` writes there, `upgrade` overwrites it. The same command already models the
+right behaviour for `.github/workflows/`, reporting drift and leaving it alone
+"because adopters customize these" — the block has exactly that property and the
+opposite default. Everything else in the upgrade held: skills refreshed, config
+stamped, prose outside the sentinels byte-identical [rec: vast-valley-5745].
+
+A second gap, smaller: on a repo adopted before the stamp, `check` emits only the
+"predates the stamp" info, so the case where the **CLI** is the older half cannot be
+reported at all. cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so
+[rec: vast-valley-5745].
+
 ## Negative knowledge
 
-None yet.
+- [scope: shipping a command that rewrites files in someone else's repo | confidence: high | evidence: vast-valley-5745] `--dry-run` is not a convenience, it is the only thing between a destructive default and silent data loss. `upgrade` shipped on the belief that sentinels made the write safe; the sentinels are exactly where the unsafe content lives. A destructive default is invisible on any fixture that does not use the feature it destroys, so the test that would have caught this is an adopted repo with project-specific prose in its block — not a scratch repo with the template in it.
 
 ## Provenance
 
 - ancient-bluff-9706 — hypergraph upgrade and the version stamp, with both compatibility directions measured
 - humble-rain-0304 — 0.0.7 published; the two-command update verified end-to-end from PyPI
 - long-peak-1620 — the CI-template/CLI skew that showed copied artifacts drift out of step with the CLI
+- vast-valley-5745 — first run on a real adopted repo: the sentinel block's project-specific half is overwritten, and a pre-stamp repo cannot report a CLI-is-older skew

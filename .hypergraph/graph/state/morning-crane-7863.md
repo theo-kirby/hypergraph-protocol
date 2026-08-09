@@ -9,9 +9,9 @@ summary: 'Adoption built, field-proven, and now MCP-free: mirror pull plus four 
 flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
-  revision: 6
-  pushed_at: '2026-08-09T15:54:56+00:00'
-  content_sha256: 03819dc8e0774ea9d93d20f4eb6ff5dc933ca9099fbfddf0f7cf465ec274d40d
+  revision: 7
+  pushed_at: '2026-08-09T18:08:20+00:00'
+  content_sha256: 469a062ae1e86b0b8a51b2fb37d1175911e2f339e354d701fd9472da21724b38
 ---
 Status: working
 
@@ -34,6 +34,11 @@ Status: working
 - **The documented order now runs.** The skill is 8 steps — inventory, read, interview, `adopt --init`, history, marker, distillation, onboarding — with the roots minted *before* anything parents on them, and prehistory guidance widened from 1–3 to 3–10 nodes (one per era or workstream) [rec: patient-sail-0175].
 - **An adoption is no longer write-once.** The skills and the AGENTS.md block adopt installs are copies in the adopter's repo, and until `hypergraph upgrade` there was no way to refresh them — 0.0.6's fixes shipped into a package whose *installed* skill still described the step order they fixed. Upgrade refreshes them in place, and `check` reports when they are behind (see fond-sail-3288) [rec: ancient-bluff-9706].
 - Field-verified against a repo we did not write: mode B on a scratch clone of `ares` (347 commits, 5 contributors) walked all 8 steps to `check` **0/0**, with `--survey` naming six directory births in 0.38s where the gap heuristic found a single era spanning the whole history; mode A on a legacy-shaped export had `--init` adopt both imported roots; and a fresh-adopter `uv tool install hypergraph-protocol` + `hypergraph skills install` landed all five skills [rec: patient-sail-0175].
+- **Field-verified on cadex — the first adoption run by someone other than the repo's author**, on 250 commits and 136 ADRs. `check` exits 0. The 14 prehistory nodes carry real causal structure rather than a flat list: three independent workstreams off the record root, converging on a marker parented on all six tips. Ten state nodes, 34 negative-knowledge entries, and an honest frontier — 1 broken, 1 blocked, 1 open, 7 working. Countable claims re-measured against the repo held (commit count, ADR count, surviving provenance tags, and a retired `CLAUDE.md` traced line-by-line into `AGENTS.md`), and post-adoption use includes a wrong count corrected by a **child node rather than an edit** [rec: vast-valley-5745].
+- Two gaps the skill does not cover, both found on cadex [rec: vast-valley-5745]:
+  - **It never checks that `.claude/skills/` is actually committable.** cadex's `.gitignore` opens with `.*` and un-ignores only `!/.hypergraph/`, so the graph travelled and the skills did not — a clone would have received an AGENTS.md instructing it to run `hypergraph-orient` with no skill to run. Nothing detects this: `adopt` does not read `.gitignore` and `check` reads the graph, not the repo [rec: vast-valley-5745].
+  - **The 3–10 prehistory guidance was exceeded at 14**, on a project with a pre-repo life and six parallel verticals, where the nodes still read as eras rather than a changelog. The guidance looks too tight rather than the adoption wrong [rec: vast-valley-5745].
+- **One field deviation is better than the skill's own text and should replace it**: cadex parented its epoch marker on **every** prehistory tip, not the newest one. That makes the marker the single record tip, so one high-water mark covers the whole authored history — which the current rule ("mode B on the newest prehistory node") does not guarantee when prehistory ends in parallel workstreams [rec: vast-valley-5745].
 - Acceptance test passed: a fresh agent with no protocol context completed the full loop in a3go — orient in 6 calls, genuine frontier work (GEO-1 precondition: d=1 boards proven exactly 2D Go, corner-flip endpoint measured), causally-parented record, no state writes, librarian reconcile, mirror verify clean — zero protocol violations [rec: fond-tree-4727].
 
 ## Negative knowledge
@@ -62,3 +67,4 @@ Status: working
 - calm-sand-3399 — adopt affordances (survey/init/marker/resolve-prefixes); the no-generated-prose line
 - patient-sail-0175 — adoption fixed end-to-end after walking it against an outside repo: root-aware `--init`, 8-step order, timeline signals, staged interview, 3–10 prehistory nodes
 - ancient-bluff-9706 — the installed skills and AGENTS.md block became refreshable, closing the write-once gap an adoption used to leave
+- vast-valley-5745 — cadex audited: the path holds on a third-party run, and three gaps it does not cover
