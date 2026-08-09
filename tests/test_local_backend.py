@@ -407,6 +407,91 @@ def test_verify_exempts_the_slug_legend_and_flags_unpushed(tmp_path):
     assert len(messages) == 10  # the legend node adds nothing
 
 
+def _verify_mirror_before_the_refactor(graph_dir, against, exempt_ids=None):
+    """The hand-rolled loop `verify_mirror` had before `diff_graphs` existed.
+
+    Kept verbatim as the oracle for the refactor. A refactor of a diagnostic is only
+    honest if its findings do not move, and the only way to say that mechanically is
+    to keep the thing it replaced and compare."""
+    report = hg.Report()
+    exempt_ids = exempt_ids or set()
+    remote = hg._load_export_nodes(against)
+    matched = set()
+    for kind in hg.GRAPH_KINDS:
+        for node in hg.load_local_nodes(graph_dir, kind, missing_ok=True).values():
+            fw = node.meta.get("flywheel") or {}
+            fid = str(fw.get("node_id") or "")
+            if not fid:
+                report.add("violation", "mirror", node.slug,
+                           f"local {kind} node never pushed to the mirror")
+                continue
+            raw = remote.get(fid)
+            if raw is None:
+                report.add("violation", "mirror", node.slug,
+                           f"local {kind} node missing from the mirror export (flywheel id {fid})")
+                continue
+            matched.add(fid)
+            if fw.get("content_sha256") and fw["content_sha256"] != node.sha256:
+                report.add("violation", "mirror", node.slug,
+                           "local body changed since last push (pending update)")
+            if hg.body_sha256(str(raw.get("content") or "")) != node.sha256:
+                report.add("violation", "mirror", node.slug,
+                           "body hash mismatch between local file and mirror")
+            if "summary" in raw and str(raw.get("summary") or "") != str(node.meta.get("summary") or ""):
+                report.add("violation", "mirror", node.slug,
+                           "summary mismatch between local file and mirror")
+            revision = raw.get("committed_revision", raw.get("revision"))
+            if revision is not None and fw.get("revision") is not None \
+                    and int(revision) != int(fw["revision"]):
+                report.add("violation", "mirror", node.slug,
+                           f"revision skew: mirror at {revision}, frontmatter says {fw['revision']}")
+    for nid, raw in sorted(remote.items()):
+        if nid in matched or nid in exempt_ids \
+                or str(raw.get("title") or "") == hg.LEGEND_TITLE:
+            continue
+        report.add("violation", "mirror", str(raw.get("slug_name") or raw.get("slug") or nid),
+                   "mirror node has no local counterpart")
+    return report
+
+
+def _every_drift_kind(tmp_path):
+    """A graph and an export carrying every drift the old loop could report, with the
+    kinds *interleaved* across nodes rather than grouped — that is what catches an
+    ordering regression."""
+    graph_dir = pushed_graph(tmp_path)
+    export = mirror_export_of(graph_dir)
+    by_id = {n["node_id"]: n for n in export["nodes"]}
+    by_id["fw-wise-anchor-1001"]["content"] += "\ntampered\n"       # body
+    by_id["fw-quiet-summit-2002"]["summary"] = "different"           # summary
+    by_id["fw-brave-otter-1002"]["revision"] = 7                     # revision skew
+    by_id["fw-brave-otter-1002"]["content"] += "\nalso tampered\n"   # two on one node
+    del by_id["fw-bright-harbor-2001"]["summary"]        # absent ≠ empty: not a finding
+    export["nodes"] = [n for n in export["nodes"]
+                       if n["node_id"] != "fw-calm-fern-1003"]       # missing right
+    export["nodes"].append({"node_id": "fw-extra", "slug_name": "extra-node-9999",
+                            "title": "Orphan", "content": "x", "summary": ""})
+    export["nodes"].append({"node_id": "fw-legend", "slug_name": "shiny-map-0001",
+                            "title": hg.LEGEND_TITLE, "content": "|", "summary": ""})
+    # a node edited since its push: pending-push drift, ahead of the body finding
+    src = next((graph_dir / "state").glob("*.md"))
+    meta, content = hg.split_frontmatter(src.read_text())
+    src.write_text(hg.render_node_file(meta, content + "\nlocal edit\n"))
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(export))
+    return graph_dir, path
+
+
+def test_verify_mirror_findings_are_byte_identical_after_the_refactor(tmp_path):
+    graph_dir, export = _every_drift_kind(tmp_path)
+    for exempt in (None, {"fw-extra"}):
+        old = _verify_mirror_before_the_refactor(graph_dir, export, exempt)
+        new = hg.verify_mirror(graph_dir, export, exempt)
+        # str(Finding) is what the CLI prints — comparing it compares the output
+        assert [str(f) for f in new.findings] == [str(f) for f in old.findings]
+        assert [f.level for f in new.findings] == [f.level for f in old.findings]
+    assert len(hg.verify_mirror(graph_dir, export).violations()) >= 6
+
+
 def test_verify_exempts_declared_mirror_roots(tmp_path):
     graph_dir = pushed_graph(tmp_path)
     export = mirror_export_of(graph_dir)

@@ -2591,6 +2591,293 @@ def cmd_update(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------- graph comparison layer
+# One typed diff of two graphs on named fields, sitting *above* everything that
+# needs one. `push_plan` diffs a graph against its own frontmatter, `verify_mirror`
+# diffs it against a live mirror export, and every healer diffs it against a source
+# graph on exactly one field. Before this section each of those was its own loop with
+# its own ideas about matching, so a new comparison meant a new loop.
+#
+# Three rules the loops did not previously state out loud:
+#
+# 1. **Match keys are declared, never inferred.** A content hash is not a match key —
+#    two record nodes can legitimately share a body, and matching on one would fuse
+#    them.
+# 2. **Ambiguity is reported, never resolved.** Two nodes claiming the same key make
+#    a `Drift(kind="ambiguous")` and *both* are excluded from field comparison.
+#    Picking one is how a repair writes the wrong node.
+# 3. **A Drift carries both values, not a message.** Callers reconstruct the wording
+#    they already had, so adding a comparison never changes an existing report.
+
+@dataclass(frozen=True)
+class Drift:
+    """One difference between two graphs, at one key, on one field."""
+    kind: str        # field | missing-right | missing-left | unkeyed | ambiguous
+    field: str       # body | title | summary | revision | parents | tags | artifacts
+    key: str
+    left: object = None
+    right: object = None
+    left_ref: str = "-"
+    right_ref: str = "-"
+    note: str = ""
+
+    @property
+    def ref(self) -> str:
+        for candidate in (self.left_ref, self.right_ref, self.key):
+            if candidate and candidate != "-":
+                return candidate
+        return self.key
+
+
+@dataclass
+class GraphSide:
+    """One side of a comparison: normalized records, keyed for matching.
+
+    `records` keeps source order (file order for a local side), because a report that
+    walks it must read in the order a human's directory listing does. `nodes` is the
+    keyed subset — the two differ by exactly `unkeyed` and the losing half of every
+    collision."""
+    name: str
+    key: str                              # flywheel | origin | node_id | slug
+    nodes: dict[str, dict] = field(default_factory=dict)
+    collisions: dict[str, list[str]] = field(default_factory=dict)
+    unkeyed: list[dict] = field(default_factory=list)
+    records: list[dict] = field(default_factory=list)
+
+
+def _side_record(*, ref: str, kind: str, key: str | None, body: str, title: str,
+                 summary: str, revision: object, parents: list[str], tags: list[str],
+                 created_at: str, node_id: str, slug: str, artifacts: list,
+                 has_summary: bool = True, node: object = None,
+                 raw: dict | None = None) -> dict:
+    return {"ref": ref, "kind": kind, "key": key, "body": body, "title": title,
+            "summary": summary, "revision": revision, "parents": parents,
+            "tags": tags, "created_at": created_at, "node_id": node_id, "slug": slug,
+            "artifacts": artifacts, "has_summary": has_summary, "node": node,
+            "raw": raw}
+
+
+def _index(side: GraphSide) -> GraphSide:
+    for record in side.records:
+        key = record.get("key")
+        if not key:
+            side.unkeyed.append(record)
+            continue
+        if key in side.nodes:
+            side.collisions.setdefault(key, [side.nodes[key]["ref"]]).append(record["ref"])
+            continue
+        if key in side.collisions:
+            side.collisions[key].append(record["ref"])
+            continue
+        side.nodes[key] = record
+    for key in side.collisions:
+        side.nodes.pop(key, None)
+    return side
+
+
+def side_from_local(graph_dir: Path, *, key: str, kinds=GRAPH_KINDS,
+                    name: str = "local") -> GraphSide:
+    """The committed node files as one comparable side.
+
+    `key` names where the match id comes from: `flywheel` and `origin` read the
+    matching frontmatter block, `node_id` and `slug` read the node's own identity."""
+    side = GraphSide(name=name, key=key)
+    for kind in kinds:
+        for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
+            if key in ("flywheel", "origin"):
+                block = node.meta.get(key) or {}
+                match = str(block.get("node_id") or "") or None
+                revision = block.get("revision")
+            elif key == "node_id":
+                match, revision = node.node_id or None, None
+            elif key == "slug":
+                match, revision = node.slug or None, None
+            else:
+                raise LocalGraphError(f"unknown match key for a local side: {key!r}")
+            side.records.append(_side_record(
+                ref=node.slug, kind=kind, key=match, body=node.content,
+                title=node.title, summary=str(node.meta.get("summary") or ""),
+                revision=revision, parents=node.parents, tags=node.tags,
+                created_at=node.created_at, node_id=node.node_id, slug=node.slug,
+                artifacts=[], node=node))
+    return _index(side)
+
+
+def _export_records(raw_nodes: list[dict], key: str) -> list[dict]:
+    # tag ids resolve through the union of `graph_tags` across every node: an export
+    # echoes the vocabulary on only some of its nodes (130 of 189 in the neural-whoop
+    # archive), so a per-node read loses a third of the graph [rec: fresh-spire-9002]
+    vocab = collect_source_tags(raw_nodes)
+    names = {tid: str(tag.get("name") or tid) for tid, tag in vocab.items()}
+    records = []
+    for raw in raw_nodes:
+        node_id = str(raw.get("node_id") or raw.get("id") or "")
+        slug = str(raw.get("slug_name") or raw.get("slug") or "")
+        if key == "node_id":
+            match = node_id or None
+        elif key == "slug":
+            match = slug or None
+        else:
+            raise LocalGraphError(f"unknown match key for an export side: {key!r}")
+        declared = raw.get("tags")
+        tags = ([str(t) for t in declared] if isinstance(declared, list)
+                else sorted({names[str(t)] for t in (raw.get("tag_ids") or [])
+                             if str(t) in names}))
+        records.append(_side_record(
+            ref=slug or node_id, kind="", key=match,
+            body=str(raw.get("content") or ""), title=str(raw.get("title") or ""),
+            summary=str(raw.get("summary") or ""),
+            revision=raw.get("committed_revision", raw.get("revision")),
+            parents=_norm_parents(raw.get("parent_ids") or raw.get("parents")
+                                  or raw.get("incoming_ids")),
+            tags=tags, created_at=str(raw.get("created_at") or ""),
+            node_id=node_id, slug=slug,
+            artifacts=list(raw.get("artifacts") or []),
+            has_summary="summary" in raw, raw=raw))
+    return records
+
+
+def side_from_export(path_or_data: object, *, key: str = "node_id",
+                     name: str = "export") -> GraphSide:
+    """A graph export (a file path, or already-parsed JSON) as one comparable side."""
+    if isinstance(path_or_data, (str, Path)):
+        data = json.loads(Path(path_or_data).read_text())
+    else:
+        data = path_or_data
+    raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
+    if isinstance(raw_nodes, dict):
+        raw_nodes = list(raw_nodes.values())
+    raw_nodes = [r for r in (raw_nodes or []) if isinstance(r, dict)]
+    side = GraphSide(name=name, key=key)
+    side.records = _export_records(raw_nodes, key)
+    return _index(side)
+
+
+def _load_export_nodes(path: Path) -> dict[str, dict]:
+    """Export JSON → {node_id: raw node dict}. Thin wrapper over `side_from_export`,
+    kept because callers outside this section still speak in raw dicts."""
+    return {r["node_id"]: r["raw"] for r in side_from_export(path).records
+            if r["node_id"]}
+
+
+@dataclass(frozen=True)
+class FieldComparator:
+    """How one field is read off a record and when two readings disagree.
+
+    `applies` exists because two comparisons are conditional in ways that are not
+    "the values differ": a mirror export that omits `summary` entirely is not
+    asserting the summary is empty, and a revision only skews when *both* sides
+    claim one."""
+    extract: object
+    equal: object = staticmethod(lambda a, b: a == b)
+    applies: object = staticmethod(lambda left, right: True)
+
+
+FIELD_COMPARATORS: dict[str, FieldComparator] = {
+    "body": FieldComparator(
+        extract=lambda r: r["body"],
+        equal=lambda a, b: body_sha256(a) == body_sha256(b)),
+    "title": FieldComparator(extract=lambda r: r["title"]),
+    "summary": FieldComparator(
+        extract=lambda r: r["summary"],
+        applies=lambda left, right: right.get("has_summary", True)),
+    "revision": FieldComparator(
+        extract=lambda r: r["revision"],
+        equal=lambda a, b: int(a) == int(b),
+        applies=lambda left, right: left["revision"] is not None
+        and right["revision"] is not None),
+    "parents": FieldComparator(extract=lambda r: list(r["parents"])),
+    "created_at": FieldComparator(extract=lambda r: r["created_at"]),
+    "tags": FieldComparator(extract=lambda r: sorted(r["tags"])),
+    # No healer reads this one yet. It is here because the extensibility claim is
+    # "a new comparison costs one entry in this table", and a claim with no second
+    # instance is not evidence.
+    "artifacts": FieldComparator(
+        extract=lambda r: sorted(str(a.get("artifact_id") or a) if isinstance(a, dict)
+                                 else str(a) for a in r["artifacts"])),
+}
+
+
+def diff_graphs(left: GraphSide, right: GraphSide, *,
+                fields=("body", "summary", "revision"),
+                exempt_left=None, exempt_right=None) -> list[Drift]:
+    """Left against right, in left's source order, then right's leftovers.
+
+    Order is part of the contract: a caller formatting these back into a report gets
+    the same per-node interleaving it would have produced with its own loop."""
+    exempt_left = set(exempt_left or ())
+    exempt_right = set(exempt_right or ())
+    for name in fields:
+        if name not in FIELD_COMPARATORS:
+            raise LocalGraphError(
+                f"no comparator for field {name!r} "
+                f"(have: {', '.join(sorted(FIELD_COMPARATORS))})")
+    drifts: list[Drift] = []
+    seen: set[str] = set()
+    for record in left.records:
+        key = record.get("key")
+        if not key:
+            drifts.append(Drift(kind="unkeyed", field="-", key=record["ref"],
+                                left=record, left_ref=record["ref"],
+                                note=f"no `{left.key}` match key"))
+            continue
+        if key in exempt_left:
+            seen.add(key)
+            continue
+        if key in left.collisions:
+            drifts.append(Drift(kind="ambiguous", field="-", key=key, left=record,
+                                left_ref=record["ref"],
+                                note=f"{left.name}: {', '.join(left.collisions[key])} "
+                                     f"all claim `{key}`"))
+            seen.add(key)
+            continue
+        if key in right.collisions:
+            drifts.append(Drift(kind="ambiguous", field="-", key=key, left=record,
+                                left_ref=record["ref"],
+                                note=f"{right.name}: {', '.join(right.collisions[key])} "
+                                     f"all claim `{key}`"))
+            seen.add(key)
+            continue
+        other = right.nodes.get(key)
+        if other is None:
+            drifts.append(Drift(kind="missing-right", field="-", key=key, left=record,
+                                left_ref=record["ref"]))
+            continue
+        seen.add(key)
+        for name in fields:
+            comparator = FIELD_COMPARATORS[name]
+            if not comparator.applies(record, other):
+                continue
+            mine, theirs = comparator.extract(record), comparator.extract(other)
+            if not comparator.equal(mine, theirs):
+                drifts.append(Drift(kind="field", field=name, key=key, left=mine,
+                                    right=theirs, left_ref=record["ref"],
+                                    right_ref=other["ref"]))
+    for key, record in sorted(right.nodes.items()):
+        if key in seen or key in exempt_right:
+            continue
+        drifts.append(Drift(kind="missing-left", field="-", key=key, right=record,
+                            right_ref=record["ref"]))
+    return drifts
+
+
+def pending_push_drift(side: GraphSide) -> list[Drift]:
+    """Local nodes edited since their last push, from the file alone.
+
+    Deliberately *not* part of `diff_graphs`: this compares a node's body against the
+    hash stamped in its own frontmatter, so there is no second graph involved.
+    Folding it in would make `diff_graphs` mean two different things."""
+    drifts = []
+    for record in side.records:
+        node = record.get("node")
+        stamp = (getattr(node, "meta", {}) or {}).get("flywheel") or {}
+        if stamp.get("content_sha256") and stamp["content_sha256"] != body_sha256(record["body"]):
+            drifts.append(Drift(kind="field", field="body", key=record.get("key") or record["ref"],
+                                left=record["body"], right=None, left_ref=record["ref"],
+                                note="pending push"))
+    return drifts
+
+
 # -------------------------------------------------------------- flywheel mirror
 
 def push_plan(graph_dir: Path) -> dict:
@@ -2649,52 +2936,97 @@ def _load_export_nodes(path: Path) -> dict[str, dict]:
     return out
 
 
+VERIFY_FIELDS = ("body", "summary", "revision")
+# Off by default and opt-in through `push --verify --strict`, because each would fire
+# on correct graphs: mirror root titles differ from local ones by doctrine, mirror
+# parent ids are mirror ids rather than local slugs, and a re-homed node's created_at
+# is the mirror's. `--strict` maps parents before comparing, which is the only way to
+# see topology drift at all.
+VERIFY_STRICT_FIELDS = ("body", "summary", "revision", "title", "parents", "tags")
+
+
 def verify_mirror(graph_dir: Path, against: Path,
-                  exempt_ids: set[str] | None = None) -> Report:
+                  exempt_ids: set[str] | None = None, *,
+                  fields=VERIFY_FIELDS, strict: bool = False) -> Report:
     """Read-only drift check: a fresh mirror export vs the local node files.
 
     Drift = missing nodes on either side, body-hash or summary mismatches, local
     edits not yet pushed, or revision skew vs `flywheel:` frontmatter. Mirror-only
     structure is exempt by design: the slug-legend node (LEGEND_TITLE) and any
     `exempt_ids` (the config's `mirror_roots`, minted when an adopted project
-    mirrors its post-epoch nodes under fresh roots)."""
+    mirrors its post-epoch nodes under fresh roots).
+
+    The comparison is `diff_graphs`; everything here is wording. The findings are
+    byte-identical to the hand-rolled loop this replaced — `test_verify_mirror_
+    findings_are_byte_identical_after_the_refactor` is what holds that true."""
     report = Report()
-    exempt_ids = exempt_ids or set()
-    remote = _load_export_nodes(against)
-    matched: set[str] = set()
-    for kind in GRAPH_KINDS:
-        for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
-            fw = node.meta.get("flywheel") or {}
-            fid = str(fw.get("node_id") or "")
-            if not fid:
-                report.add("violation", "mirror", node.slug,
-                           f"local {kind} node never pushed to the mirror")
-                continue
-            raw = remote.get(fid)
-            if raw is None:
-                report.add("violation", "mirror", node.slug,
-                           f"local {kind} node missing from the mirror export (flywheel id {fid})")
-                continue
-            matched.add(fid)
-            if fw.get("content_sha256") and fw["content_sha256"] != node.sha256:
-                report.add("violation", "mirror", node.slug,
-                           "local body changed since last push (pending update)")
-            if body_sha256(str(raw.get("content") or "")) != node.sha256:
-                report.add("violation", "mirror", node.slug,
-                           "body hash mismatch between local file and mirror")
-            if "summary" in raw and str(raw.get("summary") or "") != str(node.meta.get("summary") or ""):
-                report.add("violation", "mirror", node.slug,
-                           "summary mismatch between local file and mirror")
-            revision = raw.get("committed_revision", raw.get("revision"))
-            if revision is not None and fw.get("revision") is not None \
-                    and int(revision) != int(fw["revision"]):
-                report.add("violation", "mirror", node.slug,
-                           f"revision skew: mirror at {revision}, frontmatter says {fw['revision']}")
-    for nid, raw in sorted(remote.items()):
-        if nid in matched or nid in exempt_ids \
-                or str(raw.get("title") or "") == LEGEND_TITLE:
-            continue
-        report.add("violation", "mirror", str(raw.get("slug_name") or raw.get("slug") or nid),
+    exempt_ids = set(exempt_ids or ())
+    local = side_from_local(graph_dir, key="flywheel")
+    mirror = side_from_export(against, name="mirror")
+    if strict:
+        fields = VERIFY_STRICT_FIELDS
+        # Local parents are slugs, mirror parents are mirror ids: map before
+        # comparing, or every node reports drift over a difference in vocabulary
+        # rather than in topology. Both sides sort — parent *order* is not meaning.
+        by_slug = {r["slug"]: r["key"] for r in local.records if r["slug"] and r["key"]}
+        for record in local.records:
+            record["parents"] = sorted(str(by_slug.get(p) or p) for p in record["parents"])
+        for record in mirror.records:
+            record["parents"] = sorted(str(p) for p in record["parents"])
+    # The legend is mirror-only bookkeeping and has no local counterpart by design.
+    exempt_right = exempt_ids | {
+        r["key"] for r in mirror.records
+        if r["key"] and str((r["raw"] or {}).get("title") or "") == LEGEND_TITLE}
+
+    pending = {}
+    for drift in pending_push_drift(local):
+        pending.setdefault(drift.key, []).append(drift)
+
+    by_key: dict[str, list[Drift]] = {}
+    tail: list[Drift] = []
+    for drift in diff_graphs(local, mirror, fields=fields, exempt_right=exempt_right):
+        if drift.kind == "missing-left":
+            tail.append(drift)
+        else:
+            by_key.setdefault(drift.key, []).append(drift)
+
+    field_message = {
+        "body": "body hash mismatch between local file and mirror",
+        "summary": "summary mismatch between local file and mirror",
+        "title": "title mismatch between local file and mirror",
+        "parents": "parent set differs between local file and mirror",
+        "tags": "tag set differs between local file and mirror",
+        "created_at": "created_at differs between local file and mirror",
+    }
+    for record in local.records:
+        key = record.get("key") or record["ref"]
+        # pending-push first: it explains a body mismatch that is not corruption
+        for drift in pending.get(key, []):
+            report.add("violation", "mirror", drift.left_ref,
+                       "local body changed since last push (pending update)")
+        for drift in by_key.get(key, []):
+            if drift.kind == "unkeyed":
+                report.add("violation", "mirror", drift.left_ref,
+                           f"local {record['kind']} node never pushed to the mirror")
+            elif drift.kind == "missing-right":
+                report.add("violation", "mirror", drift.left_ref,
+                           f"local {record['kind']} node missing from the mirror export "
+                           f"(flywheel id {drift.key})")
+            elif drift.kind == "ambiguous":
+                report.add("violation", "mirror", drift.left_ref,
+                           f"ambiguous mirror identity — {drift.note}. Refusing to pick "
+                           "one; two nodes cannot share a mirror id.")
+            elif drift.field == "revision":
+                report.add("violation", "mirror", drift.left_ref,
+                           f"revision skew: mirror at {drift.right}, frontmatter says "
+                           f"{drift.left}")
+            else:
+                report.add("violation", "mirror", drift.left_ref,
+                           field_message.get(drift.field,
+                                             f"{drift.field} mismatch between local file "
+                                             "and mirror"))
+    for drift in tail:
+        report.add("violation", "mirror", drift.right_ref or drift.key,
                    "mirror node has no local counterpart")
     return report
 
@@ -4131,7 +4463,7 @@ def push_lineage(graph_dir: Path, config: dict, record_root_id: str, transport, 
 
 
 def verify_against_mirror(graph_dir: Path, config: dict, transport, *,
-                          cache_dir: Path, out=print) -> Report:
+                          cache_dir: Path, out=print, strict: bool = False) -> Report:
     """Export this project's own mirror roots and diff them against the node files."""
     roots = mirror_root_ids(config)   # also asserts no archive root is spliced in
     export = transport.export_subgraph(list(roots.values()),
@@ -4145,10 +4477,11 @@ def verify_against_mirror(graph_dir: Path, config: dict, transport, *,
     exempt |= {str(v.get("node_id"))
                for v in (config.get("mirror_roots") or {}).values()
                if isinstance(v, dict) and v.get("node_id")}
-    report = verify_mirror(graph_dir, export, exempt)
+    report = verify_mirror(graph_dir, export, exempt, strict=strict)
     for finding in report.violations():
         out(f"DRIFT {finding}")
-    out(f"push --verify: {len(report.violations())} drift finding(s)")
+    out(f"push --verify{' --strict' if strict else ''}: "
+        f"{len(report.violations())} drift finding(s)")
     return report
 
 # -------------------------------------------------------------- mirror plumbing
@@ -4290,7 +4623,8 @@ def cmd_push(args: argparse.Namespace) -> int:
         exempt = {str(v.get("node_id"))
                   for v in (config.get("mirror_roots") or {}).values()
                   if isinstance(v, dict) and v.get("node_id")}
-        report = verify_mirror(graph_dir, args.against, exempt)
+        report = verify_mirror(graph_dir, args.against, exempt,
+                               strict=getattr(args, "strict", False))
         for f in report.violations():
             print(f"DRIFT {f}")
         print(f"\npush --verify: {len(report.violations())} drift finding(s)")
@@ -4330,7 +4664,8 @@ def cmd_push(args: argparse.Namespace) -> int:
             raise MirrorError("preflight failed — run `hypergraph mirror doctor` for detail")
 
     if args.verify:
-        report = verify_against_mirror(graph_dir, config, transport, cache_dir=cache_dir)
+        report = verify_against_mirror(graph_dir, config, transport, cache_dir=cache_dir,
+                                       strict=args.strict)
         return 1 if report.violations() else 0
 
     if not args.yes and not args.dry_run:
@@ -4384,7 +4719,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return 0
     push_args = argparse.Namespace(
         config=args.config, graph_dir=graph_dir, plan=False, record_result=None,
-        verify=False, against=None, legend=False, lineage=False, output=None,
+        verify=False, against=None, strict=False, legend=False, lineage=False,
+        output=None,
         dry_run=args.dry_run, batch=args.batch, limit=None, yes=args.yes,
         no_legend=False, no_verify=args.no_verify, skip_preflight=args.skip_preflight,
         transport=args.transport, rate=args.rate, journal=args.journal,
@@ -8981,6 +9317,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="read-only drift check against a fresh mirror export (exit 1 on drift)")
     p_push.add_argument("--against", type=Path, metavar="EXPORT.JSON",
                         help="the mirror export to verify against")
+    p_push.add_argument("--strict", action="store_true",
+                        help="--verify: also compare title, parents and tags. Off by "
+                             "default because each fires on a correct graph — mirror "
+                             "root titles differ by doctrine and mirror parents are "
+                             "mirror ids, which --strict maps before comparing")
     p_push.add_argument("--legend", action="store_true",
                         help="emit the mirror-only slug-legend node body")
     p_push.add_argument("--lineage", action="store_true",
