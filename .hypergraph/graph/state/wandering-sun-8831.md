@@ -9,9 +9,9 @@ summary: 'check/render/viz + local backend + epoch support + push --verify/--leg
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 10
-  pushed_at: '2026-08-09T10:15:16+00:00'
-  content_sha256: d40553eca0a7b3c78d58595d91cd058e158c6fa051723c0e67808db6a786b906
+  revision: 11
+  pushed_at: '2026-08-09T12:06:39+00:00'
+  content_sha256: 2a076d88b132dee758672215a1c4b43c02ecea5e5d4685ea6dad1be7077104ce
 ---
 Status: working
 
@@ -27,6 +27,7 @@ Status: working
 - Test suite green: 72 pytest cases over committed fixtures — checker (incl. 4 epoch cases), viz, and local backend (incl. verify/legend/drift, fork-import, and skills-install cases) [rec: tender-moss-3792]. The strongest local-backend guarantee is the round-trip: importing the clean fixture into node files and exporting back yields node-for-node identical graphs that still check clean [rec: old-dawn-8747].
 - Two real defects in `check` were found by watching agents fail against it in the benchmark, not by review [rec: staid-field-2723]: `check --config <missing>` raised an unhandled `FileNotFoundError` from pathlib, naming the plumbing instead of the problem — two of three arm-C agents read that as "contents are wrong", wrote a one-line `backend: local` stub, and got "0 violations" because `find_root` had silently fallen back to guessing the roots. Both fixed: a missing or unparseable config exits with an instruction naming the file and what a config is for, and an inferred root now emits a warning when a config was supplied and declares none — a warning rather than a violation, because a freshly initialised graph has exactly one parentless node and a correct graph must not fail over how its root was located. `--version` added, which the benchmark's install pin and `preflight.py` both require [rec: staid-field-2723].
 - Verified against real Flywheel exports: normalizes the live edge encoding (incoming_ids as parents), alongside parent_ids/parents fixture forms [rec: steep-cell-5173].
+- **Two reproduced defects, both open, both concurrency-related** [rec: vast-rain-4873]: `check_hwm` enumerates unreconciled nodes by `created > cutoff` with no ancestry test, so a node merged from a branch that started earlier counts as already reconciled and vanishes from the frontier at 0 violations; and a node body carrying a literal git conflict-marker block passes `check` at 0/0 and is then published to the mirror. Neither is caught by any existing invariant.
 
 ## Negative knowledge
 
@@ -37,6 +38,7 @@ Status: working
 - [scope: verifying an adopted project's mirror | confidence: high | evidence: copper-moss-3669, northern-willow-0469 | decision: copper-moss-3669] `push --verify` proves nothing when the archive roots are spliced into the export it is given: the imported nodes' archive-owned ids resolve through the archive subgraph, so a mirror holding 3 record nodes of 111 exits 0. The export must cover the project's own `mirror_roots` alone.
 - [scope: reporting tool errors to autonomous agents | confidence: high | evidence: staid-field-2723] an unhandled traceback is not an error message: it names the library that raised, not the thing the operator got wrong, and an agent will act on that misdirection. Two of three arm-C runs "fixed" a missing config by writing a stub that made the checker stop crashing and start guessing — the tool reported success throughout. Any failure an agent can cause needs an error that names the cause and the remedy.
 - [scope: guarding CLI-generated markdown sections | confidence: high | evidence: sleepy-branch-3744] a substring test for a heading rejects prose that merely mentions it — anchor heading guards to line starts.
+- [scope: validating files a merge tool can write | confidence: high | evidence: vast-rain-4873] `check` validates structure and citations but never the possibility that git itself wrote the file. A committed `<<<<<<< HEAD` block passes at 0 violations and reaches the public mirror. Any validator for files under version control has to reject conflict markers explicitly.
 
 ## Provenance
 
@@ -58,3 +60,4 @@ Status: working
 - staid-field-2723 — two `check` defects found through the benchmark's arm C: crashing on a missing config, and passing silently on one that declares no roots; `--version` added
 - tender-moss-3792 — import --fork, push --lineage, scale guard, legend header; suite to 72
 - northern-willow-0469 — mirror-only verify proven live on a3go
+- vast-rain-4873 — two reproduced checker defects: timestamp-based HWM enumeration and undetected conflict markers

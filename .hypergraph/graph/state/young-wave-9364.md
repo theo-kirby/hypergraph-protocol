@@ -9,9 +9,9 @@ summary: 'SPEC.md v0.0.4: invariants I1-I8, templates, forward-work conventions,
 flywheel:
   node_id: 3310b4b6-38dc-5091-b321-0a62ce235f80
   slug: young-wave-9364
-  revision: 4
-  pushed_at: '2026-08-09T11:42:29+00:00'
-  content_sha256: 7a8bf39e46dd574188801b31b131a24065d52be1ba657d7dd658de9d6a11f10f
+  revision: 5
+  pushed_at: '2026-08-09T12:06:39+00:00'
+  content_sha256: 79e116372cd7083643b7fec55e0b4c0664ec480118607811d775ff29ec63e5e4
 ---
 Status: working
 
@@ -26,6 +26,8 @@ Status: working
 - The fork/mirror doctrine split cleanly along the same line: fork semantics, the frozen archive, and "artifacts do not travel" are protocol and stayed; mirror mechanics and failure modes moved to `backend/mirror.md`. A continuing graph is not a copy of the graph it forked from — lineage is content, belonging in a node body, never in a title [rec: silver-ember-3035].
 - **Invariants I1–I8 were untouched by that change**, which is the evidence that the storage/protocol boundary was drawn in the right place: they were already storage-neutral, and only the framing around them named a backend [rec: silver-ember-3035].
 - Node-file frontmatter is now described asymmetrically, because the two blocks are not peers: `origin:` is protocol (immutable import provenance), while a `flywheel:` block is bookkeeping that `push` writes and nothing else reads, `check` included [rec: silver-ember-3035].
+- **Open gap: the protocol has no concurrency story.** I5's high-water mark is specified and implemented as a *timestamp* cutoff, which silently drops any record node authored before the last reconcile and merged after it — reproduced, with the checker reporting 0 unreconciled and 0 violations. A merge-aware protocol needs the mark to be an **ancestry frontier** over the causal DAG. Doctrine to add alongside it: contributors record, maintainers reconcile — which follows from I3 rather than extending it [rec: vast-rain-4873].
+- Also to settle in SPEC: "fork" currently names two unrelated things — a GitHub repo fork keeps the same graph, slugs and node ids, while `import --fork` mints a new identity [rec: vast-rain-4873]. The Collaboration component carries the full gap.
 
 ## Negative knowledge
 
@@ -40,3 +42,4 @@ None yet.
 - shady-quill-2790 — I2 adoption-epoch exemption + Adoption epochs convention
 - silver-ember-3035 — Backend → Storage; fork/mirror doctrine split; I1–I8 confirmed storage-neutral
 - calm-sand-3399 — version unified at 0.0.4 and pinned to pyproject by assertion
+- vast-rain-4873 — parallel-work investigation: I5's timestamp cutoff is not merge-safe; collaboration doctrine to add

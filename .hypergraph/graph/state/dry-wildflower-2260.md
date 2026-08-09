@@ -9,9 +9,9 @@ summary: Five single-path skills (zero flywheel/lease/MCP/429/409 hits), dogfood
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 9
-  pushed_at: '2026-08-09T11:42:29+00:00'
-  content_sha256: 55bd9c20a22eabf966dcefdde61cc2afae3ecf1331dd385f48ddadf3b02e1cdd
+  revision: 10
+  pushed_at: '2026-08-09T12:06:39+00:00'
+  content_sha256: 8b661fa938052ee22f66ed9466a3c07a5f1f2f8fd115bcda0fbf11e97ad9a8be
 ---
 Status: working
 
@@ -30,6 +30,7 @@ Status: working
 - Field correction from tbinn: the mode-B marker parents on the newest prehistory node, not `--root` — the CLI correctly refuses a second parentless root per graph [rec: stormy-dew-2969].
 - Onboarding outside the skills channel: AGENTS.md states the record discipline as non-negotiable for arriving agents, with CLAUDE.md containing only `@AGENTS.md`; added after blind test #1 (machinery used, obligation missed) and validated by blind test #2, a controlled retest with AGENTS.md as the only changed variable [rec: tiny-sunset-0847] [rec: little-bar-4131].
 - Open: the rewritten skills **have not yet been run by an agent that read them as skills**. Claude Code loads skills at session start, so both the dogfooding symlinks and the single-path bodies become live on the next cold start [rec: jolly-arbor-9572] [rec: calm-sand-3399].
+- Open: reconcile's unconditional publish step is correct for the maintainer and wrong for a forking contributor, whose machine holds no credentials for the project's mirror and gets exit 2. It needs a publish-branch gate, and the skill needs the maintainer-reconciles rule stated — contributors record only [rec: vast-rain-4873].
 
 ## Negative knowledge
 
@@ -52,3 +53,4 @@ Status: working
 - sweet-wave-7885 — skills are not installed by default; AGENTS.md corrected
 - jolly-arbor-9572 — dogfooding symlinks committed; install-over-source bug fixed; --link added
 - calm-sand-3399 — the five skills go single-path; acceptance grep returns zero hits
+- vast-rain-4873 — parallel-work investigation: reconcile needs a publish-branch gate and the contributors-record rule
