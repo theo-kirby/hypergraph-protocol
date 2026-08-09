@@ -12,7 +12,8 @@ nothing in the protocol above the Storage section mentions files. There is no
 
 Requirements on a store: a DAG of nodes with markdown content, immutable node IDs,
 immutable human-readable slugs, optimistic-locking writes, and JSON export of a
-subgraph. Artifacts and tags are optional, and the shipped implementation omits both.
+subgraph. Artifacts and tags are optional; the shipped implementation omits artifacts
+and implements tags as frontmatter (op 10 below).
 
 Mirroring committed node files to a hosted graph ([mirror.md](mirror.md)) is a separate
 concern and does **not** go through this table: a mirror is a projection the CLI
@@ -31,7 +32,7 @@ writes, not a store the protocol reads.
 | 7 | `update_state_node` | `(node_id, content, base_revision) → node` | **reconcile only** (I3) | Full-content replace with optimistic locking; conflicts surfaced, not silently merged. |
 | 8 | `export_graph` | `(root_id) → JSON` | reconcile | Root + all descendants, with per-node `node_id`, `slug_name`, `title`, `content`, `parent_ids`, `created_at`. Feeds `tools/hypergraph.py`. |
 | 9 | `attach_artifact` *(optional)* | `(node_id, files) → artifact-refs` | record | Evidence on record nodes only. |
-| 10 | `tag` *(optional)* | `(node_id, tags)` | future | Reserved for `unreconciled` auto-tagging and `current-best`. |
+| 10 | `tag` *(optional)* | `declare(root_id, name, style) → tag-ref`; `assign(node_id, [name]) → ()` | record, import, push, heal | Vocabulary is declared **per graph root**; assignment is an **atomic replace** of a node's whole set. **Names**, not ids, are the portable identity. |
 
 ## Contract notes
 
@@ -47,3 +48,19 @@ writes, not a store the protocol reads.
   body-hash CAS (`--expect`), with git as the merge substrate underneath.
 - **Export determinism.** Op 8 output for the same graph revision should be stable
   enough for diffing; ordering by `created_at` then `node_id` is recommended.
+- **A tag name is the portable identity (op 10).** Every store that implements tags
+  mints its own ids, so an id is as local to a store as a mirror's slug is. The
+  protocol therefore travels names — the same choice, for the same reason, as
+  `parents:` holding slugs. A store's ids are recorded beside the name as
+  bookkeeping and never read as identity.
+- **Assignment is an atomic replace, and that is load-bearing.** Because a re-issued
+  assignment cannot duplicate anything, a conflicting assignment may be re-read and
+  re-issued in place — the one operation here for which that is safe. A `declare` has
+  no such property: a second declaration of the same name is unrecoverable, because
+  deleting a tag definition un-tags every node that used it. Implementations must
+  resolve an existing name before declaring, always.
+- **A tag is annotation, and nothing above the Storage section reads one.** No
+  invariant, no checker rule, no renderer decision depends on a tag. A claim that
+  exists only as a tag is invisible to the protocol — which is the point of saying so
+  here rather than leaving it to be discovered: the right home for a claim is a node
+  body, and a tag is a way to find nodes, not a way to assert things about them.

@@ -40,9 +40,11 @@ The local (git-native) backend keeps both graphs as committed markdown files und
 
     hypergraph.py export [--config config.yml] [--graph-dir D] [--out-dir cache/]
     hypergraph.py import --record record.json --state state.json [--graph-dir D]
-    hypergraph.py new record|state --title T --body body.md ...
+    hypergraph.py new record|state --title T --body body.md [--tag NAME] ...
     hypergraph.py update SLUG --body new.md --expect <sha256> --reconcile
+    hypergraph.py tags list|add|rm [NAME]
     hypergraph.py skills install [--user | --link | --target DIR]
+    hypergraph.py heal [tags] [--apply] [--offline]
 
 **These commands never touch the network.** No credential is resolved, no binary is
 looked for, no network module is imported — the graphs are files, and that is the
@@ -59,6 +61,13 @@ project owns, one-way, with the repo staying canonical:
 `push` on a project with no mirror configured exits **0** as a no-op, so callers
 never have to test the config first. `push --plan` stays network-free and emits the
 ordered plan for anyone without the CLI binary.
+
+`heal` is the other half of `upgrade`: where `upgrade` refreshes this project's
+*copies* of shipped files (reversible with `git checkout`), `heal` repairs *graph
+content* — a registry of typed repairs that carry a capability backwards into a repo
+that adopted before it existed. It rewrites node files and may spend mirror writes
+that cannot be un-spent, so it is **detect-only until `--apply`**, which is the one
+inverted default in this file.
 """
 from __future__ import annotations
 

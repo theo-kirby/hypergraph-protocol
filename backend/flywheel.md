@@ -101,6 +101,49 @@ silently weakens every cross-graph check. Do not run `check` against one of thes
 all — a mirror export reports dangling pointers for every locally-minted slug
 (mirror.md).
 
+### Tags → `tags:create` / `tags:assign`
+
+Op 10, and the host has implemented it all along. There is **no `tags:list`** — read
+the vocabulary out of any node's full projection.
+
+```bash
+# 1. read: the vocabulary lives on the graph root, under `graph_tags`
+flywheel nodes:get --node_id <root> --projection full     # → {…, "graph_tags": [ … ]}
+
+# 2. declare: locks against the ROOT revision, which every create bumps
+flywheel tags:create --root_node_id <root> --name "kind:experiment" \
+    --expected_revision 12 --bg_color "#1F3A5F" --text_color "#E8F0FB"
+#   optional store-true flags: --one_only --track_history
+
+# 3. assign: atomic replace of the node's whole set, locks against the NODE revision
+flywheel tags:assign --node_id <node> --tag_ids t1,t2 --expected_revision 22
+flywheel tags:assign --node_id <node> --tag_ids "" --expected_revision 22   # clear
+```
+
+| op | endpoint | lock |
+| --- | --- | --- |
+| `tags:create` | `POST /nodes/{root_node_id}/tags` | root revision |
+| `tags:assign` | `PUT /nodes/{node_id}/tags` | node revision |
+| `tags:update` | `PATCH /nodes/{root_node_id}/tags/{tag_id}` | root revision |
+| `tags:delete` | `DELETE /nodes/{root_node_id}/tags/{tag_id}` | root revision |
+
+Four traps, all of them cheap to hit:
+
+- **An absent `graph_tags` key is not "no tags".** Reading it that way makes the next
+  push re-create the entire vocabulary, and a duplicate definition cannot be cleanly
+  merged. Raise instead.
+- **A node's own `graph_tags` copy is not authoritative.** In a real 189-node graph
+  only 130 nodes echoed it while the other 59 carried populated `tag_ids` beside an
+  empty list. Union across every node and let the parentless node win.
+- **`--tag_ids` is comma-joined**, so a comma inside a tag name is unshippable.
+  Validate names before they reach the wire.
+- **`--one_only` and `--track_history` are store-true flags**, not `--k=v`. A helper
+  that renders `--{k}={v}` for anything non-`None` turns a Python `False` into the
+  *truthy string* `--one_only=False`. Omit them when false; pass them bare when true.
+
+Every mutating response here is `{}` on success, so the created tag's id and the
+node's new revision are both read back rather than assumed.
+
 ### Re-parenting → `nodes:add-parent` / `nodes:remove-parent`
 
 Not an INTERFACE operation — a mirror-repair move. It exists for one situation: an

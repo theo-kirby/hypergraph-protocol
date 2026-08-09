@@ -28,6 +28,14 @@ state_md: STATE.md
 # ignored; `check` warns if it says anything other than `local`.
 graph_dir: .hypergraph/graph
 
+# Optional tag vocabulary (committed), written by `hypergraph tags` and `import`.
+# Absent means this project declares no vocabulary — an undeclared name still works.
+# Tags are annotation and NO INVARIANT READS ONE, so a claim that lives only as a tag
+# is invisible to the protocol; a claim belongs in a node body (backend/INTERFACE.md
+# op 10). Defaults to `tags.yml` beside graph_dir.
+#
+# tags_file: .hypergraph/tags.yml
+
 # The branch a mirror is published from, and the branch reconcile belongs on
 # (SPEC: Collaboration). Defaults to `origin/HEAD` if it resolves, else `main`.
 # `push` stands down at exit 0 anywhere else, so a contributor's fork and a feature

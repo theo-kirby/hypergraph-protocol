@@ -144,9 +144,48 @@ The cache stays gitignored — it is regenerable from the node files at any time
 
 Commit evidence into the repo and reference it by path from `## Method` / `## Result`.
 
-### 10. `tag` *(optional)* — not implemented
+### 10. `tag` *(optional)* — frontmatter plus a committed vocabulary
 
-`check` already enumerates unreconciled nodes from the high-water mark.
+Assignment is a `tags:` list of **names** in the node's frontmatter, omitted entirely
+when empty. The vocabulary — colours, `one_only`/`track_history` flags, and whatever
+id a mirror minted — lives in a committed `.hypergraph/tags.yml`, keyed by graph kind
+because declaration is per graph root and this protocol has two:
+
+```yaml
+version: 1
+record:
+  - name: kind:experiment
+    bg_color: '#1F3A5F'
+    text_color: '#E8F0FB'
+    flywheel: {tag_id: tag-e71abca66e6c, root_node_id: …, pushed_at: '…'}
+  - name: studio-baseline
+    archive_name: "★ studio-baseline"   # kept when import had to transliterate
+    one_only: true
+    track_history: true                 # declarative input to a backend that has it
+state: []
+```
+
+```bash
+hypergraph tags list                        # the vocabulary plus usage counts
+hypergraph tags add kind:experiment         # never hand-edit the file
+hypergraph new record --tag kind:experiment …
+```
+
+Three things worth stating rather than discovering:
+
+- **The file is optional.** An undeclared name still works and takes a colour derived
+  from its own digest, so two machines agree without coordinating. Absent means "this
+  project declares no vocabulary", not "this project has no tags".
+- **It is not in `config.yml`.** `push` has to *update* entries in place to stamp the
+  ids a mirror minted, and `config.yml` is only ever appended to textually so its
+  hand-written comments survive.
+- **`check` is tag-blind**, with one exception: where `tags.yml` exists, an undeclared
+  name is a *warning*. Never a violation — no invariant reads a tag, and failing a
+  build over one would invent an obligation the spec does not carry.
+
+The tag id a mirror minted is bookkeeping, not identity: names travel, ids do not.
+See [mirror.md](mirror.md) for how `push` publishes them, and for `hypergraph heal
+tags`, which carries them into a repo that adopted before any of this existed.
 
 ## Importing an existing graph
 

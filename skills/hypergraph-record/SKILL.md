@@ -56,18 +56,31 @@ Not for editing state nodes (that is reconcile's job — SPEC I3) or for orienta
    - `- target: NEW <kebab-name> — <delta>` when reconcile should create a state node;
    - `none: <reason>` when current state truly doesn't change.
    Look up real state slugs in STATE.md — a wrong target fails `check`.
-5. **Commit.** Write `## What/Why/Method/Result` to a body file, then:
+5. **Tag it, if this project keeps a vocabulary.** Read `.hypergraph/tags.yml`. If
+   there is no such file, **tag nothing** — this project has not opted in, and one
+   node with tags in a repo with none is noise. If there is one:
+   - use **declared names only**, from `hypergraph tags list`;
+   - to add a name, `hypergraph tags add <name>` — **never hand-edit the file**. A
+     hand-merged duplicate name is the one unrecoverable tag failure;
+   - pass them with `--tag <name>` (repeatable) in step 6.
+
+   A tag is a way to **find** nodes, not a way to assert things about them. **No
+   invariant reads a tag**, so a claim that lives only as a tag is invisible to the
+   protocol, to `check`, and to reconcile. If it matters, it goes in the body and in
+   `## State Impact`. Tag families that earn their keep are the ones you would want to
+   filter by later — `kind:*`, `outcome:*`, `cluster:*`. Two or three per node.
+6. **Commit.** Write `## What/Why/Method/Result` to a body file, then:
    ```
    hypergraph new record --title "…" --body body.md --parent <slug> \
-       --impact "<state-slug> — <delta>" --repo-auto
+       --impact "<state-slug> — <delta>" --repo-auto [--tag kind:experiment]
    ```
    The CLI generates `## Repo` and `## State Impact`, validates the node against the
    checker, and prints the minted slug. Exit 2 = nothing was written; fix and retry.
    Then `hypergraph export --config .hypergraph/config.yml` and **commit the node file
    to git** — an uncommitted node file is as invisible as no node at all.
-6. **Attach evidence** when it exists (logs, plots, data): commit the files to the repo
+7. **Attach evidence** when it exists (logs, plots, data): commit the files to the repo
    and reference them by path from `## Method` / `## Result`.
-7. Tell the user the new slug and its declared impact. If impacts are piling up,
+8. Tell the user the new slug and its declared impact. If impacts are piling up,
    suggest running hypergraph-reconcile.
 
 ## Guardrails

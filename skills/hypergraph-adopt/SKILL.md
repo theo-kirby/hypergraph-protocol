@@ -39,7 +39,7 @@ day-zero project. Nothing to decide.
    the docs it lists.
 
    **Timeline signals** are evidence about where an epoch might fall, not a decision:
-   tags (the author's own markers), directory births (when each top-level dir first
+   release tags in git (the author's own markers), directory births (when each top-level dir first
    appeared — usually the signal that fires), and quiet gaps (idle stretches — the
    strongest signal on a paused-and-revived repo, and silent on a steadily-worked
    one). Take them to the interview in step 3; the author says which meant something.
@@ -99,6 +99,18 @@ day-zero project. Nothing to decide.
      The pull writes `legacy-record.json` / `legacy-state.json`. **Keep them.** Step 7
      reads the legacy export (`--resolve-prefixes --against`), and it is the only
      record of what stayed on the archive — pre-import artifact counts included.
+
+     **What travels, precisely.** Node ids, slugs, topology, titles, bodies, summaries
+     and **tag names** come across; import writes the names onto each node's `tags:`
+     and the vocabulary into `.hypergraph/tags.yml`, both of which you commit
+     (`--no-tags` opts out). **Artifacts do not travel**, and neither does **pointer-tag
+     history** — a `one_only` "current best" tag that moved leaves its chain in
+     `.hypergraph/cache/import-report.json` and a loud stderr block. Step 6 is where
+     that chain lands. If import renamed a tag it says so on stderr and keeps the
+     original as `archive_name:`; nothing is dropped silently.
+
+     A repo that adopted **before** tags travelled is not re-imported — run
+     `hypergraph heal tags` (backend/mirror.md), which is detect-only until `--apply`.
    - **Mode B**: author the prehistory record nodes (`hypergraph new record`; they may
      parent on the record root) from the repo evidence *and* the interview. **Roughly
      one node per era or workstream** — about 3 for a young project, up to about 10
@@ -130,6 +142,16 @@ day-zero project. Nothing to decide.
    state graph exists, so any "three broken, two blocked" is a guess, and record nodes
    are immutable — a wrong count can only be corrected by a child node. Describe what
    you imported or authored; leave the distillation to describe itself.
+
+   **Do put pointer-tag history in the marker, if step 5 reported any.** Read
+   `.hypergraph/cache/import-report.json` and write each chain into the marker body as
+   prose: which nodes held the pointer, in order, and when it moved. This is
+   load-bearing, not decoration. The protocol deliberately does not model the chain —
+   every hop a real graph recorded carried a timestamp and no reason, and a move *with*
+   a reason is a decision, which is a record node. Writing it here is what makes that
+   a routing decision instead of data loss. Say plainly that the reasons were never
+   recorded upstream; that absence is itself a finding, and inventing a reason for a
+   move you did not witness would be worse than losing it.
 7. **Distillation → state graph.** The state skeleton must reflect what is *actually
    known*, not an empty template. **Re-read the interview answers before you start** —
    they were given in step 3, several steps of authoring ago, and working from memory
@@ -211,7 +233,7 @@ Step 3, and prose on purpose: nothing here is a CLI verb, because CLI-generated
 questions become CLI-generated answers become claims nobody derived. **One sitting,
 two parts.** Ask the generic questions below *seeded with what the survey actually
 reported* — name the directory births, the churn leaders, the contributors, the
-tags. "What was `dashboard/` for, when it landed in February?" gets an answer;
+release tags in git. "What was `dashboard/` for, when it landed in February?" gets an answer;
 "describe your project's eras" gets a shrug.
 
 **Part 1 — History** (feeds the prehistory nodes, step 5):
@@ -296,10 +318,14 @@ hypergraph import --record .hypergraph/cache/legacy-record.json --fork \
 # 4. now init — it adopts the imported root rather than minting a rival
 hypergraph adopt --init          # expect: "record root: <slug> (adopted existing)"
 
-# 5. paste the archive: block into the config, and say what stayed behind
-#    (artifact counts, tag taxonomies — none of it travels)
+# 5. paste the archive: block into the config, and say what stayed behind.
+#    Artifacts do not travel; tag NAMES do (import writes .hypergraph/tags.yml —
+#    --no-tags opts out). Pointer-tag history does not: step 6 routes it.
 
-# 6. marker on the newest legacy node, then the epoch
+# 6. marker on the newest legacy node, then the epoch.
+#    If step 3 printed a POINTER TAGS MOVED block, the chain belongs in marker.md
+#    as prose — read .hypergraph/cache/import-report.json. Load-bearing: without
+#    it the "we do not model pointer history" decision is data loss, not routing.
 hypergraph new record --title "Adopted Hypergraph" --parent <newest-legacy-slug> \
                       --repo-auto --impact "..." --body marker.md
 hypergraph adopt --marker <marker-slug>

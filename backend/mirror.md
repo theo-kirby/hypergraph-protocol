@@ -128,6 +128,81 @@ root (slug, node_id, title), says the archive is frozen and never written to, an
 states plainly that artifacts stayed behind. It is the first thing a mirror reader
 sees. A project with no `archive:` block simply never gets one.
 
+## Tags
+
+`push` publishes the tag vocabulary and the per-node assignments
+([local-adapter.md §10](local-adapter.md)) alongside the nodes. Two phases, and they
+run in that order for one reason: an assignment needs a node id, and a node created in
+the same run only has one part-way through the loop.
+
+1. **Reconcile the vocabulary against the live graph root, by name.** Names present on
+   the root are adopted with the id the host already minted; only missing ones are
+   created. `tags.yml` is written after **each** create, not at the end.
+2. **Assign per node**, then fold the result back.
+
+Five rules, each of which is a bug if you drop it:
+
+- **Never compute the next root revision.** Every tag creation bumps the root's
+  revision, so a revision read once and reused across a 22-tag loop is stale after the
+  first. Re-read it. This is the same class of mistake as defaulting a missing
+  revision to 0.
+- **The revision fold is not optional.** An assignment bumps the *node* revision, and
+  `verify` (below) treats revision skew as drift. A tag push that does not re-stamp
+  `flywheel.revision` leaves one permanent false drift finding per tagged node — 188
+  of them in the field, discovered a week later. Read the value back; the mutating
+  responses' success schema is literally `{}`, so never assume `+1`.
+- **`tags_sha256` is a sibling of `content_sha256`, never folded into it.** Verify and
+  the legend both rest on body byte-identity, and folding tags in would re-push every
+  existing adopter's entire graph the first time it shipped.
+- **Retry doctrine inverts here, and only here.** A conflicting *assignment* may be
+  re-read and re-issued in place, because an atomic replace cannot duplicate anything
+  — the worst case is writing the same set twice. Creates keep the no-blind-retry rule
+  in full. This looks like an inconsistency until you know why, which is why it is
+  written down rather than left in the code.
+- **Colour and flag drift is reported, never repaired.** No `tags:update`: someone may
+  have deliberately restyled a tag on the host, and no invariant reads a colour.
+  `tags:delete` is not wired at all — deleting a definition un-tags every node that
+  used it.
+
+## Retroactive repair
+
+`hypergraph heal` carries a capability *backwards* into a repo that adopted before the
+capability existed. Tags are healer number one: an adoption that ran before this
+shipped imported its nodes and dropped its whole tag taxonomy, silently.
+
+```bash
+hypergraph heal                      # the registry, and what applies here
+hypergraph heal tags                 # DETECT ONLY — dry run is the default
+hypergraph heal tags --apply --offline   # frontmatter + tags.yml, no network
+git add .hypergraph && git commit
+hypergraph heal tags --apply         # then the vocabulary and the assignments
+git add .hypergraph/graph && git commit   # the revision fold
+```
+
+It is a **separate command from `upgrade`**, and the distinction is the point:
+`upgrade` refreshes *copies* of files this package ships and every effect of it is
+`git checkout`-reversible; `heal` rewrites *graph content* and spends a mirror-write
+budget that cannot be un-spent. Three consequences:
+
+- **Dry run is heal's default**, and opt-in everywhere else in the CLI.
+- **Detected drift exits 0.** Unhealed drift is a capability that landed after your
+  adoption, not a broken invariant — the same reasoning that keeps `check`'s version
+  skew a warning. `--fail-on-drift` opts into exit 1.
+- **Nothing is persisted.** No "have I run?" flag: the written data is the state and
+  detection re-derives it, the same property that makes `push_plan` a safe resume
+  primitive. A heal that recorded its own completion could lie.
+
+The safety rule worth naming: a healer's write targets come from `flywheel:` and
+**never** from `origin:`. In an adopted repo every `origin.node_id` is an id on the
+frozen archive — same shape, same credentials, one dict lookup away — so
+`heal_write_targets()` is the only sanctioned way to obtain one, and it refuses when
+the two have been confused. That mechanizes a rule hypergraph-adopt had only ever
+stated in prose.
+
+Heal also refuses on an uncommitted graph directory (`--allow-dirty` overrides). That
+is deliberately *not* the same stance as `push`, which has no dirty-tree guard because
+reconcile publishes before it commits. Nothing about heal is inside that flow.
+
 ## Verification
 
 `push --verify --against <export.json>` diffs a fresh mirror export against the local
@@ -135,6 +210,18 @@ node files — read-only, exit 1 on any drift, `check`-style DRIFT report. It fl
 nodes never pushed or missing from the export, body-hash mismatches, summary
 mismatches, local edits pending push (`flywheel.content_sha256` vs current body), and
 revision skew between the export and each file's `flywheel:` block.
+
+`--strict` additionally compares title, parents and tags. It is off by default because
+each of those fires on a *correct* graph: mirror root titles differ from local ones by
+doctrine, and mirror parents are mirror ids rather than local slugs — `--strict` maps
+them before comparing, which is the only way to see genuine topology drift at all.
+
+Underneath, all of this is one typed comparison (`diff_graphs`) over declared match
+keys. Two rules it enforces that the hand-rolled loops did not state: a match key is
+**declared, never inferred** — a content hash is not a key, because two record nodes
+can legitimately share a body — and an ambiguous key is **reported, never resolved**,
+with both sides excluded from field comparison. Picking one is how a repair writes to
+the wrong node.
 
 Two rules with teeth:
 
