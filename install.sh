@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
-# Symlink the hypergraph-* skills into the Claude skills directory.
-# Usage: ./install.sh            (installs to ~/.claude/skills)
+# Symlink the hypergraph-* skills into a Claude skills directory.
+#
+# Thin wrapper around `hypergraph skills install --link` so there is exactly one
+# implementation of "install the skills" (tools/hypergraph.py:cmd_skills).
+#
+# Usage: ./install.sh                     (installs to ~/.claude/skills)
 #        CLAUDE_SKILLS_DIR=/path ./install.sh
+#
+# This repo itself needs neither: .claude/skills/ holds committed relative symlinks,
+# so a clone already has the skills at project scope. Run this only to make them
+# available in every session, everywhere.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
-mkdir -p "$SKILLS_DIR"
 
-for src in "$REPO_DIR"/skills/hypergraph-*/; do
-  name="$(basename "$src")"
-  target="$SKILLS_DIR/$name"
-  if [ -e "$target" ] && [ ! -L "$target" ]; then
-    echo "skip: $target exists and is not a symlink — remove it manually" >&2
-    continue
-  fi
-  ln -sfn "${src%/}" "$target"
-  echo "linked: $target -> ${src%/}"
-done
+exec uv run "$REPO_DIR/tools/hypergraph.py" skills install --link --target "$SKILLS_DIR"

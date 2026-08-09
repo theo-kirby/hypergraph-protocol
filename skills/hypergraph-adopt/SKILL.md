@@ -10,6 +10,12 @@ history: an existing Flywheel graph, a mature codebase, or both. Protocol:
 [spec.md](references/spec.md) — especially *Adoption epochs*. Day-zero projects use
 hypergraph-init instead; everything init does, this skill does *plus* the past.
 
+## The CLI
+
+Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that is
+`uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
+`uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
+
 ## Modes
 
 - **Mode A — legacy graph exists** (Flywheel): import it verbatim as the fork; the

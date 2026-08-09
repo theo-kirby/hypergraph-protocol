@@ -9,6 +9,12 @@ The read-only landing path for a fresh agent: state root → frontier → orient
 brief, in **≤ ~6 tool calls**. The record graph exists precisely so you do *not* have
 to traverse it to know what is true now. Protocol: [spec.md](references/spec.md).
 
+## The CLI
+
+Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that is
+`uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
+`uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
+
 ## When To Use
 
 - Starting a session on a project that has `.hypergraph/config.yml`.

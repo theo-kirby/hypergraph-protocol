@@ -1,10 +1,11 @@
 # Agent instructions for this repo
 
 This repo runs under its own protocol: **Hypergraph** (see [SPEC.md](SPEC.md)). It
-keeps two graphs in Flywheel — an append-only **record graph** (everything that
-happened) and a distilled **state graph** (what is true now, including the frontier
-of open/broken/blocked work). `.hypergraph/config.yml` holds the graph roots;
-`STATE.md` is a generated snapshot.
+keeps two graphs as markdown files committed under `.hypergraph/graph/` — an
+append-only **record graph** (everything that happened) and a distilled **state
+graph** (what is true now, including the frontier of open/broken/blocked work).
+`.hypergraph/config.yml` holds the graph roots; `STATE.md` is a generated snapshot.
+The node files are the source of truth: the graphs travel with the repo, offline.
 
 **The graphs are the project's memory, not app data.** The `.hypergraph/` exports
 and STATE.md may look like inputs to the viz/checker tooling — they are also the
@@ -35,13 +36,20 @@ record of this project itself, and your work must land in it.
 
 - `SPEC.md` — the protocol (invariants I1–I8 + conventions).
 - `skills/hypergraph-{init,record,reconcile,orient,adopt}/` — the workflows.
-  **They are not installed by default.** Claude Code loads skills from
-  `~/.claude/skills` or a project-level `.claude/skills`, and this repo ships
-  neither — so `/hypergraph-record` is an unknown skill until you run
-  `hypergraph skills install` (project) or `--user` (global). Until then, read
-  `skills/<name>/SKILL.md` directly and follow it; the workflow is the file, not
-  the installation. Under a harness that does not read `.claude/skills` at all
-  (pi, for one) that is the only option.
-- `backend/flywheel-adapter.md` — Flywheel MCP call recipes (payload shapes,
-  lease → commit → release, 409/429 handling).
-- `tools/hypergraph.py` — `check` / `render` / `viz`; tests in `tests/`.
+  **This repo dogfoods them.** `.claude/skills/hypergraph-*` are committed relative
+  symlinks into `skills/`, so `/hypergraph-record` resolves in a fresh clone and
+  editing `skills/<name>/SKILL.md` edits the live skill. Two consequences: **skills
+  load at session start**, so an edit you just made is live only from the *next*
+  session; and under a harness that does not read `.claude/skills` at all (pi, for
+  one), read `skills/<name>/SKILL.md` directly and follow it — the workflow is the
+  file, not the installation.
+- `tools/hypergraph.py` — the whole CLI; tests in `tests/`.
+- `backend/` — `INTERFACE.md` (the ~10 operations that make the protocol portable),
+  `local-adapter.md` (the shipped implementation: node files), `mirror.md` and
+  `flywheel.md` (optional one-way mirroring — CLI internals, not agent-facing).
+
+## The CLI
+
+In this checkout: `uv run tools/hypergraph.py …`. `[tool.uv] package = false`, so a
+bare `hypergraph` does **not** resolve here — that form is for adopters, who get it
+from `uv tool install hypergraph-protocol` plus `hypergraph skills install --user`.

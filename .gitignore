@@ -247,5 +247,11 @@ research/runs/**/.env
 /hg-viz/
 /.claude/worktrees/
 
+# NOT ignored, deliberately: /.claude/skills/. Those five entries are relative
+# symlinks into skills/, committed so this repo dogfoods its own skills — clone the
+# repo and `/hypergraph-record` resolves. Git stores symlinks natively, and editing
+# skills/<name>/SKILL.md edits the live skill, which is the only arrangement that
+# cannot go stale. Only the worktree scratch above is ignored under /.claude/.
+
 # Playwright screenshot output (baselines live in tests/browser/baseline/)
 tests/browser/shots/

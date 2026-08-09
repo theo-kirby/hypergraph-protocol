@@ -9,6 +9,12 @@ The **only** writer of state nodes (SPEC I3). Reads record nodes past the high-w
 mark, folds their declared impacts into the distilled state graph, advances the HWM,
 and regenerates STATE.md. Protocol: [spec.md](references/spec.md).
 
+## The CLI
+
+Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that is
+`uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
+`uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
+
 ## Backend dispatch
 
 Read `backend:` from `.hypergraph/config.yml` before touching anything:

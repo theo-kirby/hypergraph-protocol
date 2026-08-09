@@ -9,6 +9,12 @@ The commit discipline for the append-only **record graph**. Every unit of work b
 one record node with a declared state impact; a separate reconcile pass folds impacts
 into the state graph. Protocol: [spec.md](references/spec.md).
 
+## The CLI
+
+Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that is
+`uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
+`uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
+
 ## Backend dispatch
 
 Read `backend:` from `.hypergraph/config.yml` first — it selects how every graph

@@ -9,6 +9,12 @@ Sets up the [Hypergraph protocol](references/spec.md) for a project: an append-o
 **record graph** and a small distilled **state graph**, with cross-graph provenance in
 markdown.
 
+## The CLI
+
+Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that is
+`uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
+`uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
+
 ## Backend choice
 
 Init is where a project's `backend:` is decided; every other skill just reads it.

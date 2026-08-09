@@ -646,6 +646,34 @@ def test_skills_install_copies_self_contained_skills(tmp_path, capsys):
     capsys.readouterr()
 
 
+def test_skills_install_refuses_to_clobber_a_link_to_the_source(tmp_path, capsys):
+    """The dogfooding case: .claude/skills/* are symlinks back into skills/.
+
+    Copying over them would replace the live skill with a stale snapshot of itself,
+    silently. Exit 2 instead."""
+    target = tmp_path / "sk"
+    target.mkdir()
+    source = hg.skills_data_root() / "skills" / "hypergraph-record"
+    (target / "hypergraph-record").symlink_to(source, target_is_directory=True)
+    assert run("skills", "install", "--target", target) == 2
+    err = capsys.readouterr().err
+    assert "already linked to the source" in err
+    # untouched: still a link, not a copy
+    assert (target / "hypergraph-record").is_symlink()
+
+
+def test_skills_install_link_edits_through(tmp_path, capsys):
+    """--link installs symlinks, so editing the source edits the installed skill."""
+    target = tmp_path / "sk"
+    assert run("skills", "install", "--link", "--target", target) == 0
+    dst = target / "hypergraph-record"
+    assert dst.is_symlink()
+    assert dst.resolve() == (hg.skills_data_root() / "skills" / "hypergraph-record").resolve()
+    # and a link into the source is then refused rather than replaced
+    assert run("skills", "install", "--target", target) == 2
+    capsys.readouterr()
+
+
 # ------------------------------------------------------------------ diagnostics
 
 @pytest.mark.parametrize("mutate,expected", [

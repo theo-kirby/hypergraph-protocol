@@ -1950,8 +1950,28 @@ def skills_data_root() -> Path:
         "module and no skills/ in the parent directory)")
 
 
+def _links_into(dst: Path, tree: Path) -> bool:
+    """Is `dst` a symlink that resolves inside `tree`?
+
+    This is the dogfooding case: `.claude/skills/hypergraph-record` is a committed
+    relative symlink back into `skills/`. Copying over it would silently replace the
+    live skill with a stale snapshot of itself, so `install` refuses instead."""
+    if not dst.is_symlink():
+        return False
+    try:
+        resolved = dst.resolve()
+    except OSError:  # broken or looping link — not ours; let the caller replace it
+        return False
+    try:
+        resolved.relative_to(tree.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def cmd_skills(args: argparse.Namespace) -> int:
     root = skills_data_root()
+    source = root / "skills"
     if args.target:
         target = Path(args.target)
     elif args.user:
@@ -1960,20 +1980,34 @@ def cmd_skills(args: argparse.Namespace) -> int:
         target = Path.cwd() / ".claude" / "skills"
     target.mkdir(parents=True, exist_ok=True)
     installed = []
-    for src in sorted((root / "skills").glob("hypergraph-*")):
+    for src in sorted(source.glob("hypergraph-*")):
         if not src.is_dir():
             continue
         dst = target / src.name
-        if dst.is_symlink():  # e.g. a dev install.sh link — don't write through it
+        if _links_into(dst, source):
+            raise LocalGraphError(
+                f"{dst} is already linked to the source ({src}) — nothing to install. "
+                "This is a dev checkout where the skills are dogfooded through "
+                "symlinks; installing would replace the live skill with a stale copy. "
+                "Use --target DIR to install elsewhere.")
+        if dst.is_symlink():  # a link to somewhere else — replace it wholesale
             dst.unlink()
-        # symlinked references/ entries are materialized as real files on copy,
-        # so the installed skill is self-contained
-        shutil.copytree(src, dst, dirs_exist_ok=True)
+        if args.link:
+            # A link edits-through: the installed skill is never a stale snapshot.
+            # Only safe where the source tree stays put (a dev checkout, not a wheel).
+            if dst.exists():
+                shutil.rmtree(dst)
+            dst.symlink_to(src.resolve(), target_is_directory=True)
+        else:
+            # symlinked references/ entries are materialized as real files on copy,
+            # so the installed skill is self-contained
+            shutil.copytree(src, dst, dirs_exist_ok=True)
         installed.append(src.name)
     if not installed:
-        raise LocalGraphError(f"no hypergraph-* skills found under {root / 'skills'}")
+        raise LocalGraphError(f"no hypergraph-* skills found under {source}")
+    verb = "linked" if args.link else "installed"
     for name in installed:
-        print(f"installed {target / name}")
+        print(f"{verb} {target / name}")
     return 0
 
 
@@ -5291,6 +5325,10 @@ def main(argv: list[str] | None = None) -> int:
                           help="install into ~/.claude/skills (default: ./.claude/skills)")
     p_skills.add_argument("--target", type=Path, metavar="DIR",
                           help="explicit destination directory")
+    p_skills.add_argument("--link", action="store_true",
+                          help="symlink instead of copy, so editing the source edits "
+                               "the live skill (dev checkouts only — a copy is what "
+                               "an installed wheel should hand out)")
     p_skills.set_defaults(func=cmd_skills)
 
     p_push = sub.add_parser("push", help="plan/record a Flywheel mirror push (no network)")
