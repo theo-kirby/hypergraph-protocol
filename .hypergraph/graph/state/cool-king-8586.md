@@ -18,5 +18,5 @@ Children mirror the project architecture. Statuses per SPEC I6; frontier = open/
 
 ## Reconciliation
 
-- high_water_mark: solemn-dawn-6752
-- reconciled_at: 2026-08-09T10:17:27+00:00
+- high_water_mark: wise-river-3571
+- reconciled_at: 2026-08-09T11:05:00+00:00
