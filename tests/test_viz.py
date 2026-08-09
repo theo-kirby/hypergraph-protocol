@@ -118,16 +118,24 @@ def test_render_viz_emits_selfcontained_html():
 
 def test_template_preset_toggle_machinery():
     tpl = hg.VIZ_TEMPLATE
-    # preset chips present, in order Record, State, Columns, Force
-    assert (tpl.index('data-preset="record"') < tpl.index('data-preset="state"')
-            < tpl.index('data-preset="combo"') < tpl.index('data-preset="hyper"'))
+    # view chips present, in job order: Timeline, Frontier, Provenance, Clusters
+    assert (tpl.index('data-preset="timeline"') < tpl.index('data-preset="frontier"')
+            < tpl.index('data-preset="provenance"') < tpl.index('data-preset="clusters"'))
     for marker in ("const PRESETS", "applyPreset", "const show", "layoutKey",
                    'id="controls"', 'id="divider"', 'id="exportMenu"',
                    'id="svgBtn"', 'id="printBtn"'):
         assert marker in tpl
-    # the tab bar is gone; the old #combination deep-link alias must survive
-    assert 'id="tabs"' not in tpl
-    assert '"combination"' in tpl
+    assert 'id="tabs"' not in tpl  # the tab bar is gone
+
+
+def test_template_keeps_pre_rename_deep_link_aliases():
+    """Views were renamed after their job; old #hashes must keep resolving."""
+    tpl = hg.VIZ_TEMPLATE
+    assert "VIEW_ALIASES" in tpl
+    for old, new in (("record", "timeline"), ("state", "frontier"),
+                     ("combo", "provenance"), ("combination", "provenance"),
+                     ("hyper", "clusters")):
+        assert f"{old}:\"{new}\"" in tpl.replace(" ", "")
 
 
 def test_template_force_view_machinery():
@@ -136,6 +144,25 @@ def test_template_force_view_machinery():
         assert fn in tpl
     # determinism guard: layout must be reproducible across loads
     assert "Math.random" not in tpl
+
+
+def test_viz_bundle_in_sync():
+    """The page is authored under tools/viz/ and bundled into VIZ_TEMPLATE.
+
+    Re-bundle in memory and compare: editing the sources without re-running
+    tools/bundle_viz.py fails here instead of shipping a stale page.
+    """
+    assert hg.assemble_viz_template(ROOT / "tools" / "viz") == hg.VIZ_TEMPLATE, (
+        "tools/viz/ and VIZ_TEMPLATE have drifted — run tools/bundle_viz.py")
+
+
+def test_viz_dev_flag_matches_bundled_output(tmp_path):
+    """`viz --dev` reads the sources; with them in sync it emits the same page."""
+    out_a, out_b = tmp_path / "a.html", tmp_path / "b.html"
+    args = ["viz", "--record", str(CLEAN / "record.json"), "--state", str(CLEAN / "state.json")]
+    assert hg.main(args + ["-o", str(out_a)]) == 0
+    assert hg.main(args + ["--dev", "-o", str(out_b)]) == 0
+    assert out_a.read_text() == out_b.read_text()
 
 
 def test_viz_cli_writes_file(tmp_path, capsys):

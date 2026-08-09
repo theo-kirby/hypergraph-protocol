@@ -1,0 +1,42 @@
+{
+  "clusters": {
+    "aspect": 0.6,
+    "blobs": 12,
+    "edges": 46,
+    "height": 805,
+    "labels": 0,
+    "nodes": 39,
+    "scale": 0.877,
+    "width": 480
+  },
+  "frontier": {
+    "aspect": 16.39,
+    "blobs": 0,
+    "edges": 11,
+    "height": 201,
+    "labels": 38,
+    "nodes": 12,
+    "scale": 0.283,
+    "width": 3295
+  },
+  "provenance": {
+    "aspect": 0.29,
+    "blobs": 0,
+    "edges": 234,
+    "height": 3600,
+    "labels": 200,
+    "nodes": 51,
+    "scale": 0.208,
+    "width": 1028
+  },
+  "timeline": {
+    "aspect": 0.21,
+    "blobs": 0,
+    "edges": 46,
+    "height": 4121,
+    "labels": 160,
+    "nodes": 39,
+    "scale": 0.183,
+    "width": 847
+  }
+}

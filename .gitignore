@@ -231,3 +231,6 @@ __marimo__/
 research/runs/**/workspace.tar.gz
 research/runs/**/vectors.txt
 research/runs/**/*.log
+
+# Playwright screenshot output (baselines live in tests/browser/baseline/)
+tests/browser/shots/

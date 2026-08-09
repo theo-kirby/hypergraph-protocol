@@ -798,7 +798,30 @@ def _esc_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def render_viz(record_path: Path, state_path: Path, config: dict | None = None) -> str:
+# The page is authored as separate files under tools/viz/ and concatenated into the
+# single VIZ_TEMPLATE constant at build time (tools/bundle_viz.py), which keeps both
+# hard properties: this script stays one copyable file, and its output stays
+# self-contained. The assembly lives here, not in the bundler, so `viz --dev` (which
+# reads the sources straight off disk) can never disagree with the bundled constant.
+VIZ_SRC_DIR = Path(__file__).resolve().parent / "viz"
+VIZ_PART_RE = re.compile(r"/\*\{\{(?:CSS|JS)\}\}\*/\n")
+
+
+def assemble_viz_template(viz_dir: Path = VIZ_SRC_DIR) -> str:
+    """Concatenate the tools/viz/ sources into the page template.
+
+    Parts join verbatim in `manifest.json` order — no separator is inserted, so the
+    blank line between two sections belongs to the end of the preceding file.
+    """
+    manifest = json.loads((viz_dir / "manifest.json").read_text())
+    parts = {"/*{{CSS}}*/\n": "".join((viz_dir / p).read_text() for p in manifest["css"]),
+             "/*{{JS}}*/\n": "".join((viz_dir / p).read_text() for p in manifest["js"])}
+    skeleton = (viz_dir / manifest["html"]).read_text()
+    return VIZ_PART_RE.sub(lambda m: parts[m.group(0)], skeleton)
+
+
+def render_viz(record_path: Path, state_path: Path, config: dict | None = None,
+               template: str | None = None) -> str:
     record = load_graph(record_path)
     state = load_graph(state_path)
     data = build_viz_data(record, state, config)
@@ -810,14 +833,20 @@ def render_viz(record_path: Path, state_path: Path, config: dict | None = None) 
         except (OSError, json.JSONDecodeError):
             pass
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
-    return (VIZ_TEMPLATE
+    return ((template if template is not None else VIZ_TEMPLATE)
             .replace("__TITLE__", _esc_html(data["project"]))
             .replace("__VIZ_DATA__", payload))
 
 
 def cmd_viz(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    output = render_viz(args.record, args.state, config)
+    template = None
+    if getattr(args, "dev", False):
+        if not (VIZ_SRC_DIR / "manifest.json").exists():
+            print(f"error: --dev needs the viz sources at {VIZ_SRC_DIR}", file=sys.stderr)
+            return 2
+        template = assemble_viz_template(VIZ_SRC_DIR)
+    output = render_viz(args.record, args.state, config, template)
     if args.output:
         Path(args.output).write_text(output)
         print(f"wrote {args.output}")
@@ -1702,6 +1731,9 @@ def cmd_push(args: argparse.Namespace) -> int:
 
 # Self-contained page: no network requests, no JS dependencies. All SVG styling is
 # via attributes (not CSS classes) so the "Download SVG" export is standalone.
+# --- BEGIN GENERATED VIZ TEMPLATE ---
+# Generated from tools/viz/ by tools/bundle_viz.py — do not edit in place.
+# Edit the sources and re-run the bundler.
 VIZ_TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -1853,10 +1885,10 @@ VIZ_TEMPLATE = r"""<!doctype html>
     <div id="controls">
       <input id="search" type="search" placeholder="Filter: slug, title, content…">
       <div id="presets">
-        <button data-preset="record">Record</button>
-        <button data-preset="state">State</button>
-        <button data-preset="combo">Columns</button>
-        <button data-preset="hyper">Force</button>
+        <button data-preset="timeline" title="What happened, in order">Timeline</button>
+        <button data-preset="frontier" title="What is true now, and what is open">Frontier</button>
+        <button data-preset="provenance" title="Which record work each state claim rests on">Provenance</button>
+        <button data-preset="clusters" title="Which work belongs to the same claim">Clusters</button>
       </div>
       <div id="toggles">
         <div class="seg" data-key="graphs">
@@ -1923,8 +1955,8 @@ const bySlug = {};
 DATA.record.nodes.forEach(n => bySlug[n.slug] = { graph: "record", node: n });
 DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
 
-// Display state: one unified view driven by toggles. Presets below reproduce
-// the classic arrangements; any custom mix is equally valid.
+// Display state: one unified view driven by toggles. The four views below are
+// named after the job they do; any custom mix of toggles is equally valid.
 const show = {
   graphs: "record",   // "record" | "state" | "both"
   style:  "circles",  // "cards" | "circles"
@@ -1940,16 +1972,22 @@ const stVis  = () => show.graphs !== "record";
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
 const layoutKey = () => show.layout + ":" + show.graphs + ":" + show.style;
 
+// Four views, each named after its job. Timeline = what happened, in order.
+// Frontier = what is true now, and what is open. Provenance = which record work
+// each state claim rests on. Clusters = which work belongs to the same claim.
 const PRESETS = {
-  record: { graphs:"record", style:"cards",   layout:"layered",
-            tree:true, impact:false, prov:false, blobs:false },
-  state:  { graphs:"state",  style:"cards",   layout:"layered",
-            tree:true, impact:false, prov:false, blobs:false },
-  combo:  { graphs:"both",   style:"cards",   layout:"layered",
-            tree:true, impact:true,  prov:true,  blobs:false },
-  hyper:  { graphs:"record", style:"circles", layout:"force",
-            tree:true, impact:false, prov:false, blobs:true },
+  timeline:   { graphs:"record", style:"cards",   layout:"layered",
+                tree:true, impact:false, prov:false, blobs:false },
+  frontier:   { graphs:"state",  style:"cards",   layout:"layered",
+                tree:true, impact:false, prov:false, blobs:false },
+  provenance: { graphs:"both",   style:"cards",   layout:"layered",
+                tree:true, impact:true,  prov:true,  blobs:false },
+  clusters:   { graphs:"record", style:"circles", layout:"force",
+                tree:true, impact:false, prov:false, blobs:true },
 };
+// Pre-rename deep links keep working: #record #state #combo #combination #hyper.
+const VIEW_ALIASES = { record:"timeline", state:"frontier", combo:"provenance",
+                       combination:"provenance", hyper:"clusters" };
 function activePreset() {
   for (const name in PRESETS) {
     const p = PRESETS[name];
@@ -2723,8 +2761,10 @@ function legendHTML() {
     <div class="meta">Each translucent blob is a hyperedge: one state node wrapping
     all the record work that declares impact on it; overlapping blobs share record
     nodes. Click a blob's label to open that state node.</div>` : ""}
-    <p class="hint">Preset chips reproduce the classic arrangements; the Display
-    toggles mix graphs, node style, layout, and edge types freely.
+    <p class="hint">The four view chips each answer one question — Timeline: what
+    happened, in order · Frontier: what is true now · Provenance: what each state
+    claim rests on · Clusters: which work belongs to the same claim. The toggles
+    below them mix graphs, node style, layout, and edge types freely.
     Scroll to zoom · drag background to pan · drag nodes to rearrange ·
     click a node for full content · Esc to deselect · drag the divider to resize
     this panel. Use the export menu for SVG/PDF.</p>`;
@@ -2960,20 +3000,21 @@ document.getElementById("svgBtn").addEventListener("click", () => {
 });
 
 // -------------------------------------------------------------------- boot
-// Deep links: #record | #state | #combo (alias #combination) | #hyper applies
-// that preset; #<slug> jumps to a node.
+// Deep links: #timeline | #frontier | #provenance | #clusters selects that view
+// (the pre-rename hashes #record #state #combo #combination #hyper still work,
+// see VIEW_ALIASES); #<slug> jumps to a node.
 document.body.dataset.theme = theme;
 applySide();
 const boot = decodeURIComponent(location.hash.slice(1));
-const bootView = boot === "combination" ? "combo" : boot;
-applyPreset(["record", "state", "combo", "hyper"].indexOf(bootView) >= 0
-            ? bootView : "hyper");
+const bootView = VIEW_ALIASES[boot] || boot;
+applyPreset(PRESETS[bootView] ? bootView : "clusters");
 if (bySlug[boot]) jumpTo(boot);
 renderPanel();
 </script>
 </body>
 </html>
 """
+# --- END ---
 
 
 # -------------------------------------------------------------------------- cli
@@ -2999,6 +3040,9 @@ def main(argv: list[str] | None = None) -> int:
     p_viz.add_argument("--state", type=Path, required=True, help="state-graph export JSON")
     p_viz.add_argument("--config", type=Path, help=".hypergraph/config.yml")
     p_viz.add_argument("-o", "--output", type=Path, help="output path (default: stdout)")
+    p_viz.add_argument("--dev", action="store_true",
+                       help="assemble the page from tools/viz/ instead of the bundled "
+                            "constant (repo checkout only; no rebundle needed to iterate)")
     p_viz.set_defaults(func=cmd_viz)
 
     # ---- local (git-native) backend: backend/local-adapter.md

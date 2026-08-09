@@ -22,7 +22,16 @@ hypergraph = "hypergraph_protocol:main"
 # member, so it never reaches the distribution — the wheel and sdist ship from
 # the explicit allow-lists below, and tests/test_packaging.py enforces that.
 # Without it here, `uv run pytest tests/` would silently skip those tests.
-dev = ["pytest>=8", "pyyaml>=6", "numpy>=1.24"]
+#
+# playwright is the same shape: it drives the viz page in a real browser
+# (tests/browser/), it must never reach the distribution, and those tests skip
+# themselves when it — or its chromium build — is absent.
+dev = [
+    "pytest>=8",
+    "pyyaml>=6",
+    "numpy>=1.24",
+    "playwright>=1.62.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -36,8 +45,11 @@ build-backend = "hatchling.build"
 "skills" = "hypergraph_protocol_data/skills"
 "templates" = "hypergraph_protocol_data/templates"
 
+# The wheel needs only the bundled module; the sdist also carries the viz sources
+# and their bundler, so `tools/bundle_viz.py` can be re-run from a source release.
 [tool.hatch.build.targets.sdist]
-include = ["tools/hypergraph.py", "README.md", "SPEC.md", "LICENSE", "pyproject.toml",
+include = ["tools/hypergraph.py", "tools/bundle_viz.py", "tools/viz",
+           "README.md", "SPEC.md", "LICENSE", "pyproject.toml",
            "skills", "templates", "backend"]
 
 [tool.uv]
