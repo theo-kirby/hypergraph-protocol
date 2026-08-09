@@ -61,8 +61,24 @@
         <div class="seg" data-key="layout">
           <span class="lbl">Layout</span>
           <div class="opts">
+            <button data-val="timeline" title="Record graph as git-log lanes">Lanes</button>
+            <button data-val="board" title="State graph as a status board">Board</button>
             <button data-val="layered">Layered</button>
             <button data-val="force">Force</button>
+          </div>
+        </div>
+        <div class="seg" data-key="xaxis" hidden>
+          <span class="lbl">X axis</span>
+          <div class="opts">
+            <button data-val="rank" title="One step per node — even spacing">Rank</button>
+            <button data-val="time" title="Real dates, long idle gaps compressed">Time</button>
+          </div>
+        </div>
+        <div class="seg" data-key="board" hidden>
+          <span class="lbl">Board</span>
+          <div class="opts">
+            <button data-val="status" title="Columns by status, frontier first">Status</button>
+            <button data-val="tree" title="Architecture tree, as in STATE.md">Tree</button>
           </div>
         </div>
         <div class="checks">
@@ -77,7 +93,11 @@
   </aside>
 </main>
 <script>
+// One inline block, wrapped so the page leaks nothing into the global scope.
+// Parts are concatenated by tools/bundle_viz.py; see tools/viz/manifest.json.
+(function () {
 /*{{JS}}*/
+})();
 </script>
 </body>
 </html>

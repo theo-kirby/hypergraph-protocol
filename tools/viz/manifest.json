@@ -1,13 +1,15 @@
 {
-  "note": "Fixed concatenation order. Parts are joined verbatim (no separator), so the blank line between sections belongs to the end of the preceding file.",
+  "note": "Fixed concatenation order for tools/bundle_viz.py. Parts join with exactly one blank line between them; trailing newlines in a file are normalized away.",
   "html": "index.html",
   "css": [
     "viz.css"
   ],
   "js": [
     "js/core.js",
-    "js/layout-force.js",
+    "js/layout-timeline.js",
+    "js/layout-board.js",
     "js/layout-columns.js",
+    "js/layout-force.js",
     "js/blob.js",
     "js/render.js",
     "js/panel.js",

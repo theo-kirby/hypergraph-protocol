@@ -57,6 +57,48 @@ def test_every_view_matches_its_baseline(page):
         "HG_VIZ_UPDATE_BASELINE=1 uv run pytest tests/browser/")
 
 
+def test_no_view_fits_below_the_zoom_floor(page):
+    """The defect this overhaul exists to kill: a view that fits by shrinking to
+    illegibility. Nothing may open below MIN_FIT — it scrolls instead."""
+    for view in VIEWS:
+        open_view(page, view)
+        assert measure(page)["scale"] >= 0.45, f"{view} opened below the zoom floor"
+
+
+def test_timeline_x_axis_modes_and_board_tree_toggle(page):
+    """The two layout-local toggles both render and both stay above the floor."""
+    open_view(page, "timeline")
+    rank = measure(page)
+    page.click('.seg[data-key="xaxis"] button[data-val="time"]')
+    page.wait_for_timeout(120)
+    time_mode = measure(page)
+    assert time_mode["nodes"] == rank["nodes"]
+    # real dates stretch the strip: idle gaps are compressed, not erased
+    assert time_mode["width"] > rank["width"]
+    assert time_mode["scale"] >= 0.45
+
+    open_view(page, "frontier")
+    status = measure(page)
+    page.click('.seg[data-key="board"] button[data-val="tree"]')
+    page.wait_for_timeout(120)
+    tree = measure(page)
+    assert tree["nodes"] == status["nodes"]
+    assert tree["width"] < status["width"], "the tree is one indented column"
+    assert tree["scale"] >= 0.45
+
+
+def test_layout_local_controls_are_hidden_where_they_mean_nothing(page):
+    open_view(page, "timeline")
+    assert page.is_visible('.seg[data-key="xaxis"]')
+    assert page.is_hidden('.seg[data-key="board"]')
+    open_view(page, "frontier")
+    assert page.is_hidden('.seg[data-key="xaxis"]')
+    assert page.is_visible('.seg[data-key="board"]')
+    open_view(page, "clusters")
+    assert page.is_hidden('.seg[data-key="xaxis"]')
+    assert page.is_hidden('.seg[data-key="board"]')
+
+
 def test_views_are_deterministic_across_reloads(page, viz_html):
     """Two renders of one input must agree — the page has no randomness."""
     first = {}

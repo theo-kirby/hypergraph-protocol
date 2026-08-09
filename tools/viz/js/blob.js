@@ -18,14 +18,22 @@ function convexHull(pts) {
   return half(p).concat(half(p.slice().reverse()));
 }
 
+// A member contributes its whole box to the hull, so the outline wraps chips,
+// cards and circles alike — the shape depends on the layout, not on one toggle.
+function memberOutline(slug, pos) {
+  const p = pos[slug];
+  if (!p) return [];
+  if (styleFor(bySlug[slug]) === "circle") return [p];
+  const d = dimsOf(slug);
+  return [{ x: p.x - d.w / 2, y: p.y - d.h / 2 }, { x: p.x + d.w / 2, y: p.y - d.h / 2 },
+          { x: p.x - d.w / 2, y: p.y + d.h / 2 }, { x: p.x + d.w / 2, y: p.y + d.h / 2 }];
+}
+
 function blobPath(members, pos) {
-  const cards = show.style === "cards";
-  const RB = cards ? BPAD : R + BPAD;
-  let pts = members.map(s => pos[s]).filter(Boolean);
+  const circles = show.style === "circles";
+  const RB = circles ? R + BPAD : BPAD;
+  const pts = members.flatMap(s => memberOutline(s, pos));
   if (!pts.length) return null;
-  if (cards) pts = pts.flatMap(p => [  // hull must wrap the full card rects
-    { x: p.x - NW / 2, y: p.y - NH / 2 }, { x: p.x + NW / 2, y: p.y - NH / 2 },
-    { x: p.x - NW / 2, y: p.y + NH / 2 }, { x: p.x + NW / 2, y: p.y + NH / 2 }]);
   if (pts.length === 1) {
     const p = pts[0];
     return `M ${p.x - RB} ${p.y} a ${RB} ${RB} 0 1 0 ${2 * RB} 0` +
@@ -61,11 +69,11 @@ function blobPath(members, pos) {
 }
 
 function blobLabelPos(members, pos) {
-  const pts = members.map(s => pos[s]).filter(Boolean);
-  const off = (show.style === "cards" ? NH / 2 + BPAD : R + BPAD) + 8;
+  const pts = members.flatMap(s => memberOutline(s, pos));
+  if (!pts.length) return { x: 0, y: 0 };
   let cx = 0, top = 1e9;
   pts.forEach(p => { cx += p.x; top = Math.min(top, p.y); });
-  return { x: cx / pts.length, y: top - off };
+  return { x: cx / pts.length, y: top - BPAD - 8 };
 }
 
 // All blob label positions at once, with a deterministic de-overlap pass:

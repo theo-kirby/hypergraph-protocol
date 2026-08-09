@@ -100,6 +100,94 @@ def test_layout_is_deterministic_and_layered():
     assert seqs == [0, 1, 2, 3]
 
 
+def _record_graph(tmp_path, edges):
+    """Build a record-graph export from {slug: [parent slugs]} in insertion order."""
+    nodes = []
+    for i, (slug, parents) in enumerate(edges.items(), start=1):
+        nodes.append({
+            "node_id": f"20000000-0000-0000-0000-{i:012d}", "slug_name": slug,
+            "title": slug, "content": "## State Impact\n\nnone: fixture\n",
+            "parent_ids": [f"20000000-0000-0000-0000-{list(edges).index(p) + 1:012d}"
+                           for p in parents],
+            "created_at": f"2026-08-01T00:{i:02d}:00+00:00",
+        })
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps({"version": 1, "nodes": nodes}))
+    return hg.load_graph(path)
+
+
+def test_lane_layout_follows_the_earliest_parent(tmp_path):
+    """A linear chain is one lane; a fork opens a second one."""
+    graph = _record_graph(tmp_path, {
+        "root-aaa-0001": [], "one-bbb-0002": ["root-aaa-0001"],
+        "two-ccc-0003": ["one-bbb-0002"], "side-ddd-0004": ["one-bbb-0002"],
+        "tip-eee-0005": ["two-ccc-0003"],
+    })
+    chrono, lanes = hg.lane_layout(graph)
+    by_slug = {graph.nodes[nid].ref: lanes[nid] for nid in chrono}
+    # the chain keeps lane 0; the fork's second child must go somewhere else
+    assert by_slug["root-aaa-0001"] == by_slug["one-bbb-0002"] == 0
+    assert by_slug["two-ccc-0003"] == 0 and by_slug["tip-eee-0005"] == 0
+    assert by_slug["side-ddd-0004"] == 1
+
+
+def test_lane_layout_reuses_a_lane_that_owes_nothing(tmp_path):
+    """A finished branch releases its column instead of leaking width forever."""
+    graph = _record_graph(tmp_path, {
+        "root-aaa-0001": [],
+        "fork-bbb-0002": ["root-aaa-0001"],
+        "kid1-ccc-0003": ["fork-bbb-0002"],   # continues lane 0
+        "kid2-ddd-0004": ["fork-bbb-0002"],   # fork still owed an edge -> lane 1
+        "solo-eee-0005": [],                  # both branches now closed -> lane 0
+    })
+    chrono, lanes = hg.lane_layout(graph)
+    by_slug = {graph.nodes[nid].ref: lanes[nid] for nid in chrono}
+    assert by_slug["kid1-ccc-0003"] == 0 and by_slug["kid2-ddd-0004"] == 1
+    assert by_slug["solo-eee-0005"] == 0, "a lane owing nothing must be reused"
+
+
+def test_lane_layout_keeps_a_shared_lane_adjacent():
+    """The property the lanes exist for, checked on this repo's real graph.
+
+    A node only ever shares a lane with a parent by *continuing* it, so its
+    lane-neighbour to the left is that parent and the edge between them crosses
+    nothing. (A merge's other parents live in other lanes and get a drawn bend —
+    that is expected, and is what `git log --graph` does too.)
+    """
+    record = hg.load_graph(FIXTURES / "self" / "record.json")
+    chrono, lanes = hg.lane_layout(record)
+    order = {}
+    for nid in chrono:
+        order.setdefault(lanes[nid], []).append(nid)
+    checked = 0
+    for nid in chrono:
+        kin = [p for p in record.nodes[nid].parent_ids
+               if p in record.nodes and lanes[p] == lanes[nid]]
+        if not kin:
+            continue
+        seq = order[lanes[nid]]
+        before = seq[seq.index(nid) - 1] if seq.index(nid) else None
+        assert before in kin, (
+            f"{record.nodes[nid].ref} shares lane {lanes[nid]} with a parent but "
+            f"follows {record.nodes[before].ref if before else 'nothing'}")
+        checked += 1
+    assert checked > 20, "fixture should exercise the rule broadly"
+
+
+def test_payload_carries_timeline_and_board_facts():
+    data = build(CLEAN)
+    rec = {n["slug"]: n for n in data["record"]["nodes"]}
+    # chrono is a dense rank over real creation order, independent of `seq`
+    assert sorted(n["chrono"] for n in data["record"]["nodes"]) == [0, 1, 2, 3]
+    assert rec["royal-anchor-0001"]["chrono"] == 0
+    assert all(n["lane"] == 0 for n in data["record"]["nodes"]), "linear chain"
+    st = {n["slug"]: n for n in data["state"]["nodes"]}
+    quartz = st["mellow-quartz-0102"]
+    assert quartz["prov_count"] == 3 and quartz["impact_count"] == 2
+    assert quartz["last_record_at"] == rec["dim-walrus-0004"]["created_at"]
+    assert st[data["state"]["root"]]["prov_count"] == 0
+
+
 def test_render_viz_emits_selfcontained_html():
     html = hg.render_viz(CLEAN / "record.json", CLEAN / "state.json")
     assert html.startswith("<!doctype html>")

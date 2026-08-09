@@ -5,7 +5,11 @@ function comboStateX() { return show.style === "cards" ? NW + 430 : 300; }
 function computeLayout() {
   const pos = {};
   const cards = show.style === "cards";
-  if (show.layout === "layered") {
+  if (show.layout === "timeline") {
+    return layoutTimeline(pos);
+  } else if (show.layout === "board") {
+    return layoutBoard(pos);
+  } else if (show.layout === "layered") {
     if (show.graphs === "both") {  // two chronological columns
       const sx = comboStateX();
       const rStep = cards ? NH + 30 : 44, sStep = cards ? NH + 46 : 44;

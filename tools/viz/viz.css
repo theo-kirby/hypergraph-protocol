@@ -59,6 +59,7 @@
                            font-weight:600; border-color:var(--muted); }
   #toggles { margin-top:12px; display:flex; flex-direction:column; gap:8px; }
   .seg { display:flex; align-items:center; gap:8px; }
+  .seg[hidden] { display:none; }  /* layout-specific controls — see syncControls */
   .seg .lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
               color:var(--muted); width:48px; flex:none; }
   .seg .opts { display:flex; flex:1; background:var(--page);

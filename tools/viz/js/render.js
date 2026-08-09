@@ -21,42 +21,59 @@ function edgesFor() {
   return out;
 }
 
-// Point on the border of the NW x NH card centered at a, along a -> b.
-function trimToRect(a, b) {
+// Point on the border of the w x h box centered at a, along a -> b.
+function trimToRect(a, b, d) {
   const dx = b.x - a.x, dy = b.y - a.y;
   if (!dx && !dy) return { x: a.x, y: a.y };
-  const tx = dx ? (NW / 2) / Math.abs(dx) : Infinity;
-  const ty = dy ? (NH / 2) / Math.abs(dy) : Infinity;
+  const tx = dx ? (d.w / 2) / Math.abs(dx) : Infinity;
+  const ty = dy ? (d.h / 2) / Math.abs(dy) : Infinity;
   const t = Math.min(tx, ty);
   return { x: a.x + dx * t, y: a.y + dy * t };
+}
+
+// Timeline edges read like `git log --graph`: out of the parent's right edge,
+// into the child's left edge, with the bend held near the child so a lane change
+// is visible as a hook rather than a long diagonal.
+function timelineEdgePath(a, b, da, db) {
+  const x1 = a.x + da.w / 2, x2 = b.x - db.w / 2;
+  if (x2 <= x1) {  // same column or backwards: a shallow arc under the lanes
+    const my = Math.max(a.y, b.y) + LANE_H * 0.55;
+    return `M ${a.x} ${a.y + da.h / 2} C ${a.x} ${my}, ${b.x} ${my}, ${b.x} ${b.y + db.h / 2}`;
+  }
+  const bend = Math.min(28, (x2 - x1) / 2);
+  return `M ${x1} ${a.y} C ${x1 + bend} ${a.y}, ${x2 - bend} ${b.y}, ${x2} ${b.y}`;
 }
 
 function edgePath(e, pos) {
   const a = pos[e.from], b = pos[e.to];
   if (!a || !b) return null;
-  if (show.style === "circles") {  // straight line trimmed to circle perimeters
-    const dx = b.x - a.x, dy = b.y - a.y;
+  const da = dimsOf(e.from), db = dimsOf(e.to);
+  if (show.layout === "timeline" && e.kind === "tree"
+      && bySlug[e.from].graph === "record" && bySlug[e.to].graph === "record")
+    return timelineEdgePath(a, b, da, db);
+  if (show.style === "circles" && styleFor(bySlug[e.from]) === "circle") {
+    const dx = b.x - a.x, dy = b.y - a.y;  // straight, trimmed to the perimeters
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
     const ux = dx / d, uy = dy / d;
     return `M ${a.x + ux * R} ${a.y + uy * R} L ${b.x - ux * R} ${b.y - uy * R}`;
   }
-  if (show.layout === "force") {  // cards under force: straight, rect-clipped
-    const p1 = trimToRect(a, b), p2 = trimToRect(b, a);
+  if (show.layout === "force" || show.layout === "board") {
+    const p1 = trimToRect(a, b, da), p2 = trimToRect(b, a, db);
     return `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
   }
   if (e.kind === "tree" && !e.side) {
-    const y1 = a.y + NH / 2, y2 = b.y - NH / 2, ym = (y1 + y2) / 2;
+    const y1 = a.y + da.h / 2, y2 = b.y - db.h / 2, ym = (y1 + y2) / 2;
     return `M ${a.x} ${y1} C ${a.x} ${ym}, ${b.x} ${ym}, ${b.x} ${y2}`;
   }
   if (e.kind === "tree") {
     const dir = e.side === "left" ? -1 : 1;
-    const x = a.x + dir * NW / 2, x2 = b.x + dir * NW / 2;
+    const x = a.x + dir * da.w / 2, x2 = b.x + dir * db.w / 2;
     const off = 26 + 0.055 * Math.abs(b.y - a.y);
     return `M ${x} ${a.y} C ${x + dir * off} ${a.y}, ${x2 + dir * off} ${b.y}, ${x2} ${b.y}`;
   }
   const fromState = bySlug[e.from].graph === "state";
-  const x1 = a.x + (fromState ? -NW / 2 : NW / 2);
-  const x2 = b.x + (bySlug[e.to].graph === "state" ? -NW / 2 : NW / 2);
+  const x1 = a.x + (fromState ? -da.w / 2 : da.w / 2);
+  const x2 = b.x + (bySlug[e.to].graph === "state" ? -db.w / 2 : db.w / 2);
   const cx = (x1 + x2) / 2;
   return `M ${x1} ${a.y} C ${cx} ${a.y}, ${cx} ${b.y}, ${x2} ${b.y}`;
 }
@@ -83,16 +100,17 @@ function accentFor(entry) {
   return node.is_root ? T().ink2 : T().axis;
 }
 
-function nodeXf(p) {
-  return show.style === "circles" ? `translate(${p.x},${p.y})`
-                                  : `translate(${p.x - NW / 2},${p.y - NH / 2})`;
+function nodeXf(p, entry) {
+  if (styleFor(entry) === "circle") return `translate(${p.x},${p.y})`;
+  const d = dimsFor(entry);
+  return `translate(${p.x - d.w / 2},${p.y - d.h / 2})`;
 }
 
 function drawNode(entry, pos) {
   const { graph, node } = entry;
   const p = pos[node.slug];
   const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
-                      transform: nodeXf(p) });
+                      transform: nodeXf(p, entry) });
   const frontier = graph === "state" && node.frontier;
   // card rect must stay firstChild (updateDim restyles it)
   g.appendChild(el("rect", { x: .5, y: .5, width: NW - 1, height: NH - 1, rx: 9,
@@ -141,7 +159,7 @@ function drawCircleNode(entry, pos) {
   const { node } = entry;
   const p = pos[node.slug];
   const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
-                      transform: nodeXf(p) });
+                      transform: nodeXf(p, entry) });
   const heavy = node.is_root || node.is_hwm || node.unreconciled || node.frontier;
   g.appendChild(el("circle", { r: R, fill: T().surface, stroke: accentFor(entry),
     "stroke-width": heavy ? 2.2 : 1.4 }));
@@ -149,6 +167,145 @@ function drawCircleNode(entry, pos) {
   tip.textContent = node.title + " (" + node.slug + ")";
   g.appendChild(tip);
   return g;
+}
+
+// Timeline chip: one line of title at full reading size, plus a status pip.
+// Everything else about the node is one click away, which is the trade that
+// keeps 39 of these legible side by side.
+function drawChipNode(entry, pos) {
+  const { node } = entry;
+  const p = pos[node.slug];
+  const accent = accentFor(entry);
+  const marked = node.is_root || node.is_hwm || node.unreconciled;
+  const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
+                      transform: nodeXf(p, entry) });
+  g.appendChild(el("rect", { x: .5, y: .5, width: CW - 1, height: CH - 1, rx: 6,
+    fill: T().surface, stroke: marked ? accent : T().border,
+    "stroke-width": marked ? 1.4 : 1 }));
+  g.appendChild(el("rect", { x: 0, y: 0, width: 3.5, height: CH, rx: 1.75,
+    fill: accent }));
+  g.appendChild(el("text", { x: 10, y: CH / 2 + 4, "font-family": FONT,
+    "font-size": 11.5, "font-weight": node.is_root || node.is_hwm ? 650 : 500,
+    fill: T().ink }, trunc(node.title, 24)));
+  const tip = el("title");
+  tip.textContent = (node.created_at || "").slice(0, 10) + " · " + node.title +
+                    " (" + node.slug + ")";
+  g.appendChild(tip);
+  return g;
+}
+
+// Frontier board card: title, slug, status dot, how much record work stands
+// behind the claim, and when the newest of it landed.
+function drawBoardCard(entry, pos) {
+  const { node } = entry;
+  const p = pos[node.slug];
+  const accent = accentFor(entry);
+  const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
+                      transform: nodeXf(p, entry) });
+  g.appendChild(el("rect", { x: .5, y: .5, width: BW - 1, height: BH - 1, rx: 10,
+    fill: T().surface, stroke: node.frontier ? accent : T().border,
+    "stroke-width": node.frontier ? 1.6 : 1 }));
+  g.appendChild(el("rect", { x: 0, y: 0, width: 4, height: BH, rx: 2, fill: accent }));
+  g.appendChild(el("text", { x: 15, y: 22, "font-family": FONT, "font-size": 13,
+    "font-weight": node.is_root ? 700 : 620, fill: T().ink },
+    trunc(node.title, 26)));
+  g.appendChild(el("text", { x: 15, y: 39, "font-family": MONO, "font-size": 10.5,
+    fill: T().muted }, node.slug));
+  if (node.is_root) {
+    g.appendChild(el("text", { x: 15, y: 60, "font-family": FONT, "font-size": 11,
+      fill: T().ink2, "font-weight": 650 }, "state root"));
+  } else {
+    g.appendChild(el("circle", { cx: 18.5, cy: 56.5, r: 3.5, fill: accent }));
+    g.appendChild(el("text", { x: 27, y: 60, "font-family": FONT, "font-size": 11,
+      fill: T().ink2 }, node.status || "?"));
+    const facts = [];
+    if (node.prov_count) facts.push(node.prov_count + " prov");
+    if (node.last_record_at) facts.push((node.last_record_at || "").slice(0, 10));
+    if (facts.length)
+      g.appendChild(el("text", { x: BW - 13, y: 60, "font-family": FONT,
+        "font-size": 10.5, fill: T().muted, "text-anchor": "end" },
+        facts.join(" · ")));
+  }
+  const tip = el("title");
+  tip.textContent = node.title + " (" + node.slug + ")";
+  g.appendChild(tip);
+  return g;
+}
+
+function drawAnyNode(entry, pos) {
+  switch (styleFor(entry)) {
+    case "chip":   return drawChipNode(entry, pos);
+    case "board":  return drawBoardCard(entry, pos);
+    case "circle": return drawCircleNode(entry, pos);
+    default:       return drawNode(entry, pos);
+  }
+}
+
+// --------------------------------------------------------------- furniture
+// Layout-specific scenery: the lane ruler and date gutter of the timeline, the
+// column headers of the board. Drawn behind everything and never interactive.
+function drawTimelineFurniture(pos) {
+  const f = timelineFurniture(pos);
+  if (!f) return null;
+  const layer = el("g", { id: "furniture", "pointer-events": "none" });
+  for (let i = 0; i < f.laneCount; i++) {  // one rule per lane, faint
+    const y = i * LANE_H;
+    layer.appendChild(el("line", { x1: f.x0, y1: y, x2: f.x1, y2: y,
+      stroke: T().grid, "stroke-width": 1 }));
+    layer.appendChild(el("text", { x: f.x0 - 10, y: y + 4, "font-family": MONO,
+      "font-size": 10, fill: T().muted, "text-anchor": "end" }, "lane " + i));
+  }
+  const gutter = f.top - 6;
+  f.ticks.forEach(t => {
+    layer.appendChild(el("line", { x1: t.x, y1: gutter + 4, x2: t.x, y2: f.bottom,
+      stroke: T().grid, "stroke-width": 1, "stroke-dasharray": "2 5" }));
+    layer.appendChild(el("text", { x: t.x, y: gutter, "font-family": MONO,
+      "font-size": 10, fill: T().muted, "text-anchor": "middle" }, t.label));
+  });
+  if (f.hwmX != null) {  // everything right of the rule is not yet reconciled
+    layer.appendChild(el("rect", { x: f.hwmX, y: f.top - 2,
+      width: Math.max(0, f.x1 - f.hwmX), height: f.bottom - f.top + 2,
+      fill: T().unrec, opacity: 0.07 }));
+    layer.appendChild(el("line", { x1: f.hwmX, y1: f.top - 2, x2: f.hwmX,
+      y2: f.bottom, stroke: T().hwm, "stroke-width": 1.4, opacity: 0.7 }));
+    layer.appendChild(el("text", { x: f.hwmX + 6, y: f.bottom + 12,
+      "font-family": FONT, "font-size": 10.5, fill: T().hwm },
+      "high-water mark →  unreconciled"));
+  }
+  return layer;
+}
+
+function drawBoardFurniture() {
+  const f = boardFurniture();
+  if (!f) return null;
+  const layer = el("g", { id: "furniture", "pointer-events": "none" });
+  const top = f.headerY - 18;
+  f.columns.forEach(c => {
+    layer.appendChild(el("rect", { x: c.x - 10, y: top,
+      width: c.w + 20, height: f.height - top + 12, rx: 12,
+      fill: T().grid, opacity: 0.35 }));
+    const dot = el("circle", { r: 4, fill: T().status[c.status] || T().muted });
+    const text = el("text", { "font-family": FONT, "font-size": 11.5,
+      "font-weight": 700, fill: T().ink2, "letter-spacing": "0.06em" },
+      c.status.toUpperCase() + "  " + c.count);
+    if (c.rail) {  // collapsed: the header turns and runs down the rail
+      dot.setAttribute("cx", c.x + c.w / 2);
+      dot.setAttribute("cy", f.headerY - 4);
+      text.setAttribute("x", c.x + c.w / 2 + 4);
+      text.setAttribute("y", f.headerY + 12);
+      text.setAttribute("text-anchor", "start");
+      text.setAttribute("transform",
+        `rotate(90 ${c.x + c.w / 2 + 4} ${f.headerY + 12})`);
+    } else {
+      dot.setAttribute("cx", c.x + 5);
+      dot.setAttribute("cy", f.headerY - 4);
+      text.setAttribute("x", c.x + 15);
+      text.setAttribute("y", f.headerY);
+    }
+    layer.appendChild(dot);
+    layer.appendChild(text);
+  });
+  return layer;
 }
 
 let blobEls = {};
@@ -200,7 +357,10 @@ function renderAll() {
   const world = el("g", { id: "world" });
   svg.appendChild(world);
   blobEls = {};
-  if (show.blobs && recVis()) world.appendChild(drawBlobs(pos));  // behind everything
+  const furniture = show.layout === "timeline" ? drawTimelineFurniture(pos)
+                  : show.layout === "board" ? drawBoardFurniture() : null;
+  if (furniture) world.appendChild(furniture);                    // behind everything
+  if (show.blobs && recVis()) world.appendChild(drawBlobs(pos));
   const edgeLayer = el("g", { id: "edges" });
   const nodeLayer = el("g", { id: "nodes" });
   world.appendChild(edgeLayer);
@@ -243,8 +403,8 @@ function renderAll() {
 
   nodeEls = {};
   const draw = g => DATA[g].nodes.forEach(n => {
-    const gEl = show.style === "circles" ? drawCircleNode(bySlug[n.slug], pos)
-                                         : drawNode(bySlug[n.slug], pos);
+    if (!pos[n.slug]) return;
+    const gEl = drawAnyNode(bySlug[n.slug], pos);
     nodeLayer.appendChild(gEl);
     nodeEls[n.slug] = gEl;
   });
@@ -291,17 +451,24 @@ function updateDim() {
     const op = !m ? 0.12 : (rel && !rel.has(slug)) ? 0.3 : 1;
     vis[slug] = op === 1;
     nodeEls[slug].setAttribute("opacity", op);
-    const box = nodeEls[slug].firstChild;
-    if (show.style === "circles") {
-      const heavy = entry.node.is_root || entry.node.is_hwm ||
-        entry.node.unreconciled || entry.node.frontier;
+    const box = nodeEls[slug].firstChild;  // the shape stays firstChild in every draw*
+    const shape = styleFor(entry);
+    const n = entry.node;
+    if (shape === "circle") {
+      const heavy = n.is_root || n.is_hwm || n.unreconciled || n.frontier;
       box.setAttribute("stroke", slug === selected ? T().ink : accentFor(entry));
       box.setAttribute("stroke-width", slug === selected ? 2.4 : heavy ? 2.2 : 1.4);
     } else {
-      const frontier = entry.graph === "state" && entry.node.frontier;
+      // Marked = something the reader should not miss: the frontier on a state
+      // node, the root / high-water mark / unreconciled tail on a record node.
+      const marked = shape === "chip"
+        ? (n.is_root || n.is_hwm || n.unreconciled)
+        : (entry.graph === "state" && n.frontier);
+      const heavy = shape === "board" ? 1.6 : 1.4;
       box.setAttribute("stroke", slug === selected ? T().ink
-        : frontier ? accentFor(entry) : T().border);
-      box.setAttribute("stroke-width", slug === selected ? 1.8 : frontier ? 1.4 : 1);
+        : marked ? accentFor(entry) : T().border);
+      box.setAttribute("stroke-width", slug === selected ? heavy + 0.4
+        : marked ? heavy : 1);
     }
   }
   for (const st in blobEls) {  // dim via a separate opacity attr; base attrs

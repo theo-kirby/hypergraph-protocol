@@ -686,6 +686,51 @@ def state_dfs_order(state: Graph, root: Node) -> list[str]:
     return out
 
 
+def lane_layout(record: Graph) -> tuple[list[str], dict[str, int]]:
+    """`git log --graph` lane assignment over the record graph, in real time order.
+
+    Returns (chronological node_ids, {node_id: lane}). A node continues its earliest
+    parent's lane when that lane's tip *is* that parent — that is the only case where
+    the edge can be drawn straight without crossing an intervening node. Otherwise it
+    opens the lowest lane with no edge still pending through it.
+
+    "Pending" is the load-bearing part. A lane stays reserved while *any* node in it
+    still has an unplaced child, not merely while its tip does: a parent whose lane
+    was taken over by its first child still owes an edge to its second, and that edge
+    has to have somewhere to go. Once a lane owes nothing it is reused, so width stays
+    bounded by the number of genuinely concurrent threads (3 on this repo, not 29).
+    """
+    chrono = [n.node_id for n in sorted(record.nodes.values(),
+                                        key=lambda n: (n.created_at, n.slug))]
+    index = {nid: i for i, nid in enumerate(chrono)}
+    parents = {nid: sorted((p for p in record.nodes[nid].parent_ids if p in record.nodes),
+                           key=lambda p: index[p]) for nid in chrono}
+    remaining: dict[str, int] = {nid: 0 for nid in chrono}
+    for nid in chrono:
+        for pid in parents[nid]:
+            remaining[pid] += 1
+
+    tips: list[str | None] = []
+    pending: list[int] = []          # nodes in this lane that still owe an edge
+    lane: dict[str, int] = {}
+    for nid in chrono:
+        take = next((lane[p] for p in parents[nid] if tips[lane[p]] == p), None)
+        if take is None:
+            take = next((i for i, owed in enumerate(pending) if owed == 0), len(pending))
+            if take == len(pending):
+                tips.append(None)
+                pending.append(0)
+        tips[take] = nid
+        lane[nid] = take
+        if remaining[nid]:
+            pending[take] += 1
+        for pid in parents[nid]:
+            remaining[pid] -= 1
+            if remaining[pid] == 0:
+                pending[lane[pid]] -= 1
+    return chrono, lane
+
+
 def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> dict:
     """Assemble the JSON payload the viz page consumes: both graphs with
     deterministic layout hints, cross-graph provenance/impact links, HWM flags."""
@@ -702,6 +747,8 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
 
     rec_layout = layered_layout(record)
     st_layout = layered_layout(state)
+    chrono_order, lanes = lane_layout(record)
+    chrono_index = {nid: i for i, nid in enumerate(chrono_order)}
     by_kebab = {kebab(n.title): n for n in state.nodes.values()}
     id_to_slug = {g: {n.node_id: n.ref for n in gr.nodes.values()}
                   for g, gr in (("record", record), ("state", state))}
@@ -748,6 +795,8 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
             "unreconciled": unreconciled,
             "impacts": impacts, "impact_none": none_reason,
             "layer": ly, "order": od, "seq": seq,
+            # timeline view: real chronological rank, and the `git log` lane
+            "chrono": chrono_index[node.node_id], "lane": lanes[node.node_id],
         })
 
     state_nodes = []
@@ -767,12 +816,18 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
             note = note[1].strip() if len(note) > 1 else ""
             for slug in SLUG_RE.findall(line):
                 prov_notes.setdefault(slug, note)
+        prov_slugs: list[str] = []
         if not is_root:
             for slug in sorted(set(SLUG_RE.findall(COMMENT_RE.sub("", node.content)))):
                 if slug in record.by_slug:
                     add_link(slug, node.ref, "provenance", prov_notes.get(slug, ""))
+                    prov_slugs.append(slug)
         status = None if is_root else node_status(node)
         ly, od = st_layout[node.node_id]
+        # Board-card facts: how much record work stands behind this claim, and how
+        # long ago the newest of it landed. Both answer "is this still current?".
+        touched = [record.by_slug[s].created_at for s in prov_slugs
+                   if record.by_slug[s].created_at]
         state_nodes.append({
             "slug": node.ref, "title": node.title, "created_at": node.created_at,
             "parents": [id_to_slug["state"][p] for p in node.parent_ids
@@ -780,6 +835,10 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
             "content": node.content, "is_root": is_root,
             "status": status, "frontier": bool(status in FRONTIER),
             "layer": ly, "order": od, "seq": seq,
+            "prov_count": len(prov_slugs),
+            "last_record_at": max(touched) if touched else None,
+            "impact_count": sum(1 for l in links
+                                if l["state"] == node.ref and l["kind"] == "impact"),
         })
 
     project = (config.get("project")
@@ -810,14 +869,17 @@ VIZ_PART_RE = re.compile(r"/\*\{\{(?:CSS|JS)\}\}\*/\n")
 def assemble_viz_template(viz_dir: Path = VIZ_SRC_DIR) -> str:
     """Concatenate the tools/viz/ sources into the page template.
 
-    Parts join verbatim in `manifest.json` order — no separator is inserted, so the
-    blank line between two sections belongs to the end of the preceding file.
+    Parts join in `manifest.json` order, separated by exactly one blank line —
+    trailing newlines in a source file are normalized away, so whether a file ends
+    with a blank line can never change the bundle.
     """
     manifest = json.loads((viz_dir / "manifest.json").read_text())
-    parts = {"/*{{CSS}}*/\n": "".join((viz_dir / p).read_text() for p in manifest["css"]),
-             "/*{{JS}}*/\n": "".join((viz_dir / p).read_text() for p in manifest["js"])}
-    skeleton = (viz_dir / manifest["html"]).read_text()
-    return VIZ_PART_RE.sub(lambda m: parts[m.group(0)], skeleton)
+
+    def join(names: list[str]) -> str:
+        return "\n\n".join((viz_dir / p).read_text().rstrip("\n") for p in names) + "\n"
+
+    parts = {"/*{{CSS}}*/\n": join(manifest["css"]), "/*{{JS}}*/\n": join(manifest["js"])}
+    return VIZ_PART_RE.sub(lambda m: parts[m.group(0)], (viz_dir / manifest["html"]).read_text())
 
 
 def render_viz(record_path: Path, state_path: Path, config: dict | None = None,
@@ -1802,6 +1864,7 @@ VIZ_TEMPLATE = r"""<!doctype html>
                            font-weight:600; border-color:var(--muted); }
   #toggles { margin-top:12px; display:flex; flex-direction:column; gap:8px; }
   .seg { display:flex; align-items:center; gap:8px; }
+  .seg[hidden] { display:none; }  /* layout-specific controls — see syncControls */
   .seg .lbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
               color:var(--muted); width:48px; flex:none; }
   .seg .opts { display:flex; flex:1; background:var(--page);
@@ -1909,8 +1972,24 @@ VIZ_TEMPLATE = r"""<!doctype html>
         <div class="seg" data-key="layout">
           <span class="lbl">Layout</span>
           <div class="opts">
+            <button data-val="timeline" title="Record graph as git-log lanes">Lanes</button>
+            <button data-val="board" title="State graph as a status board">Board</button>
             <button data-val="layered">Layered</button>
             <button data-val="force">Force</button>
+          </div>
+        </div>
+        <div class="seg" data-key="xaxis" hidden>
+          <span class="lbl">X axis</span>
+          <div class="opts">
+            <button data-val="rank" title="One step per node — even spacing">Rank</button>
+            <button data-val="time" title="Real dates, long idle gaps compressed">Time</button>
+          </div>
+        </div>
+        <div class="seg" data-key="board" hidden>
+          <span class="lbl">Board</span>
+          <div class="opts">
+            <button data-val="status" title="Columns by status, frontier first">Status</button>
+            <button data-val="tree" title="Architecture tree, as in STATE.md">Tree</button>
           </div>
         </div>
         <div class="checks">
@@ -1925,6 +2004,9 @@ VIZ_TEMPLATE = r"""<!doctype html>
   </aside>
 </main>
 <script>
+// One inline block, wrapped so the page leaks nothing into the global scope.
+// Parts are concatenated by tools/bundle_viz.py; see tools/viz/manifest.json.
+(function () {
 "use strict";
 const DATA = __VIZ_DATA__;
 
@@ -1947,6 +2029,13 @@ const THEMES = {
 const SVGNS = "http://www.w3.org/2000/svg";
 const NW = 236, NH = 62;
 const R = 16, BPAD = 18;  // circle style: circle radius, blob hull padding
+// Timeline chips: deliberately small, because 39 of them sit side by side along
+// one time axis. The full title is one click away in the panel.
+const CW = 158, CH = 26, LANE_H = 42, RANK_STEP = CW + 16;
+const BW = 232, BH = 78, BCOL = BW + 26, BROW = BH + 12;  // frontier board cards
+// Nothing may fit below this. Shrinking past it trades "you can see everything"
+// for "you can read nothing" — the view scrolls instead.
+const MIN_FIT = 0.45, MAX_FIT = 1.25;
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 const SLUG_JS = /\b[a-z][a-z0-9]*-[a-z][a-z0-9]*-[0-9]{4}\b/g;
@@ -1960,7 +2049,9 @@ DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
 const show = {
   graphs: "record",   // "record" | "state" | "both"
   style:  "circles",  // "cards" | "circles"
-  layout: "force",    // "layered" | "force"
+  layout: "force",    // "timeline" | "board" | "layered" | "force"
+  xaxis:  "rank",     // timeline only: "rank" (even) | "time" (real dates)
+  board:  "status",   // board only: "status" columns | "tree" architecture
   tree:   true,       // intra-graph parent edges
   impact: false,      // cross-graph impact links (needs graphs === "both")
   prov:   false,      // cross-graph provenance links (ditto)
@@ -1968,26 +2059,55 @@ const show = {
 };
 const recVis = () => show.graphs !== "state";
 const stVis  = () => show.graphs !== "record";
+// Two layouts are about one graph each and say so: picking Lanes means you want
+// the record graph, picking Board means you want the state graph.
+const LAYOUT_GRAPH = { timeline: "record", board: "state" };
+// Which segmented controls apply to the current layout; the rest stay hidden
+// rather than dimmed, so the panel only ever offers real choices.
+const SEG_FOR_LAYOUT = { xaxis: ["timeline"], board: ["board"] };
 // Pan/zoom + node positions are cached per layout signature; edge/blob toggles
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
-const layoutKey = () => show.layout + ":" + show.graphs + ":" + show.style;
+const layoutKey = () => [show.layout, show.graphs, show.style,
+                         show.xaxis, show.board].join(":");
 
 // Four views, each named after its job. Timeline = what happened, in order.
 // Frontier = what is true now, and what is open. Provenance = which record work
 // each state claim rests on. Clusters = which work belongs to the same claim.
 const PRESETS = {
-  timeline:   { graphs:"record", style:"cards",   layout:"layered",
+  timeline:   { graphs:"record", style:"cards",   layout:"timeline",
+                xaxis:"rank", board:"status",
                 tree:true, impact:false, prov:false, blobs:false },
-  frontier:   { graphs:"state",  style:"cards",   layout:"layered",
-                tree:true, impact:false, prov:false, blobs:false },
+  frontier:   { graphs:"state",  style:"cards",   layout:"board",
+                xaxis:"rank", board:"status",
+                tree:false, impact:false, prov:false, blobs:false },
   provenance: { graphs:"both",   style:"cards",   layout:"layered",
+                xaxis:"rank", board:"status",
                 tree:true, impact:true,  prov:true,  blobs:false },
   clusters:   { graphs:"record", style:"circles", layout:"force",
+                xaxis:"rank", board:"status",
                 tree:true, impact:false, prov:false, blobs:true },
 };
 // Pre-rename deep links keep working: #record #state #combo #combination #hyper.
 const VIEW_ALIASES = { record:"timeline", state:"frontier", combo:"provenance",
                        combination:"provenance", hyper:"clusters" };
+// Node shape follows the layout, not only the Nodes toggle: the timeline draws
+// compact chips and the board draws status cards, because those two layouts exist
+// precisely to show what a generic card cannot.
+function styleFor(entry) {
+  if (show.layout === "timeline" && entry.graph === "record") return "chip";
+  if (show.layout === "board" && entry.graph === "state") return "board";
+  return show.style === "circles" ? "circle" : "card";
+}
+function dimsFor(entry) {
+  switch (styleFor(entry)) {
+    case "chip":   return { w: CW, h: CH };
+    case "board":  return { w: BW, h: BH };
+    case "circle": return { w: 2 * R, h: 2 * R };
+    default:       return { w: NW, h: NH };
+  }
+}
+function dimsOf(slug) { return dimsFor(bySlug[slug]); }
+
 function activePreset() {
   for (const name in PRESETS) {
     const p = PRESETS[name];
@@ -2062,6 +2182,243 @@ function hashSlug(s) {
   return h / 4294967296;
 }
 
+// ---------------------------------------------------------------- timeline
+// The record graph is a timeline with a few concurrent threads, not a DAG to be
+// ranked: on this repo it is 29 layers deep and 3 wide, which a layered layout
+// renders as a 1:15 ribbon. Here time runs along x and `git log` lanes stack
+// along y, so the same 39 nodes read as a wide strip at full size.
+//
+// Lanes come from the payload (hypergraph.py: lane_layout), so they are computed
+// once, deterministically, from the real parent relation.
+
+const MIN_STEP = Math.round(RANK_STEP * 0.35);   // "time" mode: idle gaps compress
+const MAX_STEP = RANK_STEP * 3;                  // …and busy days still separate
+
+function recordChrono() {
+  return DATA.record.nodes.slice().sort((a, b) => a.chrono - b.chrono);
+}
+
+// x per record node. "rank" gives every node the same slice of width; "time"
+// spaces them by real elapsed time with both ends clamped, so a three-week idle
+// gap does not push the next month off screen and a busy hour is still legible.
+function timelineX(nodes) {
+  const x = {};
+  if (show.xaxis === "rank") {
+    nodes.forEach(n => x[n.slug] = n.chrono * RANK_STEP);
+    return x;
+  }
+  const ms = nodes.map(n => Date.parse(n.created_at || "") || 0);
+  const gaps = [];
+  for (let i = 1; i < ms.length; i++) gaps.push(Math.max(0, ms[i] - ms[i - 1]));
+  const sorted = gaps.slice().sort((a, b) => a - b);
+  const median = sorted.length ? sorted[sorted.length >> 1] : 0;
+  const perMs = RANK_STEP / Math.max(1, median);   // median gap ≈ one rank step
+  let at = 0;
+  nodes.forEach((n, i) => {
+    if (i) at += Math.min(MAX_STEP, Math.max(MIN_STEP, (ms[i] - ms[i - 1]) * perMs));
+    x[n.slug] = Math.round(at);
+  });
+  return x;
+}
+
+function layoutTimeline(pos) {
+  const nodes = recordChrono();
+  const x = timelineX(nodes);
+  nodes.forEach(n => pos[n.slug] = { x: x[n.slug], y: n.lane * LANE_H });
+  if (stVis()) {  // state visible alongside: a plain column past the strip
+    const right = Math.max(0, ...nodes.map(n => x[n.slug])) + CW / 2 + 120 + NW / 2;
+    DATA.state.nodes.forEach(n => pos[n.slug] = { x: right, y: n.seq * (NH + 22) });
+  }
+  return pos;
+}
+
+// Furniture drawn behind the chips: lane rules, a date gutter, and the
+// high-water mark. Everything is derived from `pos`, so dragging a chip does not
+// invalidate it.
+function timelineFurniture(pos) {
+  const nodes = recordChrono().filter(n => pos[n.slug]);
+  if (!nodes.length) return null;
+  const xs = nodes.map(n => pos[n.slug].x);
+  const x0 = Math.min(...xs) - CW / 2 - 24, x1 = Math.max(...xs) + CW / 2 + 24;
+  const laneCount = Math.max(...nodes.map(n => n.lane)) + 1;
+
+  const ticks = [];           // one label per new calendar day, at its first node
+  let lastDay = null;
+  nodes.forEach(n => {
+    const day = (n.created_at || "").slice(0, 10);
+    if (!day || day === lastDay) return;
+    lastDay = day;
+    ticks.push({ x: pos[n.slug].x, day, label: day.slice(5) });
+  });
+
+  const hwm = DATA.reconciliation.high_water_mark;
+  const hwmX = hwm && pos[hwm] ? pos[hwm].x + CW / 2 + 8 : null;
+  return { x0, x1, laneCount, ticks, hwmX,
+           top: -LANE_H, bottom: (laneCount - 1) * LANE_H + LANE_H };
+}
+
+// ------------------------------------------------------------------- board
+// The state graph is a status board, not a graph. Twelve nodes at depth 2 drawn
+// as a tree is a flat bar in an empty screen — and it is the view that carries
+// the frontier, which is the first thing an arriving reader needs.
+//
+// Columns run broken | blocked | open | working | superseded: the three frontier
+// statuses first, because "what is broken or waiting" outranks "what is fine".
+// An empty column is kept and labelled 0 — "nothing is broken" is a real answer.
+
+const BOARD_COLUMNS = ["broken", "blocked", "open", "working", "superseded"];
+// Positions are card *centres*, so the first row must clear the header band.
+const BOARD_HEAD = 0;                    // header text baseline
+const BOARD_TOP = BH / 2 + 18;           // first card's centre
+const TREE_INDENT = 34;
+// An empty column collapses to a rail instead of vanishing. "Nothing is broken"
+// still gets said, and the five statuses stop costing 1290px of width when only
+// two of them hold anything.
+const RAIL_W = 52, RAIL_GAP = 12;
+
+function boardCards() {
+  return DATA.state.nodes.filter(n => !n.is_root);
+}
+function boardRoot() {
+  return DATA.state.nodes.find(n => n.is_root) || null;
+}
+
+// Freshest first inside a column: `last_record_at` is the newest record node
+// cited as this claim's provenance, so the column reads newest work downward.
+function boardColumnOrder(a, b) {
+  const at = a.last_record_at || "", bt = b.last_record_at || "";
+  if (at !== bt) return at < bt ? 1 : -1;
+  return a.seq - b.seq;
+}
+
+function boardGroups() {
+  const groups = {};
+  BOARD_COLUMNS.forEach(s => groups[s] = []);
+  boardCards().forEach(n => (groups[n.status] || (groups[n.status] = [])).push(n));
+  BOARD_COLUMNS.forEach(s => groups[s].sort(boardColumnOrder));
+  return groups;
+}
+
+// Column geometry: x and width per status, wide when populated, a rail when not.
+function boardColumns() {
+  const groups = boardGroups();
+  let x = 0;
+  return BOARD_COLUMNS.map(status => {
+    const count = groups[status].length;
+    const w = count ? BW : RAIL_W;
+    const col = { status, count, nodes: groups[status], x, w, rail: !count };
+    x += w + (count ? BCOL - BW : RAIL_GAP);
+    return col;
+  });
+}
+
+function layoutBoard(pos) {
+  const root = boardRoot();
+  if (show.board === "tree") {
+    // Mirrors STATE.md's Architecture section: pre-order DFS (`seq`) with the
+    // graph depth (`layer`) as indentation.
+    DATA.state.nodes.forEach(n => pos[n.slug] = {
+      x: n.layer * TREE_INDENT + BW / 2,
+      y: n.seq * (BH + 10),
+    });
+  } else {
+    const cols = boardColumns();
+    cols.forEach(col => col.nodes.forEach((n, row) => pos[n.slug] = {
+      x: col.x + BW / 2,
+      y: BOARD_TOP + row * BROW,
+    }));
+    const last = cols[cols.length - 1];
+    if (root) pos[root.slug] = {   // the root is a caption, not a column item
+      x: (cols[0].x + last.x + last.w) / 2,
+      y: BOARD_HEAD - 26 - BH / 2,
+    };
+  }
+  if (recVis()) {  // record visible alongside: a chronological column to the left
+    const left = -BCOL - NW / 2 - 40;
+    recordChrono().forEach(n => pos[n.slug] = { x: left, y: n.chrono * (NH + 16) });
+  }
+  return pos;
+}
+
+// Column headers, drawn only in status mode. Counts come from the same grouping
+// the layout used, so a header can never disagree with its column.
+function boardFurniture() {
+  if (show.board !== "status") return null;
+  const columns = boardColumns();
+  const rows = Math.max(1, ...columns.map(c => c.count));
+  return { columns, headerY: BOARD_HEAD,
+           height: BOARD_TOP + (rows - 1) * BROW + BH / 2 + 14 };
+}
+
+// x offset of the state column in the layered two-column arrangement; also
+// anchors the column header texts.
+function comboStateX() { return show.style === "cards" ? NW + 430 : 300; }
+
+function computeLayout() {
+  const pos = {};
+  const cards = show.style === "cards";
+  if (show.layout === "timeline") {
+    return layoutTimeline(pos);
+  } else if (show.layout === "board") {
+    return layoutBoard(pos);
+  } else if (show.layout === "layered") {
+    if (show.graphs === "both") {  // two chronological columns
+      const sx = comboStateX();
+      const rStep = cards ? NH + 30 : 44, sStep = cards ? NH + 46 : 44;
+      DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.seq * rStep });
+      DATA.state.nodes.forEach(n => pos[n.slug] = { x: sx, y: n.seq * sStep });
+    } else {                       // single graph: centered layer grid
+      const g = show.graphs;
+      const dx = cards ? NW + 70 : 76, dy = cards ? NH + 78 : 84;
+      const perLayer = {};
+      DATA[g].nodes.forEach(n => (perLayer[n.layer] = perLayer[n.layer] || []).push(n));
+      DATA[g].nodes.forEach(n => {
+        const width = perLayer[n.layer].length;
+        pos[n.slug] = { x: (n.order - (width - 1) / 2) * dx, y: n.layer * dy };
+      });
+    }
+  } else {                         // force: deterministic seed + sim
+    let maxOrder = 0;
+    if (recVis()) DATA.record.nodes.forEach(n => {
+      maxOrder = Math.max(maxOrder, n.order);
+      pos[n.slug] = {
+        x: n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
+        y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
+      };
+    });
+    if (stVis()) DATA.state.nodes.forEach(n => pos[n.slug] = {
+      x: (maxOrder + 3) * 80 + n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
+      y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
+    });
+    runSim(pos);
+    if (cards) {  // sim runs in circle metric; stretch, then separate any
+      for (const s in pos) { pos[s].x *= 3.2; pos[s].y *= 1.8; }
+      const slugs = Object.keys(pos);  // insertion order: deterministic
+      const mw = NW + 24, mh = NH + 24;
+      for (let pass = 0; pass < 40; pass++) {
+        let any = false;
+        for (let i = 0; i < slugs.length; i++) {
+          for (let j = i + 1; j < slugs.length; j++) {
+            const a = pos[slugs[i]], b = pos[slugs[j]];
+            const ox = mw - Math.abs(a.x - b.x), oy = mh - Math.abs(a.y - b.y);
+            if (ox <= 0 || oy <= 0) continue;  // cards clear of each other
+            any = true;
+            if (ox * mh < oy * mw) {  // push apart along the cheaper axis
+              const s = (a.x <= b.x ? -1 : 1) * ox / 2;
+              a.x += s; b.x -= s;
+            } else {
+              const s = (a.y <= b.y ? -1 : 1) * oy / 2;
+              a.y += s; b.y -= s;
+            }
+          }
+        }
+        if (!any) break;
+      }
+    }
+  }
+  return pos;
+}
+
 function simTick(pos, nodes, springs, clusters, alpha) {
   const f = {};
   nodes.forEach(s => f[s] = { x: 0, y: 0 });
@@ -2133,71 +2490,6 @@ function runSim(pos) {
   }
 }
 
-// x offset of the state column in the layered two-column arrangement; also
-// anchors the column header texts.
-function comboStateX() { return show.style === "cards" ? NW + 430 : 300; }
-
-function computeLayout() {
-  const pos = {};
-  const cards = show.style === "cards";
-  if (show.layout === "layered") {
-    if (show.graphs === "both") {  // two chronological columns
-      const sx = comboStateX();
-      const rStep = cards ? NH + 30 : 44, sStep = cards ? NH + 46 : 44;
-      DATA.record.nodes.forEach(n => pos[n.slug] = { x: 0, y: n.seq * rStep });
-      DATA.state.nodes.forEach(n => pos[n.slug] = { x: sx, y: n.seq * sStep });
-    } else {                       // single graph: centered layer grid
-      const g = show.graphs;
-      const dx = cards ? NW + 70 : 76, dy = cards ? NH + 78 : 84;
-      const perLayer = {};
-      DATA[g].nodes.forEach(n => (perLayer[n.layer] = perLayer[n.layer] || []).push(n));
-      DATA[g].nodes.forEach(n => {
-        const width = perLayer[n.layer].length;
-        pos[n.slug] = { x: (n.order - (width - 1) / 2) * dx, y: n.layer * dy };
-      });
-    }
-  } else {                         // force: deterministic seed + sim
-    let maxOrder = 0;
-    if (recVis()) DATA.record.nodes.forEach(n => {
-      maxOrder = Math.max(maxOrder, n.order);
-      pos[n.slug] = {
-        x: n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
-        y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
-      };
-    });
-    if (stVis()) DATA.state.nodes.forEach(n => pos[n.slug] = {
-      x: (maxOrder + 3) * 80 + n.order * 80 + (hashSlug(n.slug) - 0.5) * 8,
-      y: n.layer * 80 + (hashSlug(n.slug + "y") - 0.5) * 8,
-    });
-    runSim(pos);
-    if (cards) {  // sim runs in circle metric; stretch, then separate any
-      for (const s in pos) { pos[s].x *= 3.2; pos[s].y *= 1.8; }
-      const slugs = Object.keys(pos);  // insertion order: deterministic
-      const mw = NW + 24, mh = NH + 24;
-      for (let pass = 0; pass < 40; pass++) {
-        let any = false;
-        for (let i = 0; i < slugs.length; i++) {
-          for (let j = i + 1; j < slugs.length; j++) {
-            const a = pos[slugs[i]], b = pos[slugs[j]];
-            const ox = mw - Math.abs(a.x - b.x), oy = mh - Math.abs(a.y - b.y);
-            if (ox <= 0 || oy <= 0) continue;  // cards clear of each other
-            any = true;
-            if (ox * mh < oy * mw) {  // push apart along the cheaper axis
-              const s = (a.x <= b.x ? -1 : 1) * ox / 2;
-              a.x += s; b.x -= s;
-            } else {
-              const s = (a.y <= b.y ? -1 : 1) * oy / 2;
-              a.y += s; b.y -= s;
-            }
-          }
-        }
-        if (!any) break;
-      }
-    }
-  }
-  return pos;
-}
-
 // ------------------------------------------------------- blob hull geometry
 // Andrew's monotone chain; deterministic sort. Colinear inputs collapse to
 // the two extreme points (capsule fallback in blobPath).
@@ -2218,14 +2510,22 @@ function convexHull(pts) {
   return half(p).concat(half(p.slice().reverse()));
 }
 
+// A member contributes its whole box to the hull, so the outline wraps chips,
+// cards and circles alike — the shape depends on the layout, not on one toggle.
+function memberOutline(slug, pos) {
+  const p = pos[slug];
+  if (!p) return [];
+  if (styleFor(bySlug[slug]) === "circle") return [p];
+  const d = dimsOf(slug);
+  return [{ x: p.x - d.w / 2, y: p.y - d.h / 2 }, { x: p.x + d.w / 2, y: p.y - d.h / 2 },
+          { x: p.x - d.w / 2, y: p.y + d.h / 2 }, { x: p.x + d.w / 2, y: p.y + d.h / 2 }];
+}
+
 function blobPath(members, pos) {
-  const cards = show.style === "cards";
-  const RB = cards ? BPAD : R + BPAD;
-  let pts = members.map(s => pos[s]).filter(Boolean);
+  const circles = show.style === "circles";
+  const RB = circles ? R + BPAD : BPAD;
+  const pts = members.flatMap(s => memberOutline(s, pos));
   if (!pts.length) return null;
-  if (cards) pts = pts.flatMap(p => [  // hull must wrap the full card rects
-    { x: p.x - NW / 2, y: p.y - NH / 2 }, { x: p.x + NW / 2, y: p.y - NH / 2 },
-    { x: p.x - NW / 2, y: p.y + NH / 2 }, { x: p.x + NW / 2, y: p.y + NH / 2 }]);
   if (pts.length === 1) {
     const p = pts[0];
     return `M ${p.x - RB} ${p.y} a ${RB} ${RB} 0 1 0 ${2 * RB} 0` +
@@ -2261,11 +2561,11 @@ function blobPath(members, pos) {
 }
 
 function blobLabelPos(members, pos) {
-  const pts = members.map(s => pos[s]).filter(Boolean);
-  const off = (show.style === "cards" ? NH / 2 + BPAD : R + BPAD) + 8;
+  const pts = members.flatMap(s => memberOutline(s, pos));
+  if (!pts.length) return { x: 0, y: 0 };
   let cx = 0, top = 1e9;
   pts.forEach(p => { cx += p.x; top = Math.min(top, p.y); });
-  return { x: cx / pts.length, y: top - off };
+  return { x: cx / pts.length, y: top - BPAD - 8 };
 }
 
 // All blob label positions at once, with a deterministic de-overlap pass:
@@ -2314,42 +2614,59 @@ function edgesFor() {
   return out;
 }
 
-// Point on the border of the NW x NH card centered at a, along a -> b.
-function trimToRect(a, b) {
+// Point on the border of the w x h box centered at a, along a -> b.
+function trimToRect(a, b, d) {
   const dx = b.x - a.x, dy = b.y - a.y;
   if (!dx && !dy) return { x: a.x, y: a.y };
-  const tx = dx ? (NW / 2) / Math.abs(dx) : Infinity;
-  const ty = dy ? (NH / 2) / Math.abs(dy) : Infinity;
+  const tx = dx ? (d.w / 2) / Math.abs(dx) : Infinity;
+  const ty = dy ? (d.h / 2) / Math.abs(dy) : Infinity;
   const t = Math.min(tx, ty);
   return { x: a.x + dx * t, y: a.y + dy * t };
+}
+
+// Timeline edges read like `git log --graph`: out of the parent's right edge,
+// into the child's left edge, with the bend held near the child so a lane change
+// is visible as a hook rather than a long diagonal.
+function timelineEdgePath(a, b, da, db) {
+  const x1 = a.x + da.w / 2, x2 = b.x - db.w / 2;
+  if (x2 <= x1) {  // same column or backwards: a shallow arc under the lanes
+    const my = Math.max(a.y, b.y) + LANE_H * 0.55;
+    return `M ${a.x} ${a.y + da.h / 2} C ${a.x} ${my}, ${b.x} ${my}, ${b.x} ${b.y + db.h / 2}`;
+  }
+  const bend = Math.min(28, (x2 - x1) / 2);
+  return `M ${x1} ${a.y} C ${x1 + bend} ${a.y}, ${x2 - bend} ${b.y}, ${x2} ${b.y}`;
 }
 
 function edgePath(e, pos) {
   const a = pos[e.from], b = pos[e.to];
   if (!a || !b) return null;
-  if (show.style === "circles") {  // straight line trimmed to circle perimeters
-    const dx = b.x - a.x, dy = b.y - a.y;
+  const da = dimsOf(e.from), db = dimsOf(e.to);
+  if (show.layout === "timeline" && e.kind === "tree"
+      && bySlug[e.from].graph === "record" && bySlug[e.to].graph === "record")
+    return timelineEdgePath(a, b, da, db);
+  if (show.style === "circles" && styleFor(bySlug[e.from]) === "circle") {
+    const dx = b.x - a.x, dy = b.y - a.y;  // straight, trimmed to the perimeters
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
     const ux = dx / d, uy = dy / d;
     return `M ${a.x + ux * R} ${a.y + uy * R} L ${b.x - ux * R} ${b.y - uy * R}`;
   }
-  if (show.layout === "force") {  // cards under force: straight, rect-clipped
-    const p1 = trimToRect(a, b), p2 = trimToRect(b, a);
+  if (show.layout === "force" || show.layout === "board") {
+    const p1 = trimToRect(a, b, da), p2 = trimToRect(b, a, db);
     return `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
   }
   if (e.kind === "tree" && !e.side) {
-    const y1 = a.y + NH / 2, y2 = b.y - NH / 2, ym = (y1 + y2) / 2;
+    const y1 = a.y + da.h / 2, y2 = b.y - db.h / 2, ym = (y1 + y2) / 2;
     return `M ${a.x} ${y1} C ${a.x} ${ym}, ${b.x} ${ym}, ${b.x} ${y2}`;
   }
   if (e.kind === "tree") {
     const dir = e.side === "left" ? -1 : 1;
-    const x = a.x + dir * NW / 2, x2 = b.x + dir * NW / 2;
+    const x = a.x + dir * da.w / 2, x2 = b.x + dir * db.w / 2;
     const off = 26 + 0.055 * Math.abs(b.y - a.y);
     return `M ${x} ${a.y} C ${x + dir * off} ${a.y}, ${x2 + dir * off} ${b.y}, ${x2} ${b.y}`;
   }
   const fromState = bySlug[e.from].graph === "state";
-  const x1 = a.x + (fromState ? -NW / 2 : NW / 2);
-  const x2 = b.x + (bySlug[e.to].graph === "state" ? -NW / 2 : NW / 2);
+  const x1 = a.x + (fromState ? -da.w / 2 : da.w / 2);
+  const x2 = b.x + (bySlug[e.to].graph === "state" ? -db.w / 2 : db.w / 2);
   const cx = (x1 + x2) / 2;
   return `M ${x1} ${a.y} C ${cx} ${a.y}, ${cx} ${b.y}, ${x2} ${b.y}`;
 }
@@ -2376,16 +2693,17 @@ function accentFor(entry) {
   return node.is_root ? T().ink2 : T().axis;
 }
 
-function nodeXf(p) {
-  return show.style === "circles" ? `translate(${p.x},${p.y})`
-                                  : `translate(${p.x - NW / 2},${p.y - NH / 2})`;
+function nodeXf(p, entry) {
+  if (styleFor(entry) === "circle") return `translate(${p.x},${p.y})`;
+  const d = dimsFor(entry);
+  return `translate(${p.x - d.w / 2},${p.y - d.h / 2})`;
 }
 
 function drawNode(entry, pos) {
   const { graph, node } = entry;
   const p = pos[node.slug];
   const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
-                      transform: nodeXf(p) });
+                      transform: nodeXf(p, entry) });
   const frontier = graph === "state" && node.frontier;
   // card rect must stay firstChild (updateDim restyles it)
   g.appendChild(el("rect", { x: .5, y: .5, width: NW - 1, height: NH - 1, rx: 9,
@@ -2434,7 +2752,7 @@ function drawCircleNode(entry, pos) {
   const { node } = entry;
   const p = pos[node.slug];
   const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
-                      transform: nodeXf(p) });
+                      transform: nodeXf(p, entry) });
   const heavy = node.is_root || node.is_hwm || node.unreconciled || node.frontier;
   g.appendChild(el("circle", { r: R, fill: T().surface, stroke: accentFor(entry),
     "stroke-width": heavy ? 2.2 : 1.4 }));
@@ -2442,6 +2760,145 @@ function drawCircleNode(entry, pos) {
   tip.textContent = node.title + " (" + node.slug + ")";
   g.appendChild(tip);
   return g;
+}
+
+// Timeline chip: one line of title at full reading size, plus a status pip.
+// Everything else about the node is one click away, which is the trade that
+// keeps 39 of these legible side by side.
+function drawChipNode(entry, pos) {
+  const { node } = entry;
+  const p = pos[node.slug];
+  const accent = accentFor(entry);
+  const marked = node.is_root || node.is_hwm || node.unreconciled;
+  const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
+                      transform: nodeXf(p, entry) });
+  g.appendChild(el("rect", { x: .5, y: .5, width: CW - 1, height: CH - 1, rx: 6,
+    fill: T().surface, stroke: marked ? accent : T().border,
+    "stroke-width": marked ? 1.4 : 1 }));
+  g.appendChild(el("rect", { x: 0, y: 0, width: 3.5, height: CH, rx: 1.75,
+    fill: accent }));
+  g.appendChild(el("text", { x: 10, y: CH / 2 + 4, "font-family": FONT,
+    "font-size": 11.5, "font-weight": node.is_root || node.is_hwm ? 650 : 500,
+    fill: T().ink }, trunc(node.title, 24)));
+  const tip = el("title");
+  tip.textContent = (node.created_at || "").slice(0, 10) + " · " + node.title +
+                    " (" + node.slug + ")";
+  g.appendChild(tip);
+  return g;
+}
+
+// Frontier board card: title, slug, status dot, how much record work stands
+// behind the claim, and when the newest of it landed.
+function drawBoardCard(entry, pos) {
+  const { node } = entry;
+  const p = pos[node.slug];
+  const accent = accentFor(entry);
+  const g = el("g", { class: "node", "data-slug": node.slug, cursor: "pointer",
+                      transform: nodeXf(p, entry) });
+  g.appendChild(el("rect", { x: .5, y: .5, width: BW - 1, height: BH - 1, rx: 10,
+    fill: T().surface, stroke: node.frontier ? accent : T().border,
+    "stroke-width": node.frontier ? 1.6 : 1 }));
+  g.appendChild(el("rect", { x: 0, y: 0, width: 4, height: BH, rx: 2, fill: accent }));
+  g.appendChild(el("text", { x: 15, y: 22, "font-family": FONT, "font-size": 13,
+    "font-weight": node.is_root ? 700 : 620, fill: T().ink },
+    trunc(node.title, 26)));
+  g.appendChild(el("text", { x: 15, y: 39, "font-family": MONO, "font-size": 10.5,
+    fill: T().muted }, node.slug));
+  if (node.is_root) {
+    g.appendChild(el("text", { x: 15, y: 60, "font-family": FONT, "font-size": 11,
+      fill: T().ink2, "font-weight": 650 }, "state root"));
+  } else {
+    g.appendChild(el("circle", { cx: 18.5, cy: 56.5, r: 3.5, fill: accent }));
+    g.appendChild(el("text", { x: 27, y: 60, "font-family": FONT, "font-size": 11,
+      fill: T().ink2 }, node.status || "?"));
+    const facts = [];
+    if (node.prov_count) facts.push(node.prov_count + " prov");
+    if (node.last_record_at) facts.push((node.last_record_at || "").slice(0, 10));
+    if (facts.length)
+      g.appendChild(el("text", { x: BW - 13, y: 60, "font-family": FONT,
+        "font-size": 10.5, fill: T().muted, "text-anchor": "end" },
+        facts.join(" · ")));
+  }
+  const tip = el("title");
+  tip.textContent = node.title + " (" + node.slug + ")";
+  g.appendChild(tip);
+  return g;
+}
+
+function drawAnyNode(entry, pos) {
+  switch (styleFor(entry)) {
+    case "chip":   return drawChipNode(entry, pos);
+    case "board":  return drawBoardCard(entry, pos);
+    case "circle": return drawCircleNode(entry, pos);
+    default:       return drawNode(entry, pos);
+  }
+}
+
+// --------------------------------------------------------------- furniture
+// Layout-specific scenery: the lane ruler and date gutter of the timeline, the
+// column headers of the board. Drawn behind everything and never interactive.
+function drawTimelineFurniture(pos) {
+  const f = timelineFurniture(pos);
+  if (!f) return null;
+  const layer = el("g", { id: "furniture", "pointer-events": "none" });
+  for (let i = 0; i < f.laneCount; i++) {  // one rule per lane, faint
+    const y = i * LANE_H;
+    layer.appendChild(el("line", { x1: f.x0, y1: y, x2: f.x1, y2: y,
+      stroke: T().grid, "stroke-width": 1 }));
+    layer.appendChild(el("text", { x: f.x0 - 10, y: y + 4, "font-family": MONO,
+      "font-size": 10, fill: T().muted, "text-anchor": "end" }, "lane " + i));
+  }
+  const gutter = f.top - 6;
+  f.ticks.forEach(t => {
+    layer.appendChild(el("line", { x1: t.x, y1: gutter + 4, x2: t.x, y2: f.bottom,
+      stroke: T().grid, "stroke-width": 1, "stroke-dasharray": "2 5" }));
+    layer.appendChild(el("text", { x: t.x, y: gutter, "font-family": MONO,
+      "font-size": 10, fill: T().muted, "text-anchor": "middle" }, t.label));
+  });
+  if (f.hwmX != null) {  // everything right of the rule is not yet reconciled
+    layer.appendChild(el("rect", { x: f.hwmX, y: f.top - 2,
+      width: Math.max(0, f.x1 - f.hwmX), height: f.bottom - f.top + 2,
+      fill: T().unrec, opacity: 0.07 }));
+    layer.appendChild(el("line", { x1: f.hwmX, y1: f.top - 2, x2: f.hwmX,
+      y2: f.bottom, stroke: T().hwm, "stroke-width": 1.4, opacity: 0.7 }));
+    layer.appendChild(el("text", { x: f.hwmX + 6, y: f.bottom + 12,
+      "font-family": FONT, "font-size": 10.5, fill: T().hwm },
+      "high-water mark →  unreconciled"));
+  }
+  return layer;
+}
+
+function drawBoardFurniture() {
+  const f = boardFurniture();
+  if (!f) return null;
+  const layer = el("g", { id: "furniture", "pointer-events": "none" });
+  const top = f.headerY - 18;
+  f.columns.forEach(c => {
+    layer.appendChild(el("rect", { x: c.x - 10, y: top,
+      width: c.w + 20, height: f.height - top + 12, rx: 12,
+      fill: T().grid, opacity: 0.35 }));
+    const dot = el("circle", { r: 4, fill: T().status[c.status] || T().muted });
+    const text = el("text", { "font-family": FONT, "font-size": 11.5,
+      "font-weight": 700, fill: T().ink2, "letter-spacing": "0.06em" },
+      c.status.toUpperCase() + "  " + c.count);
+    if (c.rail) {  // collapsed: the header turns and runs down the rail
+      dot.setAttribute("cx", c.x + c.w / 2);
+      dot.setAttribute("cy", f.headerY - 4);
+      text.setAttribute("x", c.x + c.w / 2 + 4);
+      text.setAttribute("y", f.headerY + 12);
+      text.setAttribute("text-anchor", "start");
+      text.setAttribute("transform",
+        `rotate(90 ${c.x + c.w / 2 + 4} ${f.headerY + 12})`);
+    } else {
+      dot.setAttribute("cx", c.x + 5);
+      dot.setAttribute("cy", f.headerY - 4);
+      text.setAttribute("x", c.x + 15);
+      text.setAttribute("y", f.headerY);
+    }
+    layer.appendChild(dot);
+    layer.appendChild(text);
+  });
+  return layer;
 }
 
 let blobEls = {};
@@ -2493,7 +2950,10 @@ function renderAll() {
   const world = el("g", { id: "world" });
   svg.appendChild(world);
   blobEls = {};
-  if (show.blobs && recVis()) world.appendChild(drawBlobs(pos));  // behind everything
+  const furniture = show.layout === "timeline" ? drawTimelineFurniture(pos)
+                  : show.layout === "board" ? drawBoardFurniture() : null;
+  if (furniture) world.appendChild(furniture);                    // behind everything
+  if (show.blobs && recVis()) world.appendChild(drawBlobs(pos));
   const edgeLayer = el("g", { id: "edges" });
   const nodeLayer = el("g", { id: "nodes" });
   world.appendChild(edgeLayer);
@@ -2536,8 +2996,8 @@ function renderAll() {
 
   nodeEls = {};
   const draw = g => DATA[g].nodes.forEach(n => {
-    const gEl = show.style === "circles" ? drawCircleNode(bySlug[n.slug], pos)
-                                         : drawNode(bySlug[n.slug], pos);
+    if (!pos[n.slug]) return;
+    const gEl = drawAnyNode(bySlug[n.slug], pos);
     nodeLayer.appendChild(gEl);
     nodeEls[n.slug] = gEl;
   });
@@ -2584,17 +3044,24 @@ function updateDim() {
     const op = !m ? 0.12 : (rel && !rel.has(slug)) ? 0.3 : 1;
     vis[slug] = op === 1;
     nodeEls[slug].setAttribute("opacity", op);
-    const box = nodeEls[slug].firstChild;
-    if (show.style === "circles") {
-      const heavy = entry.node.is_root || entry.node.is_hwm ||
-        entry.node.unreconciled || entry.node.frontier;
+    const box = nodeEls[slug].firstChild;  // the shape stays firstChild in every draw*
+    const shape = styleFor(entry);
+    const n = entry.node;
+    if (shape === "circle") {
+      const heavy = n.is_root || n.is_hwm || n.unreconciled || n.frontier;
       box.setAttribute("stroke", slug === selected ? T().ink : accentFor(entry));
       box.setAttribute("stroke-width", slug === selected ? 2.4 : heavy ? 2.2 : 1.4);
     } else {
-      const frontier = entry.graph === "state" && entry.node.frontier;
+      // Marked = something the reader should not miss: the frontier on a state
+      // node, the root / high-water mark / unreconciled tail on a record node.
+      const marked = shape === "chip"
+        ? (n.is_root || n.is_hwm || n.unreconciled)
+        : (entry.graph === "state" && n.frontier);
+      const heavy = shape === "board" ? 1.6 : 1.4;
       box.setAttribute("stroke", slug === selected ? T().ink
-        : frontier ? accentFor(entry) : T().border);
-      box.setAttribute("stroke-width", slug === selected ? 1.8 : frontier ? 1.4 : 1);
+        : marked ? accentFor(entry) : T().border);
+      box.setAttribute("stroke-width", slug === selected ? heavy + 0.4
+        : marked ? heavy : 1);
     }
   }
   for (const st in blobEls) {  // dim via a separate opacity attr; base attrs
@@ -2806,7 +3273,7 @@ svg.addEventListener("pointermove", e => {
     const pos = posFor(), p = pos[drag.slug];
     p.x = drag.ox + dx / tfFor().k;
     p.y = drag.oy + dy / tfFor().k;
-    nodeEls[drag.slug].setAttribute("transform", nodeXf(p));
+    nodeEls[drag.slug].setAttribute("transform", nodeXf(p, bySlug[drag.slug]));
     edges.forEach((eg, i) => {
       if (!edgeEls[i]) return;
       if (eg.from === drag.slug || eg.to === drag.slug)
@@ -2842,32 +3309,80 @@ document.getElementById("search").addEventListener("input", e => {
   updateDim();
 });
 
+// The layout's own scenery is content, not decoration: an empty `broken` column
+// is a real answer, and cropping it because it holds no cards would be a lie.
+function furnitureBounds(pos) {
+  if (show.layout === "timeline") {
+    const f = timelineFurniture(pos);
+    return f && { minX: f.x0 - 58, maxX: f.x1,
+                  minY: f.top - 20, maxY: f.bottom + 18 };
+  }
+  if (show.layout === "board") {
+    const f = boardFurniture();
+    if (!f) return null;
+    const last = f.columns[f.columns.length - 1];
+    return { minX: f.columns[0].x - 12, maxX: last.x + last.w + 12,
+             minY: f.headerY - 24, maxY: f.height + 30 };
+  }
+  if (show.layout === "layered" && show.graphs === "both")
+    return { minX: 1e9, maxX: -1e9, minY: -64, maxY: -1e9 };  // column headers
+  return null;
+}
+
 function worldBounds() {
   const pos = posFor();
-  const circles = show.style === "circles";
-  const hx = circles ? R + BPAD + 20 : NW / 2;
-  const hy = circles ? R + BPAD + 20 : NH / 2;
   let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
   for (const slug in pos) {
     if (!nodeEls[slug]) continue;
+    const entry = bySlug[slug], d = dimsFor(entry);
+    const circle = styleFor(entry) === "circle";
+    const hx = circle ? R + BPAD + 20 : d.w / 2;
+    const hy = circle ? R + BPAD + 20 : d.h / 2;
     minX = Math.min(minX, pos[slug].x - hx);
     maxX = Math.max(maxX, pos[slug].x + hx);
     minY = Math.min(minY, pos[slug].y - hy);
     maxY = Math.max(maxY, pos[slug].y + hy);
   }
+  const f = furnitureBounds(pos);
+  if (f) {
+    minX = Math.min(minX, f.minX); maxX = Math.max(maxX, f.maxX);
+    minY = Math.min(minY, f.minY); maxY = Math.max(maxY, f.maxY);
+  }
   return { minX, minY, maxX, maxY };
 }
 
+// Which axis a layout is fitted on, and how far it may be enlarged.
+//
+// Fitting both axes of a long strip is what produced the 0.18 zoom this overhaul
+// exists to kill. A timeline is short and endless: fit its height, keep the type
+// at design size, and scroll through history. Columns and board lanes are the
+// same argument turned ninety degrees — fit the width, scroll down the list.
+function fitPlan() {
+  if (show.layout === "timeline") return { axis: "y", max: 1 };
+  if (show.layout === "board") return { axis: "x", max: 1 };
+  if (show.layout === "layered" && show.graphs === "both")
+    return { axis: "x", max: MAX_FIT };
+  return { axis: "both", max: MAX_FIT };
+}
+
+// Fit, but never below MIN_FIT. Below that the labels stop being text and the
+// view is worthless; scrolling a legible strip beats seeing an illegible whole.
+// When the content overflows the axis, anchor at its start rather than centering
+// on its middle — for a timeline that means "start at the beginning".
 function fit() {
-  let { minX, minY, maxX, maxY } = worldBounds();
+  const { minX, minY, maxX, maxY } = worldBounds();
   if (minX > maxX) return;
-  if (show.layout === "layered" && show.graphs === "both") minY -= 60;  // column headers
-  const r = svg.getBoundingClientRect(), pad = 50;
+  const plan = fitPlan();
+  const r = svg.getBoundingClientRect(), pad = 40;
+  const kx = (r.width - pad * 2) / (maxX - minX);
+  const ky = (r.height - pad * 2) / (maxY - minY);
+  const raw = plan.axis === "x" ? kx : plan.axis === "y" ? ky : Math.min(kx, ky);
   const t = tfFor();
-  t.k = Math.min(1.25, (r.width - pad * 2) / (maxX - minX),
-                 (r.height - pad * 2) / (maxY - minY));
-  t.x = (r.width - (maxX + minX) * t.k) / 2;
-  t.y = (r.height - (maxY + minY) * t.k) / 2;
+  t.k = Math.max(MIN_FIT, Math.min(plan.max, raw));
+  const fitsX = (maxX - minX) * t.k <= r.width - pad * 2;
+  const fitsY = (maxY - minY) * t.k <= r.height - pad * 2;
+  t.x = fitsX ? (r.width - (maxX + minX) * t.k) / 2 : pad - minX * t.k;
+  t.y = fitsY ? (r.height - (maxY + minY) * t.k) / 2 : pad - minY * t.k;
   applyTf();
 }
 
@@ -2877,8 +3392,13 @@ function syncControls() {
   document.querySelectorAll("#presets button").forEach(b =>
     b.classList.toggle("active", b.dataset.preset === active));
   document.querySelectorAll("#toggles .seg").forEach(seg => {
+    const key = seg.dataset.key;
     seg.querySelectorAll("button").forEach(b =>
-      b.classList.toggle("active", b.dataset.val === show[seg.dataset.key]));
+      b.classList.toggle("active", b.dataset.val === show[key]));
+    // Layout-specific controls are hidden, not dimmed: the panel should only
+    // ever offer choices that mean something for what is on screen.
+    const only = SEG_FOR_LAYOUT[key];
+    seg.hidden = !!only && only.indexOf(show.layout) < 0;
   });
   const both = show.graphs === "both";
   document.querySelectorAll("#toggles .checks input").forEach(cb => {
@@ -2889,6 +3409,14 @@ function syncControls() {
     cb.disabled = off;
     cb.closest("label").classList.toggle("off", off);
   });
+}
+
+// Lanes is about the record graph and Board about the state graph, so picking
+// one implies its graph rather than silently rendering an empty canvas.
+function setLayout(next) {
+  show.layout = next;
+  const needs = LAYOUT_GRAPH[next];
+  if (needs && show.graphs !== "both" && show.graphs !== needs) show.graphs = needs;
 }
 
 // Fit once per arrangement, manual afterward.
@@ -2911,7 +3439,8 @@ document.getElementById("controls").addEventListener("click", e => {
   if (segBtn) {
     const key = segBtn.closest(".seg").dataset.key;
     if (show[key] !== segBtn.dataset.val) {
-      show[key] = segBtn.dataset.val;
+      if (key === "layout") setLayout(segBtn.dataset.val);
+      else show[key] = segBtn.dataset.val;
       syncControls();
       rerender();
     }
@@ -2961,6 +3490,7 @@ document.getElementById("themeBtn").addEventListener("click", () => {
   renderAll();
   renderPanel();
 });
+
 const exportMenu = document.getElementById("exportMenu");
 document.getElementById("exportBtn").addEventListener("click", e => {
   e.stopPropagation();
@@ -3010,6 +3540,7 @@ const bootView = VIEW_ALIASES[boot] || boot;
 applyPreset(PRESETS[bootView] ? bootView : "clusters");
 if (bySlug[boot]) jumpTo(boot);
 renderPanel();
+})();
 </script>
 </body>
 </html>

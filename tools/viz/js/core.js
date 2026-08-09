@@ -20,6 +20,13 @@ const THEMES = {
 const SVGNS = "http://www.w3.org/2000/svg";
 const NW = 236, NH = 62;
 const R = 16, BPAD = 18;  // circle style: circle radius, blob hull padding
+// Timeline chips: deliberately small, because 39 of them sit side by side along
+// one time axis. The full title is one click away in the panel.
+const CW = 158, CH = 26, LANE_H = 42, RANK_STEP = CW + 16;
+const BW = 232, BH = 78, BCOL = BW + 26, BROW = BH + 12;  // frontier board cards
+// Nothing may fit below this. Shrinking past it trades "you can see everything"
+// for "you can read nothing" — the view scrolls instead.
+const MIN_FIT = 0.45, MAX_FIT = 1.25;
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 const SLUG_JS = /\b[a-z][a-z0-9]*-[a-z][a-z0-9]*-[0-9]{4}\b/g;
@@ -33,7 +40,9 @@ DATA.state.nodes.forEach(n => bySlug[n.slug] = { graph: "state", node: n });
 const show = {
   graphs: "record",   // "record" | "state" | "both"
   style:  "circles",  // "cards" | "circles"
-  layout: "force",    // "layered" | "force"
+  layout: "force",    // "timeline" | "board" | "layered" | "force"
+  xaxis:  "rank",     // timeline only: "rank" (even) | "time" (real dates)
+  board:  "status",   // board only: "status" columns | "tree" architecture
   tree:   true,       // intra-graph parent edges
   impact: false,      // cross-graph impact links (needs graphs === "both")
   prov:   false,      // cross-graph provenance links (ditto)
@@ -41,26 +50,55 @@ const show = {
 };
 const recVis = () => show.graphs !== "state";
 const stVis  = () => show.graphs !== "record";
+// Two layouts are about one graph each and say so: picking Lanes means you want
+// the record graph, picking Board means you want the state graph.
+const LAYOUT_GRAPH = { timeline: "record", board: "state" };
+// Which segmented controls apply to the current layout; the rest stay hidden
+// rather than dimmed, so the panel only ever offers real choices.
+const SEG_FOR_LAYOUT = { xaxis: ["timeline"], board: ["board"] };
 // Pan/zoom + node positions are cached per layout signature; edge/blob toggles
 // deliberately excluded so flipping a checkbox never resets pan or drag state.
-const layoutKey = () => show.layout + ":" + show.graphs + ":" + show.style;
+const layoutKey = () => [show.layout, show.graphs, show.style,
+                         show.xaxis, show.board].join(":");
 
 // Four views, each named after its job. Timeline = what happened, in order.
 // Frontier = what is true now, and what is open. Provenance = which record work
 // each state claim rests on. Clusters = which work belongs to the same claim.
 const PRESETS = {
-  timeline:   { graphs:"record", style:"cards",   layout:"layered",
+  timeline:   { graphs:"record", style:"cards",   layout:"timeline",
+                xaxis:"rank", board:"status",
                 tree:true, impact:false, prov:false, blobs:false },
-  frontier:   { graphs:"state",  style:"cards",   layout:"layered",
-                tree:true, impact:false, prov:false, blobs:false },
+  frontier:   { graphs:"state",  style:"cards",   layout:"board",
+                xaxis:"rank", board:"status",
+                tree:false, impact:false, prov:false, blobs:false },
   provenance: { graphs:"both",   style:"cards",   layout:"layered",
+                xaxis:"rank", board:"status",
                 tree:true, impact:true,  prov:true,  blobs:false },
   clusters:   { graphs:"record", style:"circles", layout:"force",
+                xaxis:"rank", board:"status",
                 tree:true, impact:false, prov:false, blobs:true },
 };
 // Pre-rename deep links keep working: #record #state #combo #combination #hyper.
 const VIEW_ALIASES = { record:"timeline", state:"frontier", combo:"provenance",
                        combination:"provenance", hyper:"clusters" };
+// Node shape follows the layout, not only the Nodes toggle: the timeline draws
+// compact chips and the board draws status cards, because those two layouts exist
+// precisely to show what a generic card cannot.
+function styleFor(entry) {
+  if (show.layout === "timeline" && entry.graph === "record") return "chip";
+  if (show.layout === "board" && entry.graph === "state") return "board";
+  return show.style === "circles" ? "circle" : "card";
+}
+function dimsFor(entry) {
+  switch (styleFor(entry)) {
+    case "chip":   return { w: CW, h: CH };
+    case "board":  return { w: BW, h: BH };
+    case "circle": return { w: 2 * R, h: 2 * R };
+    default:       return { w: NW, h: NH };
+  }
+}
+function dimsOf(slug) { return dimsFor(bySlug[slug]); }
+
 function activePreset() {
   for (const name in PRESETS) {
     const p = PRESETS[name];
