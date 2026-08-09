@@ -15,23 +15,22 @@ cache_dir: .hypergraph/cache
 # Generated state snapshot (committed; never hand-edited).
 state_md: STATE.md
 
-# Which backend adapter the skills follow (backend/INTERFACE.md). This is the live
-# dispatch key: every skill reads it and follows the matching reference doc.
-#
-#   local     — markdown node files in this repo are the source of truth
-#               (backend/local-adapter.md). No MCP, no account; the graphs travel
-#               with the repo and `hypergraph export` feeds check/render/viz.
-#   flywheel  — Flywheel MCP is the source of truth (backend/flywheel-adapter.md).
-#               Recommended when you want hosting and cloud agents.
-backend: local
-
-# Where the local backend keeps node files (committed). `local` backend only.
+# Where the node files live (committed). These files ARE the graphs — there is no
+# storage to choose (SPEC: Storage). A `backend:` key from a pre-0.0.4 config is
+# ignored; `check` warns if it says anything other than `local`.
 graph_dir: .hypergraph/graph
 
-# Optional: mirror the local graphs into a hosted store. With `backend: local` and
-# `mirror: flywheel`, local stays canonical and Flywheel is a regenerable projection
-# refreshed via `hypergraph push --plan` → skill executes → `push --record-result`.
+# Optional: publish the committed node files to a hosted graph you own
+# (backend/mirror.md). One-way — the files stay canonical and the mirror is a
+# regenerable projection. Absent → `hypergraph push` is a no-op that exits 0, which
+# is why callers never have to test for it. The skills do not know it exists.
 # mirror: flywheel
+
+# The account that owns the mirror roots. Set it: without it, running with a key
+# from a different account reports "the graph is missing" rather than "wrong
+# account", which is the same symptom as a deleted graph and is not the same thing.
+# `hypergraph mirror doctor` checks it and prints the id to paste here.
+# mirror_account_id: 00000000-0000-0000-0000-000000000000
 
 # Optional: adoption epoch (SPEC: Adoption epochs). Record nodes created strictly
 # before the marker node are legacy history, exempt from I2/template compliance in
@@ -39,10 +38,11 @@ graph_dir: .hypergraph/graph
 # epoch:
 #   marker: adjective-noun-0000
 
-# Optional: fresh mirror roots minted for an adopted project, which mirrors its own
-# full history under roots it owns. Exempt from push --verify's
-# no-local-counterpart check; the skill layer parents mirror pushes here. Verify
-# against these roots alone — never splice the archive roots into that export.
+# Optional: fresh mirror roots for a project that publishes its own full history
+# under roots it owns. Exempt from `push --verify`'s no-local-counterpart check;
+# `push` parents local roots here. Mint them with `hypergraph mirror roots --mint`,
+# which appends this block for you. Absent → `push` falls back to record_root /
+# state_root above, which is right for a project re-homed from its own hosted graph.
 # mirror_roots:
 #   record:
 #     node_id: 00000000-0000-0000-0000-000000000000
@@ -53,9 +53,11 @@ graph_dir: .hypergraph/graph
 
 # Optional (mandatory for mode-A adoptions): where the pre-adoption graph lives.
 # The checker doesn't read it, but it does two jobs: it is the only pointer to legacy
-# artifacts (they do not survive import to the local backend), and it is the source
-# `hypergraph push --lineage` renders the mirror record root's body from — so give
-# every root a `title`, and keep the block current if roots are added.
+# artifacts (they do not survive import — node files have no artifact operation), and
+# it is what the mirror record root's lineage body is rendered from — so give every
+# root a `title`, and keep the block current if roots are added. `push` refuses to
+# treat an archive root as a mirror root, because splicing the archive into a verify
+# export makes a nearly-empty mirror verify clean.
 # The archive is frozen: this project never writes to it.
 # archive:
 #   backend: flywheel

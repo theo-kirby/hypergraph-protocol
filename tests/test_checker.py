@@ -202,3 +202,25 @@ def test_cli_reports_a_version():
     pyproject = (ROOT / "pyproject.toml").read_text()
     declared = re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1)
     assert hg.__version__ == declared
+
+
+def test_legacy_backend_key_warns_but_never_fails():
+    """`backend:` is ignored since 0.0.4, and a missing key now means the node files.
+
+    Warning, not violation: failing someone's CI over a key the tool no longer reads
+    would be hostile, and the migration it names (re-homing) is not a five-second fix.
+    """
+    clean = FIXTURES / "clean"
+    config = {"backend": "flywheel"}
+    report = hg.run_check(clean / "record.json", clean / "state.json", config)
+    warnings = [str(f) for f in report.warnings()]
+    assert any("is ignored" in w and "mirror.md" in w for w in warnings), warnings
+    assert report.violations() == []
+
+
+def test_backend_local_and_a_missing_backend_key_are_both_silent():
+    """A missing key is correct by construction now — there is one thing it can mean."""
+    clean = FIXTURES / "clean"
+    for config in ({"backend": "local"}, {}):
+        report = hg.run_check(clean / "record.json", clean / "state.json", config)
+        assert not [str(f) for f in report.warnings() if "backend" in str(f)]

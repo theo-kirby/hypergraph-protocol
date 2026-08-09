@@ -1,4 +1,4 @@
-# Hypergraph Protocol — v0.0.2
+# Hypergraph Protocol — v0.0.4
 
 Hypergraph is a protocol for maintaining **two graphs per research project**, kept as
 [markdown files committed in the repo](backend/local-adapter.md):
@@ -310,7 +310,7 @@ regenerable projection and the repo stays canonical. It is a property of the too
 of the protocol: **the skills do not know it exists**, and a project with no mirror
 configured never touches that path. Mechanics: [backend/mirror.md](backend/mirror.md).
 
-## Future work (out of scope for v0.0.2)
+## Future work (out of scope for v0.0.4)
 
 Committed forward work lives in the state graph as open frontier nodes (see Forward
 work above) — for this repo, that is where field dogfooding is tracked. The list below

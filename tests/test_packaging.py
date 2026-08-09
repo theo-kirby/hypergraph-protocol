@@ -66,3 +66,20 @@ def test_module_version_matches_pyproject():
     assert in_module, "tools/hypergraph.py declares no __version__"
     assert in_module.group(1) == declared, (
         f"tools/hypergraph.py says {in_module.group(1)}, pyproject says {declared}")
+
+
+def test_spec_header_matches_pyproject():
+    """SPEC.md's version header must not drift from the distribution.
+
+    It did: the spec said v0.0.2 while the tool shipped 0.0.3, so the document
+    describing the protocol disagreed with the artifact implementing it. Four lines
+    closes that permanently — SPEC.md is the durable publication artifact, and a
+    wrong version number on it is a claim about which protocol you are reading.
+    """
+    import re
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    header = (ROOT / "SPEC.md").read_text(encoding="utf-8").splitlines()[0]
+    found = re.search(r"v(\d+\.\d+\.\d+)", header)
+    assert found, f"SPEC.md's first line carries no version: {header!r}"
+    assert found.group(1) == declared, (
+        f"SPEC.md says v{found.group(1)}, pyproject says {declared}")

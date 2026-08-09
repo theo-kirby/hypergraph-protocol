@@ -58,7 +58,7 @@ from __future__ import annotations
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 import argparse
 import hashlib
@@ -558,6 +558,23 @@ def resolve_epoch_cutoff(config: dict, record: Graph, report: Report) -> datetim
     return node.created
 
 
+def check_legacy_backend_key(config: dict, report: Report) -> None:
+    """Warn — never fail — on a pre-0.0.4 `backend:` key.
+
+    Storage is no longer a choice (SPEC: Storage), so the key is ignored. A missing
+    `backend:` used to mean `flywheel` and now means the node files, which is correct
+    by construction because there is only one thing it can mean. Anything other than
+    `local` names a graph that lives somewhere this tool will not read, so say so —
+    but as a warning: failing someone's CI over a key the tool ignores is hostile."""
+    backend = config.get("backend")
+    if backend is not None and str(backend) != "local":
+        report.add("warning", "-", "config",
+                   f"`backend: {backend}` is ignored — the node files are the graph "
+                   "(SPEC: Storage). If this project's graph still lives on a hosted "
+                   "store, re-home it into the repo first: see 'Re-homing a hosted "
+                   "graph into the repo' in backend/mirror.md. Then drop the key.")
+
+
 def run_check(record_path: Path, state_path: Path, config: dict | None = None,
               *, config_given: bool | None = None) -> Report:
     if config_given is None:
@@ -570,6 +587,7 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
                             config_given=config_given)
     state_root = find_root(state, config.get("state_root"), report, "state",
                            config_given=config_given)
+    check_legacy_backend_key(config, report)
     epoch_cutoff = resolve_epoch_cutoff(config, record, report)
     check_impacts(record, state, record_root, report, epoch_cutoff)
     check_state_nodes(record, state, state_root, report)
