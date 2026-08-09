@@ -314,3 +314,145 @@ def _orientation_calls(session: SessionMetrics) -> Optional[int]:
                 return count
             count += 1
     return None
+
+
+# ---- dual fidelity: what the run produced vs what it can still point to -------
+#
+# The nine-run benchmark scored one file, `artifacts/vectors.txt`, as it stood at
+# teardown, and reported that the control arm produced 0/3 usable models. That
+# was a sampling artifact. git-s1 reached 22.03% and git-s2 23.29% mid-run and
+# published both to GitHub; both then overwrote the artifact with a diverged
+# run, and the harvest sampled the wreckage. `boxwheel/word2vec-cpu-baseline`
+# still holds git-s2's vectors.
+#
+# So two numbers, both pre-registered (METRICS.md §1):
+#
+#   fidelity_final            — the artifact at teardown. What the run left behind.
+#   fidelity_best_recoverable — the best model the run can still POINT TO from its
+#                               own record and published repo.
+#
+# The second has a deliberately awkward constraint: a candidate counts only if the
+# run's own record cites its number. A better file sitting in a directory the run
+# never mentions is not recovered knowledge, it is luck, and counting it would
+# measure the harvest rather than the memory system. The gap between the two is
+# itself the measure — it is how much proven work each memory system lost.
+
+# A number in a record is "the same result" as a scored candidate if it lands
+# within this many percentage points. Wide enough for rounding and for a run that
+# reported 23.3 against a scored 23.29; far tighter than the spread between any
+# two genuinely different training runs.
+CITATION_TOLERANCE_PP = 0.5
+
+# Percentages as a run writes them: `23.29%`, `accuracy: 0.2329`, `22.0 %`.
+_PERCENT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+_FRACTION = re.compile(
+    r"(?:accuracy|acc|total|score)\D{0,12}?(0\.\d{2,6})\b", re.IGNORECASE)
+
+
+def cited_accuracies(text: str) -> List[float]:
+    """Every accuracy a record claims, as fractions in [0, 1].
+
+    Both notations, because arms write both. Values outside a plausible analogy
+    range are dropped: `100%` of something else, or a `0.95` learning-rate decay,
+    are not claims about this measure.
+    """
+    found: List[float] = []
+    for match in _PERCENT.finditer(text or ""):
+        value = float(match.group(1)) / 100.0
+        if 0.0 < value <= 0.75:
+            found.append(value)
+    for match in _FRACTION.finditer(text or ""):
+        value = float(match.group(1))
+        if 0.0 < value <= 0.75:
+            found.append(value)
+    return found
+
+
+def record_text(run_dir: Path, extra: Optional[List[Path]] = None) -> str:
+    """Everything this run offers as its own account of itself.
+
+    The memory-system artifacts of all three arms, plus the published README and
+    the structured results. Deliberately arm-agnostic: the question is "can this
+    run point to the number", and each arm answers it in its own medium.
+    """
+    names = ("README.md", "NOTES.md", "DECISIONS.md", "DEAD-ENDS.md",
+             "STATE.md", "results.json", "COMMITS.txt")
+    parts: List[str] = []
+    for path in sorted(run_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.name in names or (".hypergraph/graph" in str(path)
+                                  and path.suffix == ".md"):
+            try:
+                parts.append(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+    for path in extra or []:
+        try:
+            parts.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return "\n".join(parts)
+
+
+def find_vector_candidates(root: Path) -> List[Path]:
+    """Every scoreable vector dump under `root`, final artifact first.
+
+    `artifacts/vectors.txt` leads because it is `fidelity_final`'s subject and
+    the two measures should agree about which file that is.
+    """
+    seen: List[Path] = []
+    for path in sorted(root.rglob("vectors*")):
+        if not path.is_file() or path.stat().st_size < 1024:
+            continue
+        if path.suffix in (".gz", ".xz", ".bz2", ".zip"):
+            continue  # compressed dumps are decompressed by the caller, if at all
+        seen.append(path)
+    seen.sort(key=lambda p: (not str(p).endswith("artifacts/vectors.txt"), str(p)))
+    return seen
+
+
+def best_recoverable(scored: List[dict], cited: List[float],
+                     *, tolerance_pp: float = CITATION_TOLERANCE_PP) -> Optional[dict]:
+    """The best-scoring candidate whose number the run's own record cites.
+
+    Returns the scoring dict augmented with `cited: bool` and `source`, or None
+    when the run can point to nothing. A run whose record cites no number at all
+    recovers nothing by this measure, which is the intended reading: an
+    unciteable artifact is not a result the memory system preserved.
+    """
+    tolerance = tolerance_pp / 100.0
+    eligible = []
+    for entry in scored:
+        if entry.get("diverged"):
+            continue
+        accuracy = (entry.get("total") or {}).get("accuracy")
+        if accuracy is None:
+            continue
+        if any(abs(accuracy - claim) <= tolerance for claim in cited):
+            eligible.append((accuracy, entry))
+    if not eligible:
+        return None
+    eligible.sort(key=lambda pair: pair[0], reverse=True)
+    best = dict(eligible[0][1])
+    best["cited"] = True
+    return best
+
+
+def fidelity_gap(final: Optional[dict], recoverable: Optional[dict]
+                 ) -> Optional[float]:
+    """`best_recoverable - final`, in accuracy points. The work the run lost.
+
+    None when either side is absent — a gap between a number and a non-number is
+    not zero, and reporting it as zero would say a run lost nothing when what
+    actually happened is that it produced nothing.
+    """
+    def acc(entry):
+        if not entry or entry.get("diverged"):
+            return None
+        return (entry.get("total") or {}).get("accuracy")
+
+    a, b = acc(final), acc(recoverable)
+    if a is None or b is None:
+        return None
+    return b - a

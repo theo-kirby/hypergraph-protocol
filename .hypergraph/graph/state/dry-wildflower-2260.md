@@ -9,9 +9,9 @@ summary: Five skills (init/record/reconcile/orient/adopt) + AGENTS.md onboarding
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 7
-  pushed_at: '2026-08-08T11:35:36+00:00'
-  content_sha256: 88deef2c39fa7a04acbbc55781b45aae5b6aca9265498b3b339ce30fdaa3e1c1
+  revision: 8
+  pushed_at: '2026-08-09T10:15:16+00:00'
+  content_sha256: 49417f71d698512a4701931d4935765f9fb5fd0afdedaf954d5c5d34302dc6c6
 ---
 Status: working
 
@@ -25,11 +25,14 @@ Status: working
 - Orient validated end-to-end by a fresh agent (4/6 calls); skill updated to read component bodies via one flywheel_get_node_children page [rec: steep-cell-5173].
 - hypergraph-record covers directive decision nodes: Operator/agent intent is recorded with impact declarations before any work exists, so gaps reach the frontier through the record graph [rec: patient-limit-9007].
 - Onboarding outside the skills channel: AGENTS.md states the record discipline as non-negotiable for arriving agents, with CLAUDE.md containing only `@AGENTS.md`; added after blind test #1 (machinery used, obligation missed) and validated by blind test #2 — a controlled retest with AGENTS.md as the only changed variable produced full compliance: orient, record, defer reconcile [rec: tiny-sunset-0847] [rec: little-bar-4131].
+- The five skills are **not installed by default anywhere**, and `AGENTS.md` claimed they were ("also installed in `~/.claude/skills`"). That stale claim cost a full working session: `/hypergraph-record` and `/hypergraph-reconcile` resolved as unknown skills and it read as a harness fault rather than a missing install. AGENTS.md corrected — the workflow **is** the SKILL.md file and can be followed directly; `hypergraph skills install` (project) or `--user` (global) is what makes them loadable [rec: sweet-wave-7885].
+- The benchmark boxes are unaffected by that gap: pi never reads `.claude/skills`, and the Claude Code provisioning path already runs `skills install --user` itself [rec: sweet-wave-7885].
 
 ## Negative knowledge
 
 - [scope: hypergraph-orient reading state-node bodies on the Flywheel backend | confidence: medium | evidence: steep-cell-5173] flywheel_get_node_tree with projection=full returns topology-only payloads — it cannot substitute for get_node_children/get_node when bodies are needed.
 - [scope: protocol discoverability by uninstructed agents | confidence: high | evidence: tiny-sunset-0847, little-bar-4131] README/SPEC presence and installed skills do not by themselves cause a protocol-naive agent to record its work — it can use the graphs as app data without recognizing the obligation; repo-level agent onboarding (AGENTS.md/CLAUDE.md) is required, and the controlled retest confirms it is also sufficient.
+- [scope: documenting where a tool's skills live | confidence: high | evidence: sweet-wave-7885] a README claim that something is installed is not an install. `AGENTS.md` asserted the skills were in `~/.claude/skills`; they were in the repo and nowhere else, and the resulting "unknown skill" errors were read as a harness bug for a whole session. Documentation that states a machine's state, rather than the command that produces it, goes stale silently and misdirects whoever trusts it.
 
 ## Provenance
 
@@ -42,3 +45,4 @@ Status: working
 - late-isle-6483 — fifth skill hypergraph-adopt + agents-block template
 - stormy-dew-2969 — mode-B marker parentage corrected from field use
 - tender-moss-3792 — adopt/reconcile/init updated for fork-import: --fork, full-history push, batched result recording, mirror-only verify
+- sweet-wave-7885 — skills are not installed by default; AGENTS.md corrected

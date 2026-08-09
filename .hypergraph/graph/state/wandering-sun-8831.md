@@ -9,9 +9,9 @@ summary: 'check/render/viz + local backend + epoch support + push --verify/--leg
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 9
-  pushed_at: '2026-08-08T11:35:36+00:00'
-  content_sha256: 757d6c9b7ec60b6b9baf2260eab14c3fe34928c9adf1254e9e57470b8f7c8e23
+  revision: 10
+  pushed_at: '2026-08-09T10:15:16+00:00'
+  content_sha256: d40553eca0a7b3c78d58595d91cd058e158c6fa051723c0e67808db6a786b906
 ---
 Status: working
 
@@ -25,6 +25,7 @@ Status: working
 - `import --fork` splits the two jobs the `flywheel:` block was doing at once: the source graph's ids go to a new `origin:` block (immutable provenance, read by nothing), and `flywheel:` is omitted, so `push_plan` plans every imported node as a `create` under roots the project owns. Plain `import` is byte-identical to before — it still serves re-homing a graph you own. No logic change was needed in `push_plan` or `verify_mirror`, and `check` reads neither block, so I1-I8 are untouched [rec: tender-moss-3792].
 - The tool now enforces protocol invariants at authoring time, not only at check time: `new` runs the real checker over a candidate node before writing it (a bad impact target exits 2 with nothing written), `--reconcile` gates every state write (I3), `update` refuses record nodes outright, and `new state` rejects pre-scaffolded bodies that would duplicate the CLI-generated template sections [rec: old-dawn-8747] [rec: careful-harbor-3902].
 - Test suite green: 72 pytest cases over committed fixtures — checker (incl. 4 epoch cases), viz, and local backend (incl. verify/legend/drift, fork-import, and skills-install cases) [rec: tender-moss-3792]. The strongest local-backend guarantee is the round-trip: importing the clean fixture into node files and exporting back yields node-for-node identical graphs that still check clean [rec: old-dawn-8747].
+- Two real defects in `check` were found by watching agents fail against it in the benchmark, not by review [rec: staid-field-2723]: `check --config <missing>` raised an unhandled `FileNotFoundError` from pathlib, naming the plumbing instead of the problem — two of three arm-C agents read that as "contents are wrong", wrote a one-line `backend: local` stub, and got "0 violations" because `find_root` had silently fallen back to guessing the roots. Both fixed: a missing or unparseable config exits with an instruction naming the file and what a config is for, and an inferred root now emits a warning when a config was supplied and declares none — a warning rather than a violation, because a freshly initialised graph has exactly one parentless node and a correct graph must not fail over how its root was located. `--version` added, which the benchmark's install pin and `preflight.py` both require [rec: staid-field-2723].
 - Verified against real Flywheel exports: normalizes the live edge encoding (incoming_ids as parents), alongside parent_ids/parents fixture forms [rec: steep-cell-5173].
 
 ## Negative knowledge
@@ -34,6 +35,7 @@ Status: working
 - [scope: trusting `check`'s unreconciled count | confidence: high | evidence: little-bar-4131] the count is computed from cache exports, not the live graph — an agent that records after its last export leaves check reporting 0 unreconciled while the live graph is ahead; comparing the export's exported_at against recent activity is the fix (export-freshness check, SPEC future work).
 - [scope: state-node frontmatter summaries under reconcile | confidence: medium | evidence: green-field-8645] `check` parses only node bodies — a reconcile that rewrites a body but not the frontmatter `summary:` leaves drift no invariant can catch; surfaced summaries then contradict the body (worst case observed: an "Open gap" summary on a working node).
 - [scope: verifying an adopted project's mirror | confidence: high | evidence: copper-moss-3669, northern-willow-0469 | decision: copper-moss-3669] `push --verify` proves nothing when the archive roots are spliced into the export it is given: the imported nodes' archive-owned ids resolve through the archive subgraph, so a mirror holding 3 record nodes of 111 exits 0. The export must cover the project's own `mirror_roots` alone.
+- [scope: reporting tool errors to autonomous agents | confidence: high | evidence: staid-field-2723] an unhandled traceback is not an error message: it names the library that raised, not the thing the operator got wrong, and an agent will act on that misdirection. Two of three arm-C runs "fixed" a missing config by writing a stub that made the checker stop crashing and start guessing — the tool reported success throughout. Any failure an agent can cause needs an error that names the cause and the remedy.
 - [scope: guarding CLI-generated markdown sections | confidence: high | evidence: sleepy-branch-3744] a substring test for a heading rejects prose that merely mentions it — anchor heading guards to line starts.
 
 ## Provenance
@@ -53,5 +55,6 @@ Status: working
 - careful-harbor-3902 — verify + legend + pre-scaffolded-body guard; suite to 60
 - humble-clover-7048 — mirror_roots verify exemption; suite to 62
 - copper-moss-3669 — fork-import decision: the identity split and mirror-only verification
+- staid-field-2723 — two `check` defects found through the benchmark's arm C: crashing on a missing config, and passing silently on one that declares no roots; `--version` added
 - tender-moss-3792 — import --fork, push --lineage, scale guard, legend header; suite to 72
 - northern-willow-0469 — mirror-only verify proven live on a3go

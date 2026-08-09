@@ -8,6 +8,30 @@ results is not a target.
 
 Decision node: `southern-ridge-1802`.
 
+## Revision, 2026-08-09 — re-pre-registered before the second nine-run launch
+
+The first nine-run benchmark (2026-08-08) produced a defensible headline — *no
+detectable difference at n=3* — and was **not a controlled experiment**. A
+forensic pass over all nine transcripts, the GitHub account and the Flywheel
+account found that arms could see and destroy each other's work, that two of
+three arms were provisioned with a broken memory system, and that the fidelity
+measure sampled one instant that happened to hide the control arm's real results.
+
+The pre-registered verdict is unaffected: overlapping ranges at n=3 mean "not
+detectable" whatever the harness did. What the run cannot support is anything
+stronger — and in particular the striking 0/3-vs-6/6 control pattern is an
+artifact of §1's sampling, not a finding.
+
+Everything below stands as originally written except where marked **[rev-1]**.
+Those changes are made **before** the second launch and with no access to its
+data. Three of them (§1 dual fidelity, §1 binary outcome, §2 cold-start
+eligibility) exist precisely because the first run showed the original measures
+could be satisfied by a run that measured nothing.
+
+The first run's data stays on record. It is not re-scored into this revision's
+numbers, because a measure defined after seeing data is not pre-registered for
+that data.
+
 ## The harness — a constant across arms, and what it costs us
 
 Runs use **pi** (pi.dev) against **OpenRouter**, model
@@ -90,6 +114,55 @@ recommended setting (k=10, 20 epochs) does better. The band is therefore
 Dimension and epoch count are recorded but not constrained. An arm that reaches
 the band with fewer epochs did better, and the throughput measure will say so.
 
+### **[rev-1]** Two fidelity numbers, not one
+
+The original measure scored `artifacts/vectors.txt` **as it stood at teardown**,
+and nothing else. That is one sample of a moving quantity, and on the first run
+it sampled the wrong instant: git-s1 reached 22.03% and git-s2 23.29% mid-run,
+both published those vectors to GitHub, and both then overwrote the local file
+with a diverged run. `boxwheel/word2vec-cpu-baseline` still holds git-s2's
+`vectors.txt.xz`. The reported "control produced 0/3 usable models" is that
+sampling artifact, not a property of the control arm.
+
+Both of these are now pre-registered:
+
+- **`fidelity_final`** — the original measure, unchanged: our evaluator over
+  `artifacts/vectors.txt` at teardown. *What the run left behind.*
+- **`fidelity_best_recoverable`** — the best model the run can still **point
+  to**. Every `vectors*` dump in the harvest and in the run's published
+  repository is scored, and the maximum is taken **over those whose number the
+  run's own record cites**.
+
+  "Cites" is mechanical, not a judgement call: the run's README, `NOTES.md`,
+  `DECISIONS.md`, `DEAD-ENDS.md`, `STATE.md`, `results.json`, its record- and
+  state-graph node files, and its commit messages are scanned for accuracy
+  figures (`23.29%` or `accuracy: 0.2329`), and a scored candidate qualifies if
+  a cited figure lands within **0.5 percentage points** of it.
+
+  A higher-scoring file the run never mentions **does not count**. It is not
+  recovered knowledge, it is luck, and counting it would measure the harvest
+  rather than the memory system — which is the mistake this revision exists to
+  stop making.
+
+- **The gap**, `fidelity_best_recoverable − fidelity_final`, is itself a
+  pre-registered measure. It is **how much proven work each memory system lost**.
+  Lower is better; zero is the ideal. It is reported as `null`, never as zero,
+  when either side is absent — a gap between a number and a non-number is not a
+  gap of nothing.
+
+### **[rev-1]** Produced a usable model at all — a binary outcome
+
+Declared in advance so that a 0/3-vs-6/6 pattern, if it recurs, is a **result**
+rather than something noticed afterwards. Two counts per arm:
+
+- **left behind** — runs whose teardown artifact is non-diverged and scoreable.
+- **can point to** — runs that additionally cite their own number, i.e. runs with
+  a `fidelity_best_recoverable`.
+
+The second is never larger than the first. A model whose score the run never
+wrote down is one its memory system did not preserve, and that is the thing
+under test.
+
 **Known risk, recorded in advance:** 20 epochs over 17M words on 4 vCPU is not
 free. A pure-Python inner loop will not finish; a vectorised or compiled one
 will. Failing on that is a legitimate outcome, not a broken experiment — but if
@@ -120,6 +193,37 @@ ended, and to pick the work up. It names no file, no tool, and no memory system.
   finished or already refuted? Counted by hand against the first session's log,
   and the count is the headline number of this measure.
 - **continuity** — did it resume the live thread, or start something unrelated?
+
+### **[rev-1]** Eligibility: the cut only counts if there was state to recover
+
+A cold-start measurement over a run that wrote nothing before the cut measures
+nothing. It cannot: there is no prior state, so "recovering it" is vacuous, and
+the number it produces is indistinguishable from a fast cold start.
+
+On the first run this was not a hypothetical. Only **one** of three arm-B seeds
+wrote to Flywheel before the cut; the other two wrote nothing and were scored on
+recovering it anyway. The one seed that *did* have six prior nodes failed to find
+them and rebuilt a complete duplicate tree — root, four experiments, and a
+synthesis, twice. That is the finding this measure exists to catch, and two
+vacuous runs diluted it into invisibility.
+
+So the driver records **`had_prior_state`** per run, probed on the box **at the
+cut, before the kill**, per arm:
+
+| arm | prior state means |
+| --- | --- |
+| git | ≥ 1 commit in `~/research` |
+| flywheel | ≥ 1 node in **this run's** Flywheel account |
+| hypergraph | ≥ 1 record node beyond the provisioned root |
+
+Runs where `had_prior_state` is not `True` are **excluded** from the cold-start
+statistic, and **the exclusion count and the excluded run ids are reported
+alongside it, always**. `None` — the probe failed — excludes as well: unknown is
+not the same as no, and must not be scored as either.
+
+An arm needs `MIN_N` *eligible* runs before its cold-start figure is compared at
+all, on the same rule as every other measure. An arm that excludes its way below
+that reports "not comparable", which is the honest reading.
 
 ## 3. Throughput and waste
 
@@ -157,6 +261,62 @@ the arm name, never this document.
   test. Prompt bulk is not allowed to become the independent variable.
 - **Seeds: 3 per arm, 9 runs.** One run per arm is an anecdote — agent-run
   variance is large, and at ~$0.036/hour per box the repeats are nearly free.
+- **`MIN_N = 3` and the direction-aware overlap test are unchanged.** Both were
+  correct on the first run and are deliberately not touched: at three seeds an
+  overlapping range means "not detectable at this sample size", and saying so is
+  the result. Picking the higher median anyway would invent one. The direction
+  table matters as much — an earlier version ranked every measure by highest
+  median and announced the *slowest* arm as the cold-start leader.
+- **[rev-1] The arms must be unable to reach each other.** On the first run they
+  were not: three runs published to the same repository under one GitHub owner,
+  two force-pushed over it, one `reset --hard`ed onto another arm's tree and read
+  its graph, and all three arm-B seeds shared one Flywheel account holding 458
+  nodes from unrelated projects. Repository names are now assigned by the harness
+  from (experiment, arm, seed), and the publish helper takes no argument and never
+  force-pushes. `research/boxlab/preflight.py` refuses to launch otherwise.
+
+### **[rev-1] DECLARED CONFOUND: arm B's three seeds share one Flywheel account**
+
+The fix above calls for one Flywheel account per arm-B seed, verified empty. **It
+was not available.** Three accounts could not be created, and the Operator's
+decision (2026-08-09) is to run with one, rotated, and accept the consequence.
+
+Stated plainly, because this is the thing a reader is entitled to discount the
+arm-B result over:
+
+- **Arm B is not isolated.** Its three seeds can list, read and overwrite each
+  other's nodes, exactly as on the first run. Arms A and C *are* isolated — their
+  memory is per-box files and a per-run repository — so **the confound is
+  asymmetric and applies to arm B alone.**
+- **Cross-arm contamination within arm B is not ruled out.** If arm B's seeds
+  look correlated, a shared account is a live explanation and must be offered
+  alongside any other.
+- **The account is not empty.** It carries the first run's nodes plus 458 from
+  unrelated past projects. Preflight therefore captures the account's full node-id
+  set immediately before launch, to `research/runs/flywheel-baseline.json`, so
+  every node created during the run window is attributable even though it is not
+  isolated. Attribution is what survives; isolation is what was lost.
+- **`had_prior_state` (§2) reads only nodes created after the baseline**, so the
+  cold-start eligibility gate is not satisfied by another seed's writes or by a
+  football campaign from June.
+- The launch requires an explicit `--shared-flywheel`. Without it preflight still
+  hard-fails, so this can never become the accidental default.
+
+Remaining mitigations, **not implemented**, for whoever picks this up: a
+harness-seeded per-run root node in Flywheel, and a per-run tag applied to every
+node the run creates. Both narrow attribution further; neither restores isolation.
+Only separate accounts do that.
+- **[rev-1] Both protocol arms get their skill layer, or neither does.** The
+  Flywheel skill and the hypergraph skills bundle are both host-agent conventions
+  that pi does not read. Under pi neither arm gets one; under Claude Code both
+  do. Installing one and not the other would hand that arm a workflow layer its
+  counterpart lacks, and the run would measure that instead.
+- **[rev-1] Both protocol arms start from an initialised, empty memory system.**
+  A Flywheel account with zero nodes still accepts a write, so arm B's first act
+  could be to record work. A `.hypergraph/` that does not exist accepts nothing,
+  and on the first run arm C's setup consumed hypergraph-s1's entire second
+  phase. Provisioning now seeds arm C's two roots and a valid config — roots
+  only, since arm B is handed no skeleton either.
 - **The control is a real control.** Arm A is taught commit-as-record, a running
   `NOTES.md` / `DECISIONS.md` / `DEAD-ENDS.md`, branch-per-alternative, and log
   interrogation. If a protocol cannot beat competent git hygiene, that is the

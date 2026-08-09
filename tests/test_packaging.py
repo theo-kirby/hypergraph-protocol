@@ -48,3 +48,21 @@ def test_research_tree_exists_and_is_undeclared():
     # A path reference, not the bare word — the project description legitimately
     # contains "research projects".
     assert "research/" not in raw, "pyproject must not reference the research/ tree"
+
+
+def test_module_version_matches_pyproject():
+    """`hypergraph --version` must not disagree with the distribution.
+
+    The benchmark's arm-C boxes install `hypergraph-protocol==<pyproject version>`
+    and then assert the version the CLI reports, because `uv tool install` reuses
+    a cached tool and would otherwise leave a box silently running an older build
+    while the write-up names this one. That assertion is only meaningful if the
+    two numbers are the same number here.
+    """
+    import re
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    source = (ROOT / "tools" / "hypergraph.py").read_text(encoding="utf-8")
+    in_module = re.search(r'^__version__ = "([^"]+)"', source, re.M)
+    assert in_module, "tools/hypergraph.py declares no __version__"
+    assert in_module.group(1) == declared, (
+        f"tools/hypergraph.py says {in_module.group(1)}, pyproject says {declared}")

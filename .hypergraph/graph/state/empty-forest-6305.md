@@ -9,9 +9,9 @@ summary: 'Git-native backend live: node files source of truth, Flywheel a regene
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 4
-  pushed_at: '2026-08-07T21:24:20+00:00'
-  content_sha256: 004f92e6b11ad52a830ea01836d0fd2ae3b90455cd854784f4e515d93147aaa5
+  revision: 6
+  pushed_at: '2026-08-09T10:17:45+00:00'
+  content_sha256: 68dd8c5214b0845464bcc9efc96f0d9e77c5005198e54febb9174593e221d013
 ---
 Status: working
 
@@ -23,18 +23,22 @@ Status: working
 - Flywheel is now optional rather than load-bearing, and the two compose: `backend: local` + `mirror: flywheel` keeps files canonical and Flywheel a regenerable projection, refreshed by `push --plan` → skill executes → `push --record-result`; first live push applied 7 ops with no revision conflicts [rec: old-dawn-8747] [rec: kind-valley-8040].
 - The projection-trust gap is closed: `push --verify --against <fresh export>` detects drift the plan cannot see (missing nodes, body-hash and summary mismatches, revision skew), and a mirror-only slug legend node — regenerated on every push, excluded from import and verify — makes local slugs readable on the mirror; the first live verify caught and fixed three real byte deviations on this repo's own mirror [rec: careful-harbor-3902].
 - The sequencing bet in patient-limit-9007 — build-vs-defer decided only after field dogfooding — was overtaken: the adapter shipped first, so the interface was proven by a second implementation rather than by field use [rec: patient-limit-9007] [rec: old-dawn-8747].
+- **The mirror is current and verified** (2026-08-09). An earlier conclusion that it was gone [rec: sweet-aspen-3667] was wrong and is corrected [rec: solemn-dawn-6752]: every probe behind it used `.env`'s `FLYWHEEL_API_KEY` (account 80eed260…), while the mirror lives on the account the `flywheel` CLI holds (be9833b0…). Through the CLI both roots resolve `unique` and all 44 claimed mirror ids are reachable. 18 ops applied (10 creates, 8 updates), legend regenerated rev 6→7, and a fresh 55-node export of the project's own mirror roots verifies at **0 drift findings**; `push --plan` reports 0/0.
 
 ## Negative knowledge
 
 - [scope: mirroring a local graph to Flywheel | confidence: high | evidence: old-dawn-8747, kind-valley-8040] Flywheel mints its own slug on create, so nodes authored locally after the switch live there under a different slug while the markdown still cites the local one — `check` against a Flywheel export reported 25 dangling-pointer violations (I4/I5/I7) on a graph that checks 0/0 from the node files. The mirror is a readable projection, never the thing you check; slugs cross the boundary only through each file's `flywheel:` block.
 - [scope: deferring slug translation on push | confidence: medium | evidence: kind-valley-8040] translation would make the mirror non-identical to source, breaking the byte-identical `content_sha256` change detector and forcing two-way translation on every update; the cost of *not* translating is now measured (above) rather than assumed.
-- [scope: reading command output over ssh in this codebase | confidence: high | evidence: northern-tree-5868] `BoxController.ssh_exec` returns stdout followed by stderr, so an ssh host-key banner lands *after* the payload, not before. Prefix-stripping a base64 blob therefore leaves trailing junk and fails with "Incorrect padding". Sentinel-frame both ends of any binary or structured payload.
+- [scope: reading command output over ssh in this codebase | confidence: high | evidence: northern-tree-5868] `BoxController.ssh_exec` returns stdout followed by stderr, so an ssh host-key banner lands AFTER the payload, not before. Prefix-stripping a base64 blob therefore leaves trailing junk and fails with 'Incorrect padding'. Sentinel-frame both ends of any binary or structured payload.
 - [scope: executing mirror pushes by hand instead of from plan bytes | confidence: high | evidence: careful-harbor-3902] `push --plan` cannot detect manual-push byte deviations — frontmatter shas are stamped from local bytes, so a hand-transcribed mirror write that drifts (lost newline, dropped blank line) looks clean to the planner; only `push --verify` against a fresh export catches it. Always push content extracted verbatim from the plan JSON.
 
 ## Provenance
 
-- northern-tree-5868 — ssh stdout/stderr ordering, found while harvesting binary payloads from boxes
+
 - patient-limit-9007 — Operator directive opening this gap, with constraints and sequencing
 - old-dawn-8747 — the adapter, the CLI subcommands, and this repo's migration onto it
 - kind-valley-8040 — first live mirror push; measured mirror-consistency limits
 - careful-harbor-3902 — verify + legend close the projection-trust gap; manual-push drift lesson
+- northern-tree-5868 — ssh stream-ordering lesson from the benchmark's harvest path
+- sweet-aspen-3667 — mirror believed unreachable (superseded by solemn-dawn-6752)
+- solemn-dawn-6752 — correction: wrong account, not a missing mirror; mirror synced and verified clean

@@ -62,6 +62,39 @@ ARM_EXTRA_REQUIREMENTS: Dict[str, tuple] = {
 
 DEFAULT_FLYWHEEL_API_URL = "https://flywheel.paradigma.inc"
 
+# Which experiment these runs belong to. It exists to make repo names unique
+# across experiments as well as across runs, so a second benchmark on the same
+# GitHub owner cannot collide with this one.
+EXPERIMENT_SLUG = "w2v"
+
+
+def run_id_for(arm: str, seed: Optional[int]) -> str:
+    """`git-s2`, or `git-smoke` when there is no seed."""
+    return f"{arm}-s{seed}" if seed is not None else f"{arm}-smoke"
+
+
+def repo_name_for(arm: str, seed: Optional[int],
+                  experiment: str = EXPERIMENT_SLUG) -> str:
+    """The GitHub repo this run publishes to — **assigned, never chosen**.
+
+    On the nine-run benchmark the primer told each agent to "pick a descriptive
+    kebab-case name". Nine agents, one paper, one GitHub owner: three of them
+    picked `word2vec-skipgram-text8`. Two force-pushed over it and one arm
+    reset --hard onto another arm's tree and read its graph. The experiment was
+    no longer three independent runs, and nothing in the harness noticed.
+
+    A name derived from (experiment, arm, seed) cannot collide, so none of that
+    is reachable — which is a stronger guarantee than any check that runs after
+    the agent has already picked.
+    """
+    return f"boxlab-{experiment}-{arm}-{'s%d' % seed if seed is not None else 'smoke'}"
+
+
+def flywheel_key_var(arm: str, seed: Optional[int]) -> str:
+    """The per-run Flywheel variable name, e.g. `FLYWHEEL_API_KEY_FLYWHEEL_S2`."""
+    suffix = f"S{seed}" if seed is not None else "SMOKE"
+    return f"FLYWHEEL_API_KEY_{arm.upper()}_{suffix}"
+
 
 def parse_env_file(path: Path) -> Dict[str, str]:
     """Parse a dotenv file into a dict. Tolerant: skips comments and junk lines.
@@ -129,6 +162,13 @@ class LabConfig:
         values: Dict[str, str] = {}
         sources: Dict[str, str] = {}
         names = set(BOX_ENV_VARS) | {"BOX_API_KEY", "FLYWHEEL_API_URL"}
+        # Per-run Flywheel keys are discovered, not enumerated: the operator adds
+        # `FLYWHEEL_API_KEY_FLYWHEEL_S2=…` to a dotenv and it resolves, with no
+        # matching edit here. Enumerating them would mean a key that is present
+        # but unlisted reads as absent, and preflight would refuse a launch that
+        # was correctly provisioned.
+        for source in (os.environ, repo, fallback):
+            names.update(n for n in source if n.startswith("FLYWHEEL_API_KEY_"))
         for name in names:
             for value, origin in (
                 (os.environ.get(name), "process env"),
@@ -170,6 +210,59 @@ class LabConfig:
     @property
     def flywheel_mcp_url(self) -> str:
         return self.flywheel_api_url.rstrip("/") + "/mcp-server"
+
+    # ---- per-run Flywheel isolation ---------------------------------------
+
+    def flywheel_key_for(self, arm: str, seed: Optional[int], *,
+                         allow_shared: bool = False) -> Optional[str]:
+        """This run's own Flywheel key, or the shared one when permitted.
+
+        The nine-run benchmark gave all three arm-B seeds the same account: 458
+        nodes from unrelated past projects, every seed's nodes `owners:["me"]` to
+        every other seed. One run spent seven `get_node` calls reading a FIFA
+        World Cup campaign from June. Whatever that measured, it was not
+        cold-start recovery from the run's own memory.
+
+        `allow_shared` is the caller's admission that only one run is in flight.
+        With several, a shared key silently rebuilds the contamination, so the
+        fallback has to be asked for rather than inherited.
+        """
+        per_run = self.values.get(flywheel_key_var(arm, seed))
+        if per_run:
+            return per_run
+        return self.values.get("FLYWHEEL_API_KEY") if allow_shared else None
+
+    def flywheel_keys_for(self, arm: str, seeds: List[int]
+                          ) -> Dict[int, Optional[str]]:
+        """Every seed's key for one arm, missing entries included as None."""
+        return {seed: self.values.get(flywheel_key_var(arm, seed))
+                for seed in seeds}
+
+    def flywheel_isolation_problems(self, arm: str, seeds: List[int]) -> List[str]:
+        """Why this arm cannot run isolated — empty when it can.
+
+        Two ways to fail, and they need different fixes, so they are reported
+        separately: a seed with no key of its own, and two seeds sharing one.
+        """
+        problems: List[str] = []
+        keys = self.flywheel_keys_for(arm, seeds)
+        missing = [s for s, k in keys.items() if not k]
+        if missing:
+            problems.append(
+                "no per-run Flywheel key for seed(s) "
+                + ", ".join(str(s) for s in sorted(missing))
+                + " — set "
+                + ", ".join(flywheel_key_var(arm, s) for s in sorted(missing)))
+        seen: Dict[str, List[int]] = {}
+        for seed, key in keys.items():
+            if key:
+                seen.setdefault(key, []).append(seed)
+        for shared in (s for s in seen.values() if len(s) > 1):
+            problems.append(
+                "seeds " + ", ".join(str(s) for s in sorted(shared))
+                + " share one Flywheel key — each seed needs its own account, "
+                  "or they can read and overwrite each other's nodes")
+        return problems
 
     # ---- gates ------------------------------------------------------------
 

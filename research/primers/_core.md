@@ -64,26 +64,33 @@ This box is ephemeral, so work that lives only here, or is committed locally but
 never pushed, is **lost**. Publish continuously, not once at the end.
 
 1. **Publish early.** As soon as you have a skeleton — one script and a stub
-   README — create the repo and push:
+   README — publish, from the directory you want to push:
 
-       ~/research/bin/publish-repo <repo-name> [source-dir]
+       cd ~/research && ~/research/bin/publish-repo
 
-   Pick a descriptive kebab-case name. The helper creates a **public** repo under
-   the configured owner and pushes `main`. Research is meant to be replicable, so
-   it is public by design.
+   **Your repository already exists and is already named.** The helper takes no
+   arguments and rejects them: it reads the name assigned to this run, creates
+   the repo on first use, commits, and pushes `main`. It is **public** by design,
+   because research is meant to be replicable.
 
-2. **Then commit and push after every meaningful step** — a working baseline,
-   each result, each fix. From the repo directory:
+2. **Then publish again after every meaningful step** — a working baseline, each
+   result, each fix. Same command; set the message:
 
-       git add -A && git commit -m "<what changed>" && \
-         git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_OWNER}/<repo-name>.git" HEAD:main
+       cd ~/research && COMMIT_MSG="<what changed>" ~/research/bin/publish-repo
 
 3. **Keep the README current** with the latest finding and how to reproduce it.
 
-4. **Keep the repo clean.** A `.gitignore` is created on first publish. Do not
-   commit the seeded scaffolding (`CLAUDE.md`, `.env`, `.provisioned`, `bin/`),
-   byte caches, or raw data dumps. **Do** commit `artifacts/` — the metrics
-   behind each claim — so the repo stands alone.
+4. **Keep the repo clean.** `.gitignore` is written on first publish and already
+   excludes the seeded scaffolding, virtualenvs, build output, corpora and raw
+   vector dumps. **Raw vectors are never committed** — nothing over 50 MB will
+   be, and the helper will say what it excluded and why. What you *do* commit is
+   `artifacts/results.json`: the metrics behind every claim, so the repo stands
+   alone without the data.
+
+5. **Never force-push, and never reset onto a remote.** A rejected push means
+   your picture of the repository is wrong. Read the error and work out why.
+   `--force` and `git reset --hard FETCH_HEAD` do not resolve that; they destroy
+   whatever was there and leave you working on someone else's tree.
 
 Treat every push as a checkpoint: if the box died right now, everything you have
 proven so far should already be pushed.

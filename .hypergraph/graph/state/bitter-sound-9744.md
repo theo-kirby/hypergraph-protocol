@@ -9,9 +9,9 @@ summary: a3go (mode A, re-mirrored) + tbinn (mode B) live; acceptance loop held;
 flywheel:
   node_id: 47030781-d078-5801-b4ae-d12ecc5d988f
   slug: bitter-sound-9744
-  revision: 3
-  pushed_at: '2026-08-08T11:35:36+00:00'
-  content_sha256: bb5a85cf45754d890a4ab6f7aa4e8ce211f5da2a71eb91d964f4f60ae235b029
+  revision: 4
+  pushed_at: '2026-08-09T10:15:16+00:00'
+  content_sha256: 028b363b21e19f978795f24dc250c6d67a8a02260cc53c505c49c6a340579b7c
 ---
 Status: working
 

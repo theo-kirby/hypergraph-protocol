@@ -232,5 +232,20 @@ research/runs/**/workspace.tar.gz
 research/runs/**/vectors.txt
 research/runs/**/*.log
 
+# Second line of defence under research/boxlab/redact.py. Harvest redacts every
+# archive in memory before it lands, so a transcript reaching disk should already
+# be clean — but the nine-run benchmark committed 20 transcripts carrying live
+# OPENROUTER_API_KEY and GITHUB_TOKEN values, so "should already be clean" is
+# exactly the assumption that failed. Transcripts are reconstructible from the
+# tarball; a leaked key is not reconstructible into being un-leaked.
+research/runs/**/*.jsonl
+research/runs/**/.env
+
+# Git worktrees created inside the repo (EnterWorktree / `git worktree add`).
+# They carry their own .git file and a full checkout, so a `git add -A` from the
+# main working tree tries to commit an entire second copy of the repo.
+/hg-viz/
+/.claude/worktrees/
+
 # Playwright screenshot output (baselines live in tests/browser/baseline/)
 tests/browser/shots/

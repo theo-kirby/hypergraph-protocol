@@ -129,12 +129,23 @@ def test_flywheel_arm_gets_the_mcp_config(config):
     assert "fw-key-CCC" in cc_script
 
 
-def test_hypergraph_arm_installs_the_published_package(config):
-    """The arm must test the real adoption route (PyPI), not a dev checkout."""
+def test_hypergraph_arm_installs_the_published_package_at_a_pinned_version(config):
+    """The arm must test the real adoption route (PyPI), not a dev checkout.
+
+    Pinned, and asserted on the box: `uv tool install` reuses a cached tool, so
+    an unpinned install can silently leave a box running last month's version
+    while the write-up names this one.
+    """
+    import re
+    declared = re.search(r'^version = "([^"]+)"',
+                         (ROOT / "pyproject.toml").read_text(), re.M).group(1)
+    assert arms_mod.HYPERGRAPH_VERSION == declared
     for hname in HARNESS_NAMES:
         script = provision.build_script(
             config, arms_mod.get_arm("hypergraph"), get_harness(hname))
-        assert "uv tool install hypergraph-protocol" in script
+        assert f"uv tool install --force 'hypergraph-protocol=={declared}'" in script
+        assert "hypergraph --version" in script
+        assert "FATAL: expected hypergraph-protocol" in script
         assert "FLYWHEEL_API_KEY" not in script
         # `.claude/skills` is a Claude Code convention pi does not read, so the
         # skills bundle must be installed for one harness and omitted for the
@@ -259,6 +270,119 @@ def test_harvest_excludes_live_credentials():
     src = inspect.getsource(experiment._harvest)
     assert "--exclude=research/.env" in src
     assert "--exclude='.pi/agent/mcp.json'" in src
+
+
+# ---- redaction ----------------------------------------------------------------
+
+def test_redaction_removes_every_known_secret_value():
+    """Exact values first — the layer that cannot miss what it was told about."""
+    from boxlab.redact import redact, secret_values
+    values = {
+        "OPENROUTER_API_KEY": "sk-or-v1-" + "a" * 40,
+        "GITHUB_TOKEN": "ghp_" + "B" * 36,
+        "FLYWHEEL_API_KEY": "fw_live_" + "9" * 32,
+        "GITHUB_OWNER": "boxwheel",
+    }
+    secrets = secret_values(values)
+    # An account name is not a credential: redacting it would mangle every URL
+    # in every transcript and protect nothing.
+    assert "GITHUB_OWNER" not in secrets
+    out = redact("\n".join(f"{k}={v}" for k, v in values.items()), secrets)
+    for name, value in values.items():
+        if name == "GITHUB_OWNER":
+            assert "boxwheel" in out
+        else:
+            assert value not in out
+            assert f"<REDACTED:{name}>" in out
+
+
+def test_redaction_catches_secret_shapes_it_was_never_told_about():
+    """The layer that matters after a rotation: a key nobody registered.
+
+    `secret_values` only knows the keys this process holds. A token an agent
+    minted itself, or one rotated last week and still sitting in an old
+    transcript, is caught by shape or not at all.
+    """
+    from boxlab.redact import redact, scan_text
+    text = ("token=ghp_" + "C" * 36 + "\n"
+            "export OPENROUTER_API_KEY=sk-or-v1-" + "d" * 44 + "\n"
+            "Authorization: Bearer " + "e" * 40 + "\n"
+            "github_pat_" + "F" * 30 + "\n")
+    assert scan_text(text), "the scanner must see these before redaction"
+    out = redact(text, {})  # no known values at all
+    assert not scan_text(out), out
+
+
+def test_redaction_leaves_ordinary_prose_alone():
+    """A redactor that mangles transcripts protects nothing anyone will read."""
+    from boxlab.redact import redact, secret_values
+    prose = ("The tokenization step ran in 4s. GITHUB_OWNER=boxwheel pushed to "
+             "https://github.com/boxwheel/word2vec. Password rotation is a "
+             "separate task.\n")
+    assert redact(prose, secret_values({"GITHUB_OWNER": "boxwheel"})) == prose
+
+
+def test_short_values_are_never_treated_as_secrets():
+    """Replacing a 3-character 'secret' corrupts every file it appears in."""
+    from boxlab.redact import secret_values
+    assert secret_values({"GITHUB_TOKEN": "abc"}) == {}
+
+
+def test_redact_archive_rewrites_members_and_reports_the_count(tmp_path):
+    """Nothing unredacted may reach disk, so the rewrite happens in memory."""
+    import io
+    import tarfile
+    from boxlab.redact import redact_archive
+
+    key = "sk-or-v1-" + "z" * 40
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, body in (("session.jsonl", f'{{"cmd":"cat .env","out":"{key}"}}'),
+                           ("vectors.txt", "the 0.1 0.2 0.3")):
+            data = body.encode()
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+    cleaned, changed = redact_archive(buf.getvalue(),
+                                      {"OPENROUTER_API_KEY": key})
+    assert changed == 1
+    with tarfile.open(fileobj=io.BytesIO(cleaned)) as tf:
+        members = {m.name: tf.extractfile(m).read().decode() for m in tf}
+    assert key not in members["session.jsonl"]
+    assert "<REDACTED:OPENROUTER_API_KEY>" in members["session.jsonl"]
+    # A member's recorded size must follow its rewritten body, or every
+    # subsequent member reads at the wrong offset and the archive is scrap.
+    assert members["vectors.txt"] == "the 0.1 0.2 0.3"
+
+
+def test_an_unredactable_archive_is_discarded_not_written():
+    """A harvest that cannot be cleaned must not fall back to writing it raw."""
+    import inspect
+    from boxlab import experiment
+    src = inspect.getsource(experiment._harvest)
+    assert "redact_archive" in src
+    assert "changed < 0" in src
+    # The redaction must sit between the decode and the write, not after it.
+    # Compared over the body only: the docstring names `write_bytes` too, and
+    # matching that instead would make this assertion pass on any ordering.
+    body = src.split('"""')[-1]
+    assert body.index("redact_archive") < body.index("write_bytes")
+
+
+def test_no_harvested_file_under_research_runs_contains_a_secret():
+    """The standing guarantee: nothing secret-shaped is on disk under runs/.
+
+    This is the test the nine-run benchmark did not have. Twenty transcripts
+    carrying live `OPENROUTER_API_KEY` and `GITHUB_TOKEN` values were committed
+    across sixteen commits, and nothing failed.
+    """
+    from boxlab.redact import scan_tree
+    runs = ROOT / "research" / "runs"
+    findings = scan_tree(runs)
+    assert not findings, (
+        f"{len(findings)} secret-shaped value(s) under {runs}: "
+        + "; ".join(f"{p}:{ln} ({label})" for p, ln, label in findings[:10]))
 
 
 def test_spend_guard_treats_an_unreadable_status_as_exceeded():
@@ -476,3 +600,400 @@ def test_mcp_reads_are_orientation_but_writes_are_not():
     assert is_orientation_tool("mcp__flywheel__flywheel_list_nodes", [])
     assert not is_orientation_tool("mcp__flywheel__flywheel_commit_new_node", [])
     assert not is_orientation_tool("write", [])
+
+
+# ---- isolation: the arms must not be able to reach each other -----------------
+#
+# On the nine-run benchmark they could, and did. Three runs picked the same repo
+# name (`word2vec-skipgram-text8`); two force-pushed over it; one answered a
+# rejected push with `git fetch && git reset --hard FETCH_HEAD`, replacing its
+# tree with another arm's repo — graph, STATE.md and all — and then read it.
+
+def test_the_harness_assigns_the_repo_name_and_it_is_unique_per_run():
+    from boxlab.config import repo_name_for
+    names = [repo_name_for(arm, seed)
+             for arm in ARM_NAMES for seed in (1, 2, 3)]
+    assert len(set(names)) == len(names), names
+    assert repo_name_for("hypergraph", 2) == "boxlab-w2v-hypergraph-s2"
+
+
+def test_publish_helper_refuses_every_argument(config):
+    """`publish-repo <name>` is how three runs picked the same repository."""
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"), seed=1)
+    assert "publish-repo: takes no arguments." in script
+    assert 'if [ "$#" -gt 0 ]; then' in script
+    # The name comes from the conf the harness wrote, never from argv.
+    assert "BOXLAB_REPO_NAME=boxlab-w2v-git-s1" in script
+    assert "BOXLAB_RUN_ID=git-s1" in script
+
+
+def test_publish_helper_never_force_pushes(config):
+    for name in ARM_NAMES:
+        script = provision.build_script(config, arms_mod.get_arm(name),
+                                        get_harness("pi"), seed=2)
+        assert "push --force" not in script
+        assert "--force-with-lease" not in script
+        assert "git push " in script
+
+
+def test_publish_helper_refuses_a_repo_another_run_established(config):
+    """The run-id marker: a repo that is not this run's is never overwritten."""
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"), seed=3)
+    assert ".boxlab-run" in script
+    assert "REFUSING to push" in script
+
+
+def test_each_arm_b_seed_gets_its_own_flywheel_key(config):
+    """Three seeds on one account is three seeds reading each other's nodes."""
+    config.values["FLYWHEEL_API_KEY_FLYWHEEL_S1"] = "fw-per-run-ONE"
+    config.values["FLYWHEEL_API_KEY_FLYWHEEL_S2"] = "fw-per-run-TWO"
+    arm = arms_mod.get_arm("flywheel")
+    s1 = provision.build_script(config, arm, get_harness("pi"), seed=1)
+    s2 = provision.build_script(config, arm, get_harness("pi"), seed=2)
+    assert "fw-per-run-ONE" in s1 and "fw-per-run-TWO" not in s1
+    assert "fw-per-run-TWO" in s2 and "fw-per-run-ONE" not in s2
+    # …and the shared account-wide key reaches neither.
+    assert "fw-key-CCC" not in s1 and "fw-key-CCC" not in s2
+
+
+def test_a_seed_with_no_key_of_its_own_falls_back_only_when_asked(config):
+    from boxlab.config import LabConfig
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key"})
+    assert cfg.flywheel_key_for("flywheel", 1) is None
+    assert cfg.flywheel_key_for("flywheel", 1,
+                                allow_shared=True) == "shared-account-key"
+
+
+def test_isolation_problems_name_both_failure_modes():
+    from boxlab.config import LabConfig
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY_FLYWHEEL_S1": "same-key-xxxxxxxx",
+                            "FLYWHEEL_API_KEY_FLYWHEEL_S2": "same-key-xxxxxxxx"})
+    problems = cfg.flywheel_isolation_problems("flywheel", [1, 2, 3])
+    assert any("seed(s) 3" in p for p in problems), problems
+    assert any("share one Flywheel key" in p for p in problems), problems
+    # All three distinct and present: nothing to report.
+    ok = LabConfig(values={f"FLYWHEEL_API_KEY_FLYWHEEL_S{s}": f"key-{s}-xxxxxxxx"
+                           for s in (1, 2, 3)})
+    assert ok.flywheel_isolation_problems("flywheel", [1, 2, 3]) == []
+
+
+# ---- provisioning correctness -------------------------------------------------
+
+def test_flywheel_install_passes_a_skill_flag_and_fails_loudly(config):
+    """`--mode mcp --yes` exited non-zero on all three arm-B boxes.
+
+    "Non-interactive setup requires one of --install-skill or --skip-skill" —
+    so arm B ran with the HTTP MCP, no CLI, and no contract doc, and spent its
+    opening turns guessing tool names.
+    """
+    script = provision.build_script(config, arms_mod.get_arm("flywheel"),
+                                    get_harness("pi"), seed=1)
+    assert "--skip-skill" in script
+    assert "FATAL: flywheel CLI not runnable after install" in script
+
+
+def test_the_skill_layer_is_present_or_absent_for_BOTH_protocol_arms_together():
+    """Whatever pi cannot read, neither protocol arm gets — or it is a confound.
+
+    `.claude/skills` is a Claude Code convention. Giving arm B a skill there
+    while arm C goes without would hand B a workflow layer C does not have, in
+    the protocol's favour, and the result would measure that instead.
+    """
+    for hname in HARNESS_NAMES:
+        harness = get_harness(hname)
+        b = "install-skill" in arms_mod.get_arm("flywheel").install_for(harness)
+        c = "skills install" in arms_mod.get_arm("hypergraph").install_for(harness)
+        assert b == c == (hname == "claude_code"), (hname, b, c)
+
+
+def test_arm_c_starts_with_an_initialised_empty_graph(config):
+    """Arm B gets an empty Flywheel account; arm C must get the equivalent.
+
+    hypergraph-s1 was given neither, hand-rolled the whole protocol in its second
+    phase, never returned to training, and scored lowest in its arm. That
+    measured whether the tool ships an init path, not whether the protocol helps.
+    """
+    script = provision.build_script(config, arms_mod.get_arm("hypergraph"),
+                                    get_harness("pi"), seed=2)
+    assert "hypergraph new record --root" in script
+    assert "hypergraph new state --root --reconcile" in script
+    assert "record_root:" in script and "state_root:" in script
+    assert "FATAL: seeded hypergraph graph does not pass check" in script
+    # Roots only. A seeded state skeleton would overshoot — arm B is not handed
+    # one, and building it is part of the work under test.
+    assert script.count("hypergraph new state") == 1
+
+
+def test_only_arm_c_is_seeded(config):
+    for name in ("git", "flywheel"):
+        script = provision.build_script(config, arms_mod.get_arm(name),
+                                        get_harness("pi"), seed=1)
+        assert "hypergraph new record --root" not in script
+
+
+# ---- publishing hygiene -------------------------------------------------------
+
+def test_publish_helper_gates_on_file_size(config):
+    """`boxwheel/word2vec-cpu` went public at 2,221 files / 81 MB."""
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"), seed=1)
+    assert f"BOXLAB_MAX_FILE_MB={provision.MAX_PUBLISH_FILE_MB}" in script
+    assert "EXCLUDED" in script
+    assert provision.MAX_PUBLISH_FILE_MB < 100  # GitHub's hard limit
+
+
+def test_publish_gitignore_excludes_the_bulk_but_keeps_the_source(config):
+    script = provision.build_script(config, arms_mod.get_arm("git"),
+                                    get_harness("pi"), seed=1)
+    # The whole heredoc, not a fixed-width window — a slice that happened to cut
+    # an entry short would fail for a reason unrelated to what is ignored.
+    start = script.index("cat > .gitignore <<'BOXLAB_GITIGNORE_EOF'")
+    body = script[start:script.index("BOXLAB_GITIGNORE_EOF\nfi", start)]
+    for entry in ("venv/", ".venv/", "build/", "data/", "*.so", "*.o",
+                  "text8*", "*.zip", "*.xz", "runs/", "artifacts/vectors*.txt"):
+        assert entry in body, entry
+    # NOT excluded, deliberately: a hand-written train.c IS the control arm's
+    # work. Dropping `*.c` would delete the evidence it is meant to publish.
+    assert "\n*.c\n" not in body
+
+
+# ---- measurement, re-pre-registered (METRICS.md rev-1) ------------------------
+
+def test_best_recoverable_finds_a_result_the_run_overwrote():
+    """git-s2 reached 23.29%, published it, then overwrote the local artifact.
+
+    Scoring only the teardown file reported that run as producing nothing. The
+    published vectors and the number in its own record are both still there.
+    """
+    from boxlab.analyze import best_recoverable, cited_accuracies, fidelity_gap
+    record = "Best run so far: 23.29% total accuracy on the Google analogy set."
+    scored = [
+        {"total": {"accuracy": 0.0009}, "source": "artifacts/vectors.txt"},
+        {"total": {"accuracy": 0.2329}, "source": "published/vectors.txt"},
+    ]
+    best = best_recoverable(scored, cited_accuracies(record))
+    assert best and abs(best["total"]["accuracy"] - 0.2329) < 1e-9
+    gap = fidelity_gap(scored[0], best)
+    assert gap is not None and abs(gap - 0.232) < 0.001
+
+
+def test_a_better_model_the_run_never_mentions_does_not_count():
+    """Otherwise the measure scores the harvest, not the memory system."""
+    from boxlab.analyze import best_recoverable, cited_accuracies
+    record = "Our best result was 12.00% total accuracy."
+    scored = [{"total": {"accuracy": 0.12}, "source": "a"},
+              {"total": {"accuracy": 0.31}, "source": "b"}]  # never mentioned
+    best = best_recoverable(scored, cited_accuracies(record))
+    assert best and abs(best["total"]["accuracy"] - 0.12) < 1e-9
+
+
+def test_a_run_that_cites_no_number_recovers_nothing():
+    from boxlab.analyze import best_recoverable
+    assert best_recoverable([{"total": {"accuracy": 0.3}}], []) is None
+
+
+def test_diverged_candidates_are_never_recoverable():
+    from boxlab.analyze import best_recoverable
+    scored = [{"total": {"accuracy": 0.30}, "diverged": True}]
+    assert best_recoverable(scored, [0.30]) is None
+
+
+def test_cited_accuracies_ignores_numbers_that_are_not_this_measure():
+    """A 0.95 learning-rate decay is not a claim about analogy accuracy."""
+    from boxlab.analyze import cited_accuracies
+    found = cited_accuracies("lr decay 0.95, 100% of the corpus, acc 0.2203, 23.3%")
+    assert 0.2203 in found and 0.233 in found
+    assert 0.95 not in found and 1.0 not in found
+
+
+def test_the_gap_is_null_not_zero_when_a_side_is_missing():
+    """A gap between a number and a non-number is not a gap of nothing."""
+    from boxlab.analyze import fidelity_gap
+    assert fidelity_gap(None, {"total": {"accuracy": 0.2}}) is None
+    assert fidelity_gap({"total": {"accuracy": 0.2}}, None) is None
+    assert fidelity_gap({"total": {"accuracy": 0.2}}, {"total": {"accuracy": 0.2}}) == 0
+
+
+def test_cold_start_excludes_runs_with_nothing_to_recover():
+    """Two of three arm-B seeds wrote nothing before the cut and were scored anyway."""
+    from boxlab.report import by_arm
+    def run(rid, prior, seconds):
+        return {"run": rid, "arm": "flywheel", "had_prior_state": prior,
+                "cold_start": {"time_to_first_productive_s": seconds,
+                               "orientation_tool_calls": 4},
+                "totals": {"tool_calls": 10, "assistant_turns": 5,
+                           "cost_usd": 0.01}}
+    summary = by_arm([run("f1", True, 90.0), run("f2", False, 5.0),
+                      run("f3", None, 5.0)])
+    arm = summary["flywheel"]
+    assert arm["cold_start_n"] == 1
+    assert arm["cold_start_excluded"] == 2
+    assert set(arm["cold_start_excluded_runs"]) == {"f2", "f3"}
+    # The two vacuous runs would have dragged the median from 90 to 5 — turning
+    # "this arm did not recover its state" into "this arm recovered instantly".
+    assert arm["cold_start_s_median"] == 90.0
+
+
+def test_an_unknown_prior_state_excludes_rather_than_counting_as_no():
+    from boxlab.report import by_arm
+    summary = by_arm([{"run": "x", "arm": "git", "had_prior_state": None,
+                       "cold_start": {"time_to_first_productive_s": 1.0},
+                       "totals": {"tool_calls": 1, "assistant_turns": 1,
+                                  "cost_usd": 0.0}}])
+    assert summary["git"]["cold_start_n"] == 0
+    assert summary["git"]["cold_start_excluded"] == 1
+
+
+def test_cold_start_verdict_uses_eligible_runs_as_its_denominator():
+    """An arm with 3 runs but 1 eligible must not read as having n=3."""
+    from boxlab.report import verdict
+    summary = {
+        "a": {"runs": 3, "cold_start_n": 1, "cold_start_s_median": 5.0,
+              "cold_start_s_range": (4.0, 6.0)},
+        "b": {"runs": 3, "cold_start_n": 3, "cold_start_s_median": 40.0,
+              "cold_start_s_range": (35.0, 45.0)},
+    }
+    assert "not comparable" in verdict(summary, "cold_start_s")
+
+
+def test_min_n_and_the_direction_table_are_unchanged():
+    """Both were correct on the first run and are deliberately not touched."""
+    from boxlab.report import HIGHER_IS_BETTER, MIN_N
+    assert MIN_N == 3
+    assert HIGHER_IS_BETTER["accuracy"] is True
+    assert HIGHER_IS_BETTER["cold_start_s"] is False
+    assert HIGHER_IS_BETTER["orientation_calls"] is False
+    # Lower is better: the gap is work the memory system lost.
+    assert HIGHER_IS_BETTER["fidelity_gap"] is False
+    assert HIGHER_IS_BETTER["best_recoverable"] is True
+
+
+def test_the_driver_probes_prior_state_before_it_kills_the_session():
+    """Probing after the kill would race the agent's last writes."""
+    import inspect
+    from boxlab import experiment
+    src = inspect.getsource(experiment._run_one)
+    assert src.index("_had_prior_state(") < src.index("cold-start cut: killing")
+
+
+# ---- the shared-Flywheel confound (METRICS.md rev-1) --------------------------
+
+def test_a_shared_flywheel_account_is_refused_by_default():
+    """It must never become the accidental default — it is opt-in only."""
+    from boxlab.config import LabConfig
+    from boxlab.preflight import Report, check_flywheel_isolation
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
+    report = Report(label="t")
+    check_flywheel_isolation(cfg, [1, 2, 3], report)  # allow_shared defaults False
+    assert not report.ok
+    assert any("per-run Flywheel key" in c.name or "distinct key" in c.name
+               for c in report.failures)
+
+
+def test_opting_into_a_shared_account_records_it_as_a_confound(monkeypatch):
+    """Accepted, but never silently: it lands in the report as its own line."""
+    from boxlab import preflight as pf
+    from boxlab.config import LabConfig
+    monkeypatch.setattr(pf, "flywheel_node_ids", lambda url, key: ["a", "b", "a"])
+    monkeypatch.setattr(pf, "flywheel_can_write",
+                        lambda url, key: (True, "write access confirmed"))
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
+    report = pf.Report(label="t")
+    pf.check_flywheel_isolation(cfg, [1, 2, 3], report, allow_shared=True)
+    assert report.ok, [c.name for c in report.failures]
+    names = " ".join(c.name for c in report.checks)
+    assert "CONFOUND ACCEPTED" in names
+    assert "baseline captured" in names
+
+
+def test_an_unreadable_shared_account_still_fails(monkeypatch):
+    """Unattributable is as disqualifying as unisolated — None is not zero."""
+    from boxlab import preflight as pf
+    from boxlab.config import LabConfig
+    monkeypatch.setattr(pf, "flywheel_node_ids", lambda url, key: None)
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
+    report = pf.Report(label="t")
+    pf.check_flywheel_isolation(cfg, [1, 2, 3], report, allow_shared=True)
+    assert not report.ok
+
+
+def test_the_baseline_is_written_so_the_run_stays_attributable(monkeypatch, tmp_path):
+    """Isolation was lost; attribution is what the baseline preserves."""
+    import json
+    from boxlab import preflight as pf
+    from boxlab.config import LabConfig
+    monkeypatch.setattr(pf, "flywheel_node_ids",
+                        lambda url, key: ["n1", "n2", "n2", "n3"])
+    monkeypatch.setattr(pf, "flywheel_can_write",
+                        lambda url, key: (True, "write access confirmed"))
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "shared-account-key-xxxx"})
+    out = tmp_path / "flywheel-baseline.json"
+    pf.check_flywheel_isolation(cfg, [1, 2, 3], pf.Report(label="t"),
+                                allow_shared=True, baseline_path=out)
+    saved = json.loads(out.read_text())
+    assert saved["node_ids"] == ["n1", "n2", "n3"]  # deduped and sorted
+    assert saved["count"] == 3
+    assert saved["captured_for_seeds"] == [1, 2, 3]
+
+
+def test_metrics_declares_the_shared_account_confound():
+    """A confound that is not written down is not declared."""
+    text = (ROOT / "research" / "METRICS.md").read_text(encoding="utf-8")
+    assert "DECLARED CONFOUND" in text
+    assert "applies to arm B alone" in text
+    assert "--shared-flywheel" in text
+
+
+def test_preflight_verifies_the_flywheel_key_can_actually_write(monkeypatch):
+    """A read-only key passes every other Flywheel check and records nothing.
+
+    Measured on 2026-08-09: the rotated key authenticated, listed 458 nodes, and
+    answered every `commit_new_node` with `403 auth_error`. Preflight reported
+    21/21. Arm B's whole job is writing nodes.
+    """
+    from boxlab import preflight as pf
+    from boxlab.config import LabConfig
+    monkeypatch.setattr(pf, "flywheel_node_ids", lambda url, key: ["a"])
+    monkeypatch.setattr(pf, "flywheel_can_write",
+                        lambda url, key: (False, "403 auth_error: read-only"))
+    cfg = LabConfig(values={"FLYWHEEL_API_KEY": "read-only-key-xxxxxx"})
+    report = pf.Report(label="t")
+    pf.check_flywheel_isolation(cfg, [1, 2, 3], report, allow_shared=True)
+    assert not report.ok
+    assert any("can CREATE nodes" in c.name for c in report.failures)
+
+
+def test_the_write_probe_deletes_what_it_creates(monkeypatch):
+    """A probe that litters the account is a probe nobody will keep enabled."""
+    from boxlab import preflight as pf
+    calls = []
+
+    def fake(api_url, key, name, arguments, **kw):
+        calls.append(name)
+        if name == "flywheel_commit_new_node":
+            return False, '{"node_id": "probe-123"}'
+        return False, "{}"
+
+    monkeypatch.setattr(pf, "_flywheel_call", fake)
+    ok, detail = pf.flywheel_can_write("https://x", "k")
+    assert ok and "deleted" in detail
+    assert calls == ["flywheel_commit_new_node", "flywheel_delete_node"]
+
+
+def test_a_probe_that_cannot_be_deleted_still_passes_but_says_so():
+    """Write access is confirmed; the litter is reported, not hidden."""
+    from boxlab import preflight as pf
+    import types
+    def fake(api_url, key, name, arguments, **kw):
+        if name == "flywheel_commit_new_node":
+            return False, '{"node_id": "probe-9"}'
+        return True, "403 cannot delete"
+    pf._flywheel_call, original = fake, pf._flywheel_call
+    try:
+        ok, detail = pf.flywheel_can_write("https://x", "k")
+    finally:
+        pf._flywheel_call = original
+    assert ok
+    assert "could NOT be deleted" in detail and "probe-9" in detail

@@ -135,3 +135,70 @@ def test_staleness_reported_for_unreconciled_impacts():
         assert "mellow-quartz-0102" in infos  # calm-heron's target has a pending impact
     finally:
         os.unlink(path)
+
+
+# ---- the config defects that cost two arm-C runs their memory system ----------
+#
+# On the nine-run benchmark, `check --config .hypergraph/config.yml` was run
+# before the config existed. It died with a raw FileNotFoundError traceback out
+# of `read_text`, naming pathlib rather than the missing file. Two of three arm-C
+# agents read that as "the contents are wrong", wrote a one-line stub
+# (`backend: local`), and got "0 violations" — because the checker had silently
+# fallen back to guessing the roots. Both runs then carried a config that
+# declared neither `record_root` nor `state_root`.
+
+def test_missing_config_fails_with_an_instruction_not_a_traceback(tmp_path):
+    clean = FIXTURES / "clean"
+    with pytest.raises(SystemExit) as excinfo:
+        hg.main(["check", "--record", str(clean / "record.json"),
+                 "--state", str(clean / "state.json"),
+                 "--config", str(tmp_path / "config.yml")])
+    message = str(excinfo.value)
+    assert "no config at" in message
+    assert "record_root" in message and "state_root" in message
+    # The old failure was a stack ending in pathlib. If that name is back, the
+    # agent is being shown the plumbing again instead of the problem.
+    assert "Traceback" not in message and "pathlib" not in message
+
+
+def test_unparseable_config_names_the_file(tmp_path):
+    bad = tmp_path / "config.yml"
+    bad.write_text("record_root: [unclosed\n")
+    clean = FIXTURES / "clean"
+    with pytest.raises(SystemExit) as excinfo:
+        hg.main(["check", "--record", str(clean / "record.json"),
+                 "--state", str(clean / "state.json"), "--config", str(bad)])
+    assert str(bad) in str(excinfo.value)
+
+
+def test_a_config_declaring_no_roots_warns_rather_than_passing_silently(tmp_path):
+    """The stub config must not read as a clean bill of health."""
+    stub = tmp_path / "config.yml"
+    stub.write_text("backend: local\n")
+    clean = FIXTURES / "clean"
+    report = hg.run_check(clean / "record.json", clean / "state.json",
+                          hg.load_config(stub), config_given=True)
+    # Still a pass — the inferred root may be right, and a correct graph should
+    # not fail over how its root was located.
+    assert report.violations() == []
+    warnings = [f.message for f in report.warnings()]
+    assert any("declares no `record_root:`" in w for w in warnings), warnings
+    assert any("declares no `state_root:`" in w for w in warnings), warnings
+
+
+def test_inference_without_a_config_stays_silent():
+    """No --config is a deliberate choice, not an oversight — do not nag."""
+    clean = FIXTURES / "clean"
+    report = hg.run_check(clean / "record.json", clean / "state.json")
+    assert report.warnings() == []
+
+
+def test_cli_reports_a_version():
+    """preflight pins the installed version against pyproject; both need this."""
+    import re
+    with pytest.raises(SystemExit) as excinfo:
+        hg.main(["--version"])
+    assert excinfo.value.code == 0
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    declared = re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1)
+    assert hg.__version__ == declared
