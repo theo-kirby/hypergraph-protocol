@@ -12,5 +12,7 @@ This repo's memory lives in two graphs under `.hypergraph/` (see `.hypergraph/AG
    `hypergraph-reconcile` skill fold them. `STATE.md` is generated — never
    hand-edit it.
 4. **Verify before finishing**: `hypergraph export` + `hypergraph check` must
-   exit 0.
+   exit 0. If it says this project's copies are behind the CLI, run
+   `hypergraph upgrade` — the skills and this block are copies, and `uv tool
+   upgrade` cannot see them.
 <!-- hypergraph:end -->

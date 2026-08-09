@@ -1,6 +1,14 @@
 # .hypergraph/config.yml — written by hypergraph-init, read by all skills + tools.
 project: my-project
 
+# The release that last installed this project's *copies* of what the package ships:
+# the skills under .claude/skills/, the AGENTS.md block, the workflows. `uv tool
+# upgrade` refreshes the CLI and cannot see any of them, so `check` compares this
+# against the running CLI and `hypergraph upgrade` refreshes them and re-stamps it.
+# Not a compatibility floor — the node files are additive, and an older CLI reads a
+# newer graph fine.
+hypergraph_version: 0.0.6
+
 record_root:
   node_id: 00000000-0000-0000-0000-000000000000
   slug: adjective-noun-0000

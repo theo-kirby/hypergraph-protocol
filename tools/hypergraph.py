@@ -708,6 +708,8 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
     state_root = find_root(state, config.get("state_root"), report, "state",
                            config_given=config_given)
     check_legacy_backend_key(config, report)
+    if config_given:
+        check_version_skew(config, report)
     check_conflict_markers(record, report)
     check_conflict_markers(state, report)
     epoch_cutoff = resolve_epoch_cutoff(config, record, report)
@@ -2229,6 +2231,157 @@ def _links_into(dst: Path, tree: Path) -> bool:
     return True
 
 
+def upgrade_skills(source: Path, target: Path, changes: list, dry_run: bool) -> None:
+    """Replace installed skills wholesale, so a file we deleted upstream goes away.
+
+    `skills install` copies with `dirs_exist_ok`, which merges — a reference file
+    removed in a later release would linger forever. Upgrade is the one place that
+    can safely prune, because the whole directory is ours."""
+    for src in sorted(source.glob("hypergraph-*")):
+        if not src.is_dir():
+            continue
+        dst = target / src.name
+        if not dst.exists() and not dst.is_symlink():
+            continue                      # not installed here — upgrade never installs
+        if _links_into(dst, source):
+            changes.append(("skipped", dst, "symlinked to the source (dev checkout)"))
+            continue
+        if dst.is_dir() and not dst.is_symlink() and _trees_match(src, dst):
+            changes.append(("unchanged", dst, ""))
+            continue
+        if not dry_run:
+            if dst.is_symlink():
+                dst.unlink()
+            elif dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+        changes.append(("refreshed", dst, ""))
+
+
+def _trees_match(src: Path, dst: Path) -> bool:
+    """Same relative paths, same bytes. Cheap enough for five small skill trees."""
+    def snapshot(root: Path) -> dict:
+        return {str(p.relative_to(root)): p.read_bytes()
+                for p in sorted(root.rglob("*")) if p.is_file()}
+    try:
+        return snapshot(src) == snapshot(dst)
+    except OSError:
+        return False
+
+
+def upgrade_onboarding(block: str, repo: Path, changes: list, dry_run: bool) -> None:
+    """Refresh the sentinel-delimited block in whichever onboarding files carry it.
+
+    Writing through a symlink is deliberate: `CLAUDE.md` is often a link to
+    `AGENTS.md`, and `write_text` follows it, so the target is edited and the link
+    survives. Adopt has warned about that rule in prose since it shipped; here it
+    falls out of the implementation."""
+    seen: set[Path] = set()
+    for name in ONBOARDING_FILES:
+        path = repo / name
+        if not path.exists():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:      # CLAUDE.md → AGENTS.md: one file, edited once
+            continue
+        text = path.read_text(errors="replace")
+        updated = replace_agents_block(text, block)
+        if updated is None:
+            continue              # no block: this file never had one, so leave it
+        seen.add(resolved)
+        if updated == text:
+            changes.append(("unchanged", path, ""))
+            continue
+        if not dry_run:
+            path.write_text(updated)
+        changes.append(("refreshed", path, "hypergraph block"))
+
+
+def upgrade_workflows(source: Path, repo: Path, changes: list, dry_run: bool,
+                      write: bool) -> None:
+    """Report drifted CI workflows; rewrite them only when asked.
+
+    Workflows are the one copied artifact adopters genuinely edit — a different base
+    branch, an extra step, a self-hosted runner. Overwriting that by default would
+    make `upgrade` something you cannot run without reading the diff first, so the
+    default reports and `--workflows` acts."""
+    target_dir = repo / ".github" / "workflows"
+    for src in sorted(source.glob("*.yml")):
+        dst = target_dir / src.name
+        if not dst.exists():
+            continue              # never had it — upgrade does not opt anyone into CI
+        if dst.read_bytes() == src.read_bytes():
+            changes.append(("unchanged", dst, ""))
+            continue
+        if not write:
+            changes.append(("differs", dst, "pass --workflows to overwrite"))
+            continue
+        if not dry_run:
+            dst.write_bytes(src.read_bytes())
+        changes.append(("refreshed", dst, ""))
+
+
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    """Bring an adopted repo's *copies* up to the running CLI's release."""
+    repo = Path(args.repo or ".").resolve()
+    root = skills_data_root()
+    if is_source_checkout(repo, root):
+        raise LocalGraphError(
+            f"{repo} is the protocol's own checkout, not a project that adopted it. "
+            "Its skills are the dogfooding symlinks into `skills/` and its publish "
+            "workflow deliberately differs from the shipped template — refreshing "
+            "either from the package would overwrite the source with a copy of "
+            "itself. Run `upgrade` in an adopted repo, or pass --repo.")
+
+    changes: list = []
+    # Scope mirrors `skills install`: project by default, `--user` for ~/.claude.
+    # Refreshing both implicitly would edit files outside the repo you named, which
+    # is not something a repo-scoped command should do without being asked.
+    skills_target = (Path.home() / ".claude" / "skills" if args.user
+                     else repo / ".claude" / "skills")
+    upgrade_skills(root / "skills", skills_target, changes, args.dry_run)
+    block_path = root / "templates" / "agents-block.md"
+    if block_path.exists():
+        upgrade_onboarding(block_path.read_text(), repo, changes, args.dry_run)
+    upgrade_workflows(root / "templates" / "github-actions", repo, changes,
+                      args.dry_run, args.workflows)
+
+    config_path = Path(args.config) if args.config else repo / ".hypergraph" / "config.yml"
+    if config_path.exists():
+        text = config_path.read_text()
+        stamped = stamp_config_version(text, __version__)
+        if stamped == text:
+            changes.append(("unchanged", config_path, f"hypergraph_version: {__version__}"))
+        else:
+            if not args.dry_run:
+                config_path.write_text(stamped)
+            changes.append(("refreshed", config_path, f"hypergraph_version: {__version__}"))
+    else:
+        changes.append(("skipped", config_path, "no config — not an adopted project"))
+
+    verb = {"refreshed": "would refresh", "unchanged": "unchanged",
+            "skipped": "skipped", "differs": "differs"} if args.dry_run else {}
+    for state, path, note in changes:
+        label = verb.get(state, state)
+        try:
+            shown = path.relative_to(repo)
+        except ValueError:
+            shown = path
+        print(f"  {label:<14} {shown}" + (f"   ({note})" if note else ""))
+    touched = sum(1 for state, _p, _n in changes if state == "refreshed")
+    drifted = [c for c in changes if c[0] == "differs"]
+    if not changes or all(c[0] != "refreshed" for c in changes):
+        print(f"\nupgrade: already current at {__version__}"
+              + (f" — {len(drifted)} workflow(s) differ" if drifted else ""))
+    else:
+        print(f"\nupgrade: {touched} item(s) "
+              f"{'would be refreshed' if args.dry_run else 'refreshed'} to {__version__}"
+              + (f", {len(drifted)} workflow(s) differ" if drifted else ""))
+    if not args.dry_run and touched:
+        print("Commit the result — these files travel with the repo.")
+    return 0
+
+
 def cmd_skills(args: argparse.Namespace) -> int:
     root = skills_data_root()
     source = root / "skills"
@@ -2269,6 +2422,106 @@ def cmd_skills(args: argparse.Namespace) -> int:
     for name in installed:
         print(f"{verb} {target / name}")
     return 0
+
+
+# ------------------------------------------------------------------- upgrading
+# An adopted repo carries *copies* of things this package ships: the five skills
+# under `.claude/skills/`, the sentinel-delimited AGENTS.md block, and sometimes the
+# CI workflows. `uv tool upgrade` refreshes the CLI and cannot see any of them, so
+# before this command the only way a fix reached an adopter's skill was for someone
+# to remember to say so. That is how the 0.0.6 adoption fixes shipped into a package
+# whose *installed* skill still described the step order they fixed.
+#
+# The contract is deliberately narrow: **refresh what is already there, never
+# install what is not.** An upgrade that quietly adds CI to a repo that never wanted
+# it is a worse failure than a stale file.
+
+AGENTS_BEGIN = "<!-- hypergraph:begin -->"
+AGENTS_END = "<!-- hypergraph:end -->"
+ONBOARDING_FILES = ("AGENTS.md", "CLAUDE.md", ".hypergraph/AGENTS.md")
+
+
+def version_tuple(text: str) -> tuple[int, ...] | None:
+    """`0.0.6` → `(0, 0, 6)`; anything else → None (never guess at an ordering)."""
+    parts = str(text).strip().split(".")
+    if not parts or not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def check_version_skew(config: dict, report: Report) -> None:
+    """Compare the version that installed this repo's copies against the running CLI.
+
+    `hypergraph_version:` records which release last wrote the skills, the AGENTS.md
+    block and the workflows into this repo — not a compatibility floor. The node
+    files are additive markdown and an older CLI reads a newer graph fine; what goes
+    stale is the *copies*, silently, because nothing else in the repo names a version.
+
+    Always a warning, never a violation. Failing someone's CI because their skill
+    files are a release behind would be hostile, and the skew is often deliberate."""
+    declared = config.get("hypergraph_version")
+    if declared is None:
+        report.add("info", "-", "config",
+                   "no `hypergraph_version:` — this project's skills and AGENTS.md "
+                   "block predate the stamp, so nothing can tell whether they are "
+                   "current. `hypergraph upgrade` refreshes them and adds it.")
+        return
+    theirs, ours = version_tuple(declared), version_tuple(__version__)
+    if theirs is None or ours is None or theirs == ours:
+        return
+    if theirs < ours:
+        report.add("warning", "-", "config",
+                   f"this project's skills and AGENTS.md block were installed by "
+                   f"{declared}; the CLI here is {__version__}. The node files are "
+                   f"fine — the copies are stale. Run `hypergraph upgrade`.")
+    else:
+        report.add("warning", "-", "config",
+                   f"this project was set up by {declared} and the CLI here is "
+                   f"{__version__} — the CLI is the old half. Run "
+                   f"`uv tool upgrade hypergraph-protocol`.")
+
+
+def is_source_checkout(repo: Path, source_root: Path) -> bool:
+    """Is `repo` the protocol's own tree, rather than a project that adopted it?
+
+    Refusing here is not politeness. This repo's `.claude/skills/hypergraph-*` are
+    committed symlinks into `skills/` (the dogfooding), and its publish workflow
+    deliberately differs from the shipped template — it runs the CLI out of the
+    checkout. Refreshing either from the package would destroy a difference that is
+    the point."""
+    try:
+        return repo.resolve() == source_root.resolve()
+    except OSError:
+        return False
+
+
+def replace_agents_block(text: str, block: str) -> str | None:
+    """Swap what is between the sentinels. None when the file has no block.
+
+    Everything outside the markers is the adopter's own prose and must survive
+    verbatim — that is what the markers were introduced for."""
+    start = text.find(AGENTS_BEGIN)
+    end = text.find(AGENTS_END)
+    if start < 0 or end < 0 or end < start:
+        return None
+    return text[:start] + block.strip() + text[end + len(AGENTS_END):]
+
+
+def stamp_config_version(text: str, version: str) -> str:
+    """Set `hypergraph_version:` without reformatting the rest.
+
+    A config is hand-edited and comment-heavy (hypergraph-init writes it from the
+    template by hand), so this is a line edit, not a YAML round-trip: dumping the
+    parsed document back would silently delete every comment in it."""
+    line = f"hypergraph_version: {version}"
+    if re.search(r"^hypergraph_version:.*$", text, flags=re.M):
+        return re.sub(r"^hypergraph_version:.*$", line, text, count=1, flags=re.M)
+    comment = ("# The release that last installed this project's skills, AGENTS.md\n"
+               "# block and workflows — refreshed by `hypergraph upgrade`.\n")
+    match = re.search(r"^project:.*$", text, flags=re.M)
+    if match:
+        return f"{text[:match.end()]}\n\n{comment}{line}{text[match.end():]}"
+    return text.rstrip("\n") + f"\n\n{comment}{line}\n"
 
 
 # ---------------------------------------------------------------- mirror errors
@@ -4122,6 +4375,9 @@ def adopt_init(repo: Path, args: argparse.Namespace) -> int:
     config_path.write_text(
         f"# .hypergraph/config.yml — written by `hypergraph adopt --init`.\n"
         f"project: {project}\n\n"
+        f"# The release that last installed this project's skills, AGENTS.md block\n"
+        f"# and workflows — refreshed by `hypergraph upgrade`.\n"
+        f"hypergraph_version: {__version__}\n\n"
         f"record_root:\n  node_id: {node_id_for(record_slug)}\n  slug: {record_slug}\n\n"
         f"state_root:\n  node_id: {node_id_for(state_slug)}\n  slug: {state_slug}\n\n"
         f"cache_dir: .hypergraph/cache\n"
@@ -7448,6 +7704,21 @@ def main(argv: list[str] | None = None) -> int:
                                "the live skill (dev checkouts only — a copy is what "
                                "an installed wheel should hand out)")
     p_skills.set_defaults(func=cmd_skills)
+
+    p_upgrade = sub.add_parser(
+        "upgrade", help="refresh an adopted repo's copies (skills, AGENTS.md block, "
+                        "workflows) to this CLI's release")
+    p_upgrade.add_argument("--repo", type=Path, help="repo root (default: cwd)")
+    p_upgrade.add_argument("--config", type=Path, help=".hypergraph/config.yml")
+    p_upgrade.add_argument("--user", action="store_true",
+                           help="refresh the skills in ~/.claude/skills instead of "
+                                "./.claude/skills (mirrors `skills install --user`)")
+    p_upgrade.add_argument("--workflows", action="store_true",
+                           help="also overwrite drifted .github/workflows/hypergraph-*"
+                                " (default: report them — adopters customize these)")
+    p_upgrade.add_argument("--dry-run", action="store_true",
+                           help="print what would change and write nothing")
+    p_upgrade.set_defaults(func=cmd_upgrade)
 
     # ---- optional one-way mirror: backend/mirror.md. Nothing below here runs on a
     # project whose config declares no `mirror:` — `push` exits 0 as a no-op, which

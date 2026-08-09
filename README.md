@@ -80,7 +80,8 @@ files without recording anything, and a publish job refreshes the mirror on merg
   (zero JS dependencies, no network; opens straight from `file://`), or an
   excaligraph spec for hand-editable excalidraw figures; `export`/`import`/`new`/
   `update` are the storage layer, `hwm` reports the reconciliation frontier, and
-  `push`/`sync`/`mirror` the optional mirror.
+  `push`/`sync`/`mirror` the optional mirror; `upgrade` refreshes an adopted repo's
+  copies of the skills and the AGENTS.md block.
 - **[templates/](templates/)** — the exact markdown shapes the checker parses.
 
 ## Install
@@ -93,6 +94,21 @@ hypergraph skills install          # → ./.claude/skills (project scope)
 That is the whole install: the CLI from PyPI, and the five skills into the repo you
 are working in (`--user` puts them in `~/.claude/skills` instead). Nothing to clone,
 nothing to fork.
+
+**Updating later takes two commands, because it is two different things:**
+
+```bash
+uv tool upgrade hypergraph-protocol   # the CLI — lives outside your repo
+hypergraph upgrade                    # the copies — skills, AGENTS.md block, workflows
+```
+
+`skills install` writes real files into your repo, so `uv tool upgrade` cannot see
+them and they go stale silently. `hypergraph upgrade` refreshes what is already
+there — it never installs what is not, so it will not drop CI into a repo that never
+had it, and drifted workflows are reported rather than overwritten (`--workflows`
+opts in). It also stamps `hypergraph_version:` into the config, which is what lets
+`check` tell you which half is behind. Node files themselves need no migration: they
+are additive markdown, and an older CLI reads a newer graph.
 
 ## Quickstart
 
@@ -227,7 +243,7 @@ tools/hypergraph.py         checker + renderer + visualizer + storage + mirror (
 tools/bundle_viz.py         dev tool: bundles tools/viz/* into the page constant
 tools/viz/                  the viz page's sources (html + css + js parts)
 tools/fixtures/             test fixtures (clean, violations, local-graph, self)
-tests/                      pytest suites (checker, viz, storage, mirror, collaboration, adoption)
+tests/                      pytest suites (checker, viz, storage, mirror, collaboration, adoption, upgrade)
 tests/browser/              playwright layout baselines (dev group; self-skipping)
 ```
 

@@ -124,3 +124,33 @@ def test_sdist_actually_contains_the_skills_tree(tmp_path):
         assert not any(n.split("/")[0] == never for n in names), f"sdist ships {never}/"
     assert not any(n.split("/")[0] == ".claude" for n in names), (
         "sdist ships the .claude symlink tree, which shadows skills/ during the walk")
+
+
+def test_this_repos_config_stamp_matches_pyproject():
+    """The dogfood config's `hypergraph_version:` must not drift either.
+
+    In this repo the stamp is always true by construction — `.claude/skills/*` are
+    symlinks into `skills/`, so there are no copies to go stale, which is why
+    `hypergraph upgrade` refuses to run here. That is exactly what makes it easy to
+    forget on a release, and a wrong stamp makes `check` tell every reader of this
+    repo to run an upgrade that would do nothing.
+    """
+    import re
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    config = (ROOT / ".hypergraph" / "config.yml").read_text(encoding="utf-8")
+    found = re.search(r"^hypergraph_version:\s*(\S+)$", config, flags=re.M)
+    assert found, ".hypergraph/config.yml carries no hypergraph_version:"
+    assert found.group(1) == declared, (
+        f"config says {found.group(1)}, pyproject says {declared}")
+
+
+def test_templates_config_stamp_matches_pyproject():
+    """hypergraph-init writes a config by hand from this template, so a stale
+    version here is copied verbatim into every new project it initializes."""
+    import re
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    template = (ROOT / "templates" / "config.example.yml").read_text(encoding="utf-8")
+    found = re.search(r"^hypergraph_version:\s*(\S+)$", template, flags=re.M)
+    assert found, "templates/config.example.yml carries no hypergraph_version:"
+    assert found.group(1) == declared, (
+        f"template says {found.group(1)}, pyproject says {declared}")

@@ -305,7 +305,11 @@ Created by the `hypergraph-init` skill (day zero) or the `hypergraph-adopt` skil
 
 - `.hypergraph/config.yml` — project name, record root and state root (node_id + slug);
   adopted projects add `epoch:` and, for imported legacy graphs, `archive:` (which
-  also feeds `push --lineage`). See [templates/config.example.yml](templates/config.example.yml).
+  also feeds `push --lineage`). `hypergraph_version:` records which release last
+  installed this project's *copies* of what the tooling ships — the skills, the
+  AGENTS.md block, the workflows — which nothing else in the repo names; it is not a
+  compatibility floor, because node files are additive and an older reader is fine on
+  a newer graph. See [templates/config.example.yml](templates/config.example.yml).
 - `.hypergraph/graph/{record,state}/<slug>.md` — the node files: frontmatter carrying
   identity and parent slugs, body carrying the content verbatim. One optional block is
   protocol — **`origin:`**, where an imported node came from (immutable provenance,

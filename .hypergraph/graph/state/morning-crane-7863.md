@@ -9,9 +9,9 @@ summary: 'Adoption built, field-proven, and now MCP-free: mirror pull plus four 
 flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
-  revision: 5
-  pushed_at: '2026-08-09T13:26:53+00:00'
-  content_sha256: 81a92577cbd062c223ed92cf111f29a83750cfc6963b6dbefc06fa841121291b
+  revision: 6
+  pushed_at: '2026-08-09T15:54:56+00:00'
+  content_sha256: 03819dc8e0774ea9d93d20f4eb6ff5dc933ca9099fbfddf0f7cf465ec274d40d
 ---
 Status: working
 
@@ -32,6 +32,7 @@ Status: working
   - `adopt --resolve-prefixes --against <export>` — maps `[0-9a-f]{8,}` prefixes cited in tracked docs to slugs, **reporting ambiguity rather than guessing**; hex tokens matching no node are listed apart. Against this repo's own export it mapped all 53 ids with 0 ambiguous, correctly setting aside 1057 git SHAs [rec: calm-sand-3399].
 - The **interview** stayed in the skill — prose, never a CLI verb — and is now **one staged sitting run at step 3**: Part 1 history (~10 questions feeding the prehistory nodes) and Part 2 the original five state questions, whose routing is unchanged — what didn't work and what in the docs is now false become negative knowledge and `broken` statuses; what is externally blocked becomes `blocked`; what you are deliberately not doing becomes a decision record node rather than a state claim [rec: calm-sand-3399] [rec: patient-sail-0175]. The agent seeds the generic questions with what `--survey` actually reported; a brain-dump substitutes for being asked; a declined interview is stated in the prehistory bodies rather than hidden [rec: patient-sail-0175].
 - **The documented order now runs.** The skill is 8 steps — inventory, read, interview, `adopt --init`, history, marker, distillation, onboarding — with the roots minted *before* anything parents on them, and prehistory guidance widened from 1–3 to 3–10 nodes (one per era or workstream) [rec: patient-sail-0175].
+- **An adoption is no longer write-once.** The skills and the AGENTS.md block adopt installs are copies in the adopter's repo, and until `hypergraph upgrade` there was no way to refresh them — 0.0.6's fixes shipped into a package whose *installed* skill still described the step order they fixed. Upgrade refreshes them in place, and `check` reports when they are behind (see fond-sail-3288) [rec: ancient-bluff-9706].
 - Field-verified against a repo we did not write: mode B on a scratch clone of `ares` (347 commits, 5 contributors) walked all 8 steps to `check` **0/0**, with `--survey` naming six directory births in 0.38s where the gap heuristic found a single era spanning the whole history; mode A on a legacy-shaped export had `--init` adopt both imported roots; and a fresh-adopter `uv tool install hypergraph-protocol` + `hypergraph skills install` landed all five skills [rec: patient-sail-0175].
 - Acceptance test passed: a fresh agent with no protocol context completed the full loop in a3go — orient in 6 calls, genuine frontier work (GEO-1 precondition: d=1 boards proven exactly 2D Go, corner-flip endpoint measured), causally-parented record, no state writes, librarian reconcile, mirror verify clean — zero protocol violations [rec: fond-tree-4727].
 
@@ -60,3 +61,4 @@ Status: working
 - silver-ember-3035 — mirror pull replaces the MCP export path for mode A
 - calm-sand-3399 — adopt affordances (survey/init/marker/resolve-prefixes); the no-generated-prose line
 - patient-sail-0175 — adoption fixed end-to-end after walking it against an outside repo: root-aware `--init`, 8-step order, timeline signals, staged interview, 3–10 prehistory nodes
+- ancient-bluff-9706 — the installed skills and AGENTS.md block became refreshable, closing the write-once gap an adoption used to leave

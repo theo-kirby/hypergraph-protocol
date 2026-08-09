@@ -1,6 +1,13 @@
 # Hypergraph per-project config — written by hypergraph-init (2026-08-06).
 project: hypergraph-protocol
 
+# The release whose skills/AGENTS.md block this project carries. Here it is always
+# the release in the tree: `.claude/skills/hypergraph-*` are symlinks into `skills/`,
+# so there are no copies to go stale — which is also why `hypergraph upgrade` refuses
+# to run in this checkout. `tests/test_packaging.py` holds this in step with
+# `__version__` so a release cannot leave it behind.
+hypergraph_version: 0.0.6
+
 record_root:
   node_id: cdbea53e-8865-5138-b033-948b4690daf3
   slug: autumn-tooth-6046
