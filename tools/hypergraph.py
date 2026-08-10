@@ -5335,18 +5335,32 @@ def resync_mirror_revisions(graph_dir: Path, roots: dict, transport, *, out=prin
     cache = config_cache_dir(graph_dir)
     for kind, root_id in roots.items():
         export = transport.export_subgraph([root_id], cache / f"revision-sync-{kind}.json")
-        data = json.loads(Path(export).read_text())
-        raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
-        if isinstance(raw_nodes, dict):
-            raw_nodes = list(raw_nodes.values())
-        for raw in raw_nodes or []:
-            if not isinstance(raw, dict):
-                continue
-            revision = raw.get("committed_revision", raw.get("revision"))
-            node_id = str(raw.get("node_id") or "")
-            if node_id and revision is not None:
-                live[node_id] = int(revision)
+        live.update(export_revisions(export))
+    return restamp_revisions(graph_dir, live, out=out)
 
+
+def export_revisions(path_or_data: object) -> dict[str, int]:
+    """{mirror node_id: committed revision} out of an export."""
+    if isinstance(path_or_data, (str, Path)):
+        data = json.loads(Path(path_or_data).read_text())
+    else:
+        data = path_or_data
+    raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
+    if isinstance(raw_nodes, dict):
+        raw_nodes = list(raw_nodes.values())
+    live: dict[str, int] = {}
+    for raw in raw_nodes or []:
+        if not isinstance(raw, dict):
+            continue
+        revision = raw.get("committed_revision", raw.get("revision"))
+        node_id = str(raw.get("node_id") or "")
+        if node_id and revision is not None:
+            live[node_id] = int(revision)
+    return live
+
+
+def restamp_revisions(graph_dir: Path, live: dict[str, int], *, out=print) -> int:
+    """Write the mirror's current revisions into `flywheel.revision`. Revision only."""
     restamped = 0
     for kind in GRAPH_KINDS:
         for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
@@ -5362,8 +5376,8 @@ def resync_mirror_revisions(graph_dir: Path, roots: dict, transport, *, out=prin
             node.path.write_text(render_node_file(meta, node.content))
             restamped += 1
     if restamped:
-        out(f"  tags: re-stamped the revision on {restamped} node file(s) — creating a "
-            "tag moves every node in the graph")
+        out(f"  re-stamped `flywheel.revision` on {restamped} node file(s) — a node's "
+            "revision moves when a tag is created, without that node being written")
     return restamped
 
 
@@ -5736,6 +5750,21 @@ def cmd_push(args: argparse.Namespace) -> int:
           + (f", {summary['tagged']} tagged" if summary.get("tagged") else ""))
     if not args.no_verify:
         report = verify_against_mirror(graph_dir, config, transport, cache_dir=cache_dir)
+        # A node's revision can move without that node being written — creating a tag
+        # moves every node in the graph. That leaves stamps stale on nodes nothing
+        # touched, and no later push would ever fix them, because a push only writes
+        # what changed. So converge here, from the export `verify` already fetched:
+        # no extra request, only the revision rewritten, and a re-verify to prove it.
+        skew = [f for f in report.violations() if f.message.startswith("revision skew")]
+        if skew:
+            export = cache_dir / "mirror-verify.json"
+            if export.exists():
+                restamped = restamp_revisions(graph_dir, export_revisions(export))
+                if restamped:
+                    print(f"push: re-stamped `flywheel.revision` on {restamped} node "
+                          "file(s) the mirror had moved underneath us — re-verifying")
+                    report = verify_against_mirror(graph_dir, config, transport,
+                                                   cache_dir=cache_dir)
         if report.violations():
             return 1
     return 0

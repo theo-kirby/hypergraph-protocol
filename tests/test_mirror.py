@@ -479,6 +479,44 @@ def test_ordering_resumes_from_what_the_mirror_already_holds(tmp_path):
     assert [n.slug for n in ordered][0] == "brave-otter-1002"
 
 
+def test_push_converges_a_revision_the_mirror_moved_without_writing_the_node(
+        tmp_path, monkeypatch):
+    """An untagged node whose revision the host bumped is drift no later push would
+    ever clear — a push only writes what changed. It converges from the export
+    `verify` already fetched, and re-verifies to prove it."""
+    graph_dir = pushed_graph(tmp_path)
+    fake = FakeTransport(graph_dir)
+    config = config_for(graph_dir)
+    monkeypatch.setattr(hg, "make_transport", lambda *a, **kw: fake)
+    monkeypatch.setattr(hg, "publish_branch_block", lambda *a, **kw: None)
+    monkeypatch.setattr(hg, "mirror_doctor", lambda *a, **kw: hg.Report())
+    for kind, root in (("record", RECORD_ROOT), ("state", STATE_ROOT)):
+        for slug, node in hg.load_local_nodes(graph_dir, kind).items():
+            fake.nodes[f"fw-{slug}"] = {
+                "node_id": f"fw-{slug}", "slug_name": node.meta["flywheel"]["slug"],
+                "title": node.title, "content": node.content,
+                "summary": str(node.meta.get("summary") or ""),
+                "revision": 9,                       # the host moved underneath us
+                "can_write": True, "is_owner": True}
+            fake.kids.setdefault(root, []).append(f"fw-{slug}")
+            fake.kids.setdefault(f"fw-{slug}", [])
+
+    assert hg.verify_mirror(graph_dir, fake.export_subgraph(
+        [RECORD_ROOT, STATE_ROOT], tmp_path / "e.json")).violations()   # drifted first
+    assert run("push", "--graph-dir", graph_dir, "--config",
+               write_config(tmp_path, config)) == 0
+    for kind in ("record", "state"):
+        for node in hg.load_local_nodes(graph_dir, kind).values():
+            assert node.meta["flywheel"]["revision"] == 9
+
+
+def write_config(tmp_path, config):
+    import yaml
+    path = tmp_path / "config.yml"
+    path.write_text(yaml.safe_dump(config, sort_keys=False))
+    return path
+
+
 def test_a_missing_graph_tags_key_raises_rather_than_reading_as_no_tags(tmp_path):
     """Reading an absent key as "no tags" re-creates the whole vocabulary next push."""
     with pytest.raises(hg.MirrorError, match="graph_tags"):
