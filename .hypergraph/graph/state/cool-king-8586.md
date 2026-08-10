@@ -18,5 +18,5 @@ Children mirror the project architecture. Statuses per SPEC I6; frontier = open/
 
 ## Reconciliation
 
-- high_water_mark: patient-ridge-8464, clear-moss-4527
-- reconciled_at: 2026-08-09T23:22:43+00:00
+- high_water_mark: patient-ridge-8464, early-mesa-8507
+- reconciled_at: 2026-08-10T06:49:05+00:00

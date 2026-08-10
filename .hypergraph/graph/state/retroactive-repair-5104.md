@@ -7,7 +7,7 @@ parents:
 - cool-king-8586
 summary: '`hypergraph heal`: a registry of typed graph repairs that carry a capability backwards into a repo that adopted before it existed. Detect-only until --apply, persists nothing, and never treats `origin:` as a write target. Healer #1 (tags) is proven offline on a copy of the real neural-whoop repo; the mirror half has only met FakeTransport, and the extensibility claim has one healer behind it.'
 ---
-Status: open
+Status: working
 
 ## Current
 
@@ -40,15 +40,25 @@ graph content and spends a mirror-write budget that cannot be un-spent
   then the mirror vocabulary and assignments. Matching is exact: an imported node's
   `origin.node_id` *is* its archive id, so nothing is ever guessed [rec: clear-moss-4527].
 
-**Open, and what would close it.** The offline half is proven end to end on a copy of
-the real neural-whoop repo: 188 nodes healed, 22 definitions written, `push --plan`
-free of creates and body updates afterwards, and a second run changing nothing on a
-git-clean tree [rec: clear-moss-4527]. The **mirror half has only met `FakeTransport`**,
-which models the two properties that matter (a creation bumps the root revision; an
-assignment bumps the node revision and is an atomic replace) but is not the host. The
-live run against neural-whoop's own mirror — 22 creations, 188 assignments, then
-`push --verify` reporting 0 drift and a second `heal tags` finding nothing — is the
-evidence this claim is waiting on.
+**Proven end to end against a live mirror** [rec: early-mesa-8507]. On neural-whoop:
+22 tag definitions created, 486 assignments across 188 of 189 nodes, **per-tag counts
+identical to the archive**, `push --verify` 0 drift, a second `heal tags` reporting 0
+changes, and the archive root still at revision 28. The offline half needed no
+credentials at all — the adoption's own cached pull was the source.
+
+Every guard held under real conditions: `origin:` was never a write target across all
+212 pushed nodes; `push --plan` after the frontmatter rewrite showed 0 creates, 0 body
+updates and 0 violations; and every `--apply`-less invocation wrote nothing [rec: early-mesa-8507].
+
+**Three host behaviours broke it first, and none was findable by reading**
+[rec: early-mesa-8507]: `tags:create` returns the graph *root node* rather than the tag;
+a `cluster:*` tag must cover a connected set of nodes, checked on every write, so
+assignment *order* is part of the contract; and creating a tag bumps the committed
+revision of **every node in the graph**, which left nodes nobody had written reading as
+drift. All three are fixed, tested, and modelled in `FakeTransport` — and the healer
+framework itself did not change to accommodate any of them. Every fix landed in the
+transport or in `push_tags`, which is better evidence for the framework's shape than a
+second healer would have been, because it was not designed for.
 
 **The extensibility claim is not yet evidence either.** The framing is that healer #2
 costs one registry entry and one comparator. `HEALERS` has one member, and
@@ -56,7 +66,9 @@ costs one registry entry and one comparator. `HEALERS` has one member, and
 test constrains the shape — unique names, acyclic `after:` ordering, `blocked_by`
 returning a reason rather than a bool, an archive reader never declaring an archive
 write — but shape is not cost. Artifacts are the natural second healer and the thing
-that would settle it [rec: clear-moss-4527].
+that would settle it [rec: clear-moss-4527]. The live run is partial evidence for it:
+three defects moved nothing in the registry, the drift types or `detect`/`apply`
+[rec: early-mesa-8507].
 
 ## Negative knowledge
 
@@ -68,3 +80,4 @@ that would settle it [rec: clear-moss-4527].
 - simple-ocean-1716 — the decision that opened this: heal is a framework, and separate from upgrade because it rewrites graph content
 - clear-moss-4527 — built and trialled offline end to end; the mirror half and healer #2 are what remain
 - fresh-spire-9002 — the field loss that made a backward path necessary rather than nice
+- early-mesa-8507 — the live run: 188 nodes recovered on neural-whoop's mirror, and the three host behaviours that took

@@ -20,6 +20,7 @@ Status: working
 - What this project has learned about **running fleets of autonomous agents against live accounts** — harness discipline, as distinct from the protocol it is used to test. It exists because the first nine-run benchmark's failures were not about memory systems at all: they were about a harness that let nine agents share a namespace, a credential and an unasserted provisioning step [rec: staid-field-2723].
 - Two of these lessons are now **mechanical checks rather than remembered lore**: `hypergraph mirror doctor` performs a real write probe and asserts `mirror_account_id:` against the authenticated user id, so the read-vs-write gate and the wrong-account diagnosis run automatically instead of depending on an agent recalling them [rec: silver-ember-3035].
 - The lessons generalise past this benchmark. Any future experiment that spends money on agents in parallel inherits them, and `research/boxlab/preflight.py` is where they are enforced [rec: staid-field-2723].
+- **A fake models the protocol you wrote down; a live run tests the protocol the host implements** [rec: early-mesa-8507]. `FakeTransport` was not wrong about tags — it was *optimistic* in exactly the three places a real host is not, and each optimism was invisible because it was shared with the code under test. The tag push passed every test it had and then hit three distinct host behaviours on its first live run. The remedy that generalises is not more tests against the fake; it is teaching the fake each behaviour as it is discovered, so the next run's surprises are new ones.
 
 ## Negative knowledge
 
@@ -41,3 +42,4 @@ Status: working
 - sweet-aspen-3667 — the read-vs-write gate lesson, generalized from three incidents
 - solemn-dawn-6752 — shared-assumption corroboration is not corroboration
 - silver-ember-3035 — the write probe and account check made mechanical; vendor-stderr injection channel
+- early-mesa-8507 — the fake was optimistic in the three places the host was not, and every optimism was shared with the code under test
