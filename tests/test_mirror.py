@@ -370,6 +370,38 @@ def test_push_no_tags_leaves_the_mirror_untagged(tmp_path):
     assert not [c for c in fake.calls if c[0] in ("create_tag", "assign_tags")]
 
 
+def test_the_tag_id_comes_from_the_root_not_from_the_create_response(tmp_path):
+    """Measured against the live host: `tags:create` returns the updated **root node**
+    — content, artifacts, graph_projection — and no tag_id anywhere in it. Identity
+    therefore comes from re-reading the root and resolving by name, which is also the
+    recovery path a crashed run needs."""
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["kind:method"]})
+    fake = FakeTransport(graph_dir)
+    real_create = fake.create_tag
+
+    def returns_the_root(**kw):
+        real_create(**kw)                       # the tag really is created
+        return dict(fake.nodes[kw["root_node_id"]])   # ...and this is what comes back
+
+    fake.create_tag = returns_the_root
+    push(graph_dir, config_for(graph_dir), fake)
+
+    meta, _b = hg.split_frontmatter((graph_dir / "record" / "wise-anchor-1001.md").read_text())
+    assert meta["flywheel"]["tags_sha256"] == hg.tags_sha256(["kind:method"])
+    assert fake.nodes["fw-wise-anchor-1001"]["tag_ids"] == ["tag-kind:method"]
+
+
+def test_a_create_that_did_not_land_stops_before_assigning(tmp_path):
+    """The other half: if the name is absent from the root afterwards, the write did
+    not land, and assigning an id that does not exist is worse than failing."""
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["kind:method"]})
+    fake = FakeTransport(graph_dir)
+    fake.create_tag = lambda **kw: {}            # accepted, but nothing was created
+    with pytest.raises(hg.MirrorError, match="did not land"):
+        push(graph_dir, config_for(graph_dir), fake)
+    assert not [c for c in fake.calls if c[0] == "assign_tags"]
+
+
 def test_a_missing_graph_tags_key_raises_rather_than_reading_as_no_tags(tmp_path):
     """Reading an absent key as "no tags" re-creates the whole vocabulary next push."""
     with pytest.raises(hg.MirrorError, match="graph_tags"):

@@ -127,7 +127,16 @@ flywheel tags:assign --node_id <node> --tag_ids "" --expected_revision 22   # cl
 | `tags:update` | `PATCH /nodes/{root_node_id}/tags/{tag_id}` | root revision |
 | `tags:delete` | `DELETE /nodes/{root_node_id}/tags/{tag_id}` | root revision |
 
-Four traps, all of them cheap to hit:
+Five traps, all of them cheap to hit:
+
+- **`tags:create` does not return the tag.** Measured against the live host: it returns
+  the updated *graph root node* — `content`, `artifacts`, `graph_projection`,
+  `can_write` — with no `tag_id` anywhere in it. The tag really is created; the
+  response simply is not it. So the new tag's id must come from **re-reading the root
+  and resolving by name**, which is the same read that gets you the bumped root
+  revision, and the same lookup that makes a crashed run find its tag instead of
+  creating a second one. Anything that trusts this response for identity fails on the
+  very first tag.
 
 - **An absent `graph_tags` key is not "no tags".** Reading it that way makes the next
   push re-create the entire vocabulary, and a duplicate definition cannot be cleanly

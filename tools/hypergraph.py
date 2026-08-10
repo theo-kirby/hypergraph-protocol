@@ -4490,16 +4490,23 @@ class FlywheelCliTransport:
 
         `expected_revision` must be re-read before every call: each create bumps the
         root revision, so a revision computed once and reused across a 22-tag loop is
-        stale after the first."""
+        stale after the first.
+
+        **The return value is not the tag's identity.** Measured against the live host:
+        this endpoint returns the updated *graph root node* — `content`, `artifacts`,
+        `graph_projection` — with no `tag_id` anywhere in it. The caller re-reads the
+        root and resolves the new tag **by name**, which is the same rule as never
+        assuming a revision, and is also exactly the recovery path a crashed run
+        needs."""
         # argv trap: `_run` renders `--{k}={v}` for anything non-None, so a Python
         # False would become the *truthy string* `--one_only=False`. These are
         # store-true flags — omit them, or pass them bare.
-        extra = ([f"--one_only"] if one_only else []) + \
+        extra = (["--one_only"] if one_only else []) + \
                 (["--track_history"] if track_history else [])
         raw = self._run("tags:create", root_node_id=root_node_id, name=name,
                         expected_revision=int(expected_revision), bg_color=bg_color,
                         text_color=text_color, extra=extra)
-        return _parse_tag(raw, context=f"tags:create {name}")
+        return raw if isinstance(raw, dict) else {}
 
     def assign_tags(self, *, node_id: str, tag_ids: list[str],
                     expected_revision: int) -> None:
@@ -4529,17 +4536,16 @@ def _parse_graph_tags(raw: object, *, context: str) -> tuple[list[dict], int]:
     return tags, int(revision)
 
 
-def _parse_tag(raw: object, *, context: str) -> dict:
-    """A `tags:create` response → the tag definition, or a loud failure."""
-    if isinstance(raw, dict) and isinstance(raw.get("tag"), dict):
-        raw = raw["tag"]
-    if not isinstance(raw, dict) or not raw.get("tag_id"):
-        raise MirrorError(
-            f"{context}: response carries no tag_id "
-            f"(keys: {sorted(raw)[:8] if isinstance(raw, dict) else type(raw).__name__}) "
-            "— refusing to guess what was created, because a second create of the same "
-            "name is unrecoverable.")
-    return raw
+def tag_by_name(tags: list[dict], name: str) -> dict | None:
+    """A tag definition out of a root's `graph_tags`, by name.
+
+    Name is the only lookup key here, deliberately. It is what makes a create
+    idempotent by inspection — a crashed run finds the tag rather than repeating it —
+    and it is what identifies a tag whose id the create response never returned."""
+    for tag in tags:
+        if isinstance(tag, dict) and str(tag.get("name") or "") == name:
+            return tag
+    return None
 
 
 class FlywheelRestTransport(FlywheelCliTransport):
@@ -4696,11 +4702,13 @@ class FlywheelRestTransport(FlywheelCliTransport):
     def create_tag(self, *, root_node_id: str, name: str, expected_revision: int,
                    bg_color: str, text_color: str, one_only: bool = False,
                    track_history: bool = False) -> dict:
+        # As on the CLI transport: the response is not trusted for identity. The
+        # caller re-reads the root and resolves the new tag by name.
         raw = self._request("POST", f"/nodes/{root_node_id}/tags", body={
             "name": name, "expected_revision": int(expected_revision),
             "bg_color": bg_color, "text_color": text_color,
             "one_only": bool(one_only), "track_history": bool(track_history)})
-        return _parse_tag(raw, context=f"POST /nodes/{root_node_id}/tags ({name})")
+        return raw if isinstance(raw, dict) else {}
 
     def assign_tags(self, *, node_id: str, tag_ids: list[str],
                     expected_revision: int) -> None:
@@ -5188,7 +5196,7 @@ def reconcile_tag_vocabulary(kind: str, root_id: str, wanted: list[dict], transp
                     notes.append(f"{name}: {key} differs (local {bool(mine)}, "
                                  f"mirror {bool(theirs)})")
             continue
-        tag = mirror_call(
+        mirror_call(
             lambda entry=entry, rev=root_revision: transport.create_tag(
                 root_node_id=root_id, name=str(entry["name"]),
                 expected_revision=int(rev),
@@ -5197,11 +5205,19 @@ def reconcile_tag_vocabulary(kind: str, root_id: str, wanted: list[dict], transp
                 one_only=bool(entry.get("one_only")),
                 track_history=bool(entry.get("track_history"))),
             pacer=pacer, what=f"create tag {name}", out=out)
-        ids[name] = str(tag.get("tag_id") or "")
-        # **Never compute the next root revision.** Each create bumps it, and a
-        # guessed `+1` is the same class of bug as defaulting a missing revision to 0.
+        # **Never compute the next root revision, and never take the id from the
+        # create's response.** Each create bumps the revision, and the live host
+        # returns the updated *root node* here rather than the tag — so both facts
+        # come from one authoritative re-read, resolved by name.
         live, root_revision = transport.graph_tags(root_id)
         by_name = {str(t.get("name") or ""): t for t in live}
+        made = tag_by_name(live, name)
+        if made is None or not made.get("tag_id"):
+            raise MirrorError(
+                f"create tag {name}: the tag is not on root {root_id} after the "
+                "create, so the write did not land. Refusing to continue — the next "
+                "step would assign an id that does not exist.")
+        ids[name] = str(made["tag_id"])
         # Written after *each* create, not at the end: a crash between two creates
         # must leave the first one recorded, or the next run creates it twice.
         merge_tag_def(vocab, kind, {"name": name, "flywheel": {
