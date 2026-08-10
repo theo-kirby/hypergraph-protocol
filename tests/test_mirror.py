@@ -182,7 +182,19 @@ class FakeTransport:
                "text_color": text_color, "one_only": bool(one_only),
                "track_history": bool(track_history)}
         existing.append(tag)
-        root["revision"] += 1          # every create moves the root
+        # Measured on the live host: creating a tag bumps the committed revision of
+        # EVERY node in that graph, not just the root. 22 creations moved all 196
+        # nodes of neural-whoop's mirror. Modelling only the root here would let a
+        # push that leaves the whole graph reading as drift pass its tests.
+        reach, queue = set(), [root_node_id]
+        while queue:
+            nid = queue.pop()
+            if nid in reach or nid not in self.nodes:
+                continue
+            reach.add(nid)
+            queue.extend(self.kids.get(nid, []))
+        for nid in reach:
+            self.nodes[nid]["revision"] += 1
         return dict(tag)
 
     def assign_tags(self, *, node_id, tag_ids, expected_revision):

@@ -159,6 +159,13 @@ Five rules, each of which is a bug if you drop it:
   — the worst case is writing the same set twice. Creates keep the no-blind-retry rule
   in full. This looks like an inconsistency until you know why, which is why it is
   written down rather than left in the code.
+- **A node's revision can move without anyone writing that node.** Creating a tag
+  bumps every node in the graph, so after the vocabulary phase every stamped revision
+  is stale — including on nodes that carry no tags and never will. Revisions are
+  therefore re-synced from one export *before* assigning (an assignment locks against
+  that revision, and a stale one conflicts) and once more at the end. Only the revision
+  is rewritten; body hashes are untouched, so real content drift still surfaces rather
+  than being papered over.
 - **Assignment order is part of the contract when a backend constrains *where* a tag
   may live.** Flywheel requires a `cluster:*` tag to cover a connected set of nodes and
   checks it on every write, so a tag whose final set is connected is still rejected

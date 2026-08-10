@@ -5214,7 +5214,7 @@ def assignment_order(pending: list, adjacency: dict, constrained: set,
 
 def reconcile_tag_vocabulary(kind: str, root_id: str, wanted: list[dict], transport, *,
                              pacer: Pacer, vocab: dict, tags_path: Path,
-                             out=print) -> tuple[dict[str, str], list[str]]:
+                             out=print) -> tuple[dict[str, str], list[str], int]:
     """Make the mirror root's vocabulary hold every wanted name. → ({name: tag_id}, notes)
 
     **Resolve by name first, always.** A duplicate tag definition is the one
@@ -5229,6 +5229,7 @@ def reconcile_tag_vocabulary(kind: str, root_id: str, wanted: list[dict], transp
     by_name = {str(t.get("name") or ""): t for t in live}
     notes: list[str] = []
     ids: dict[str, str] = {}
+    created = 0
 
     for entry in wanted:
         name = str(entry["name"])
@@ -5275,8 +5276,9 @@ def reconcile_tag_vocabulary(kind: str, root_id: str, wanted: list[dict], transp
         merge_tag_def(vocab, kind, {"name": name, "flywheel": {
             "tag_id": ids[name], "root_node_id": root_id, "pushed_at": utc_now()}})
         write_tag_vocab(tags_path, vocab)
+        created += 1
         out(f"  tag: created `{name}` ({ids[name]})")
-    return ids, notes
+    return ids, notes, created
 
 
 def live_tag_assignments(graph_dir: Path, root_id: str, transport,
@@ -5317,6 +5319,54 @@ def config_cache_dir(graph_dir: Path) -> Path:
     return path
 
 
+def resync_mirror_revisions(graph_dir: Path, roots: dict, transport, *, out=print) -> int:
+    """Re-stamp `flywheel.revision` wherever the mirror has moved underneath us.
+
+    **Creating a tag bumps the committed revision of every node in the graph** — not
+    only the root, and not only the nodes you go on to assign. Measured on a 196-node
+    mirror: 22 creations moved all 196. So after a tag push every stamped revision is
+    stale graph-wide, and `verify` (which calls revision skew drift, rightly) would
+    report every *untagged* node as drifted forever.
+
+    One export per root answers it for the whole graph. Only the revision is touched:
+    body hashes and tag stamps are left alone, so genuine content drift still
+    surfaces rather than being papered over."""
+    live: dict[str, int] = {}
+    cache = config_cache_dir(graph_dir)
+    for kind, root_id in roots.items():
+        export = transport.export_subgraph([root_id], cache / f"revision-sync-{kind}.json")
+        data = json.loads(Path(export).read_text())
+        raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
+        if isinstance(raw_nodes, dict):
+            raw_nodes = list(raw_nodes.values())
+        for raw in raw_nodes or []:
+            if not isinstance(raw, dict):
+                continue
+            revision = raw.get("committed_revision", raw.get("revision"))
+            node_id = str(raw.get("node_id") or "")
+            if node_id and revision is not None:
+                live[node_id] = int(revision)
+
+    restamped = 0
+    for kind in GRAPH_KINDS:
+        for node in load_local_nodes(graph_dir, kind, missing_ok=True).values():
+            fw = dict(node.meta.get("flywheel") or {})
+            node_id = str(fw.get("node_id") or "")
+            if not node_id or node_id not in live:
+                continue
+            if fw.get("revision") is not None and int(fw["revision"]) == live[node_id]:
+                continue
+            fw["revision"] = live[node_id]
+            meta = dict(node.meta)
+            meta["flywheel"] = fw
+            node.path.write_text(render_node_file(meta, node.content))
+            restamped += 1
+    if restamped:
+        out(f"  tags: re-stamped the revision on {restamped} node file(s) — creating a "
+            "tag moves every node in the graph")
+    return restamped
+
+
 def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: Pacer,
               out=print) -> int:
     """Create the vocabulary on the mirror roots, then assign it per node.
@@ -5325,7 +5375,7 @@ def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: P
     already carries the `flywheel.node_id` an assignment needs."""
     tags_path = tags_file_for(config, graph_dir)
     vocab = load_tag_vocab(tags_path)
-    assigned = 0
+    assigned = created_any = 0
 
     for kind in GRAPH_KINDS:
         nodes = load_local_nodes(graph_dir, kind, missing_ok=True)
@@ -5340,11 +5390,23 @@ def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: P
         if not wanted or not pending:
             continue
 
-        ids, notes = reconcile_tag_vocabulary(
+        ids, notes, created = reconcile_tag_vocabulary(
             kind, roots[kind], wanted, transport, pacer=pacer, vocab=vocab,
             tags_path=tags_path, out=out)
+        created_any += created
         for note in notes:
             out(f"  tag drift (reported, not repaired) {note}")
+
+        if created:
+            # **Before assigning, not after.** Creating a tag bumps every node in the
+            # graph, so every revision now stamped in frontmatter is stale — and an
+            # assignment locks against that revision. Without this, all 188 of them
+            # conflict on their first attempt and are re-issued, which doubles the
+            # writes and only works at all because an atomic replace may be retried.
+            resync_mirror_revisions(graph_dir, roots, transport, out=out)
+            nodes = load_local_nodes(graph_dir, kind, missing_ok=True)
+            pending = [node for node in nodes.values()
+                       if node.tags or (node.meta.get("flywheel") or {}).get("tags_sha256")]
 
         by_name = {str(e["name"]): e for e in tag_vocab_entries(vocab, kind)}
         constrained = {n for n in used if connectivity_constrained(n, by_name.get(n))}
@@ -5424,6 +5486,11 @@ def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: P
         if results:
             apply_push_results(graph_dir, results, nodes=nodes)
             out(f"  tags: assigned on {len(results)} {kind} node(s)")
+    if created_any:
+        # Once more at the end. The pre-assignment resync covers the graph as it was
+        # before this kind's assignments; a second graph (state) creating its own tags
+        # afterwards would move the first one's nodes again.
+        resync_mirror_revisions(graph_dir, roots, transport, out=out)
     return assigned
 
 

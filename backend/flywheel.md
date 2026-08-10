@@ -141,6 +141,14 @@ Five traps, all of them cheap to hit:
 - **An absent `graph_tags` key is not "no tags".** Reading it that way makes the next
   push re-create the entire vocabulary, and a duplicate definition cannot be cleanly
   merged. Raise instead.
+- **`tags:create` bumps the committed revision of _every node in the graph_.** Not the
+  root only, and not only the nodes you go on to tag. Measured: 22 creations moved all
+  196 nodes of a mirror — untagged nodes ended at 22, tagged ones at 23 (their own
+  assignment), and nodes assigned twice at 24. Two consequences, and the second is the
+  expensive one. Every revision you hold across a creation is stale, so an assignment
+  that locks against a pre-creation revision conflicts on its first attempt. And every
+  *untagged* node in the graph now reads as revision drift until its stamp is
+  refreshed — from one export, not one request per node.
 - **A `cluster:*` tag must cover a _connected_ set of nodes, and it is checked on every
   assignment.** This is the trap that ordering alone fixes: a tag whose *final* set is
   perfectly connected is still rejected part-way through, because an atomic per-node
