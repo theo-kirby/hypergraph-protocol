@@ -5160,6 +5160,58 @@ def push_legend(graph_dir: Path, record_root_id: str, transport, *, pacer: Pacer
     return "updated"
 
 
+# Some backends constrain *where* a tag may live, not merely that it exists. Flywheel
+# requires a `cluster:*` tag to cover a **connected** set of nodes, and checks it on
+# every assignment — so a tag whose final set is perfectly connected is still rejected
+# part-way through, because an atomic per-node replace builds that set one node at a
+# time. Assignment *order* is therefore part of the contract rather than a detail
+# [rec: the neural-whoop field run].
+#
+# The prefix is a host rule, so it is named here rather than inferred, and a
+# `connected:` key in tags.yml overrides it either way for a backend that decides
+# differently.
+CONNECTED_TAG_PREFIXES = ("cluster:",)
+
+
+def connectivity_constrained(name: str, entry: dict | None = None) -> bool:
+    if entry is not None and entry.get("connected") is not None:
+        return bool(entry["connected"])
+    return any(name.startswith(prefix) for prefix in CONNECTED_TAG_PREFIXES)
+
+
+def assignment_order(pending: list, adjacency: dict, constrained: set,
+                     already: dict | None = None) -> tuple[list, list]:
+    """Order assignments so no constrained tag is ever momentarily split in two.
+
+    → (ordered, blocked). A node is *safe* when, for every constrained tag it carries,
+    that tag's already-assigned set is either empty or adjacent to this node. Growing
+    each set outward from a single seed is a spanning-tree traversal, so a set that is
+    connected at the end can always be built connected; the only real work is
+    respecting several tags at once.
+
+    `already` seeds the state from what the mirror currently holds, which is what makes
+    this correct after a partial run rather than only on a clean graph."""
+    assigned: dict[str, set] = {name: set(slugs) for name, slugs in (already or {}).items()}
+    remaining = list(pending)
+    ordered: list = []
+    while remaining:
+        progressed = False
+        for i, node in enumerate(remaining):
+            tags = [t for t in node.tags if t in constrained]
+            if all(not assigned.get(t) or (adjacency.get(node.slug, set()) & assigned[t])
+                   for t in tags):
+                for t in tags:
+                    assigned.setdefault(t, set()).add(node.slug)
+                ordered.append(remaining.pop(i))
+                progressed = True
+                break
+        if not progressed:
+            # Never silently reorder past it: the host would reject the write anyway,
+            # and a caller that cannot see which tag is unsatisfiable cannot fix it.
+            return ordered, remaining
+    return ordered, []
+
+
 def reconcile_tag_vocabulary(kind: str, root_id: str, wanted: list[dict], transport, *,
                              pacer: Pacer, vocab: dict, tags_path: Path,
                              out=print) -> tuple[dict[str, str], list[str]]:
@@ -5227,6 +5279,44 @@ def reconcile_tag_vocabulary(kind: str, root_id: str, wanted: list[dict], transp
     return ids, notes
 
 
+def live_tag_assignments(graph_dir: Path, root_id: str, transport,
+                         nodes: dict) -> dict[str, set]:
+    """{tag name: {local slug}} as the mirror currently holds it.
+
+    Read through one subgraph export rather than per node: the assignment state is
+    only needed when a connectivity-constrained tag exists, and then it is needed for
+    the whole graph at once."""
+    cache = Path(config_cache_dir(graph_dir))
+    export = transport.export_subgraph([root_id], cache / "tag-state.json")
+    data = json.loads(Path(export).read_text())
+    raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
+    if isinstance(raw_nodes, dict):
+        raw_nodes = list(raw_nodes.values())
+    by_id = {str((n.meta.get("flywheel") or {}).get("node_id") or ""): slug
+             for slug, n in nodes.items()}
+    names = {t["tag_id"]: str(t.get("name") or "")
+             for n in raw_nodes if isinstance(n, dict)
+             for t in (n.get("graph_tags") or []) if isinstance(t, dict) and t.get("tag_id")}
+    out: dict[str, set] = {}
+    for raw in raw_nodes:
+        if not isinstance(raw, dict):
+            continue
+        slug = by_id.get(str(raw.get("node_id") or ""))
+        if not slug:
+            continue
+        for tid in (raw.get("tag_ids") or []):
+            name = names.get(str(tid))
+            if name:
+                out.setdefault(name, set()).add(slug)
+    return out
+
+
+def config_cache_dir(graph_dir: Path) -> Path:
+    path = Path(graph_dir).parent / "cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: Pacer,
               out=print) -> int:
     """Create the vocabulary on the mirror roots, then assign it per node.
@@ -5255,6 +5345,33 @@ def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: P
             tags_path=tags_path, out=out)
         for note in notes:
             out(f"  tag drift (reported, not repaired) {note}")
+
+        by_name = {str(e["name"]): e for e in tag_vocab_entries(vocab, kind)}
+        constrained = {n for n in used if connectivity_constrained(n, by_name.get(n))}
+        if constrained:
+            # One extra read, only when a constrained tag exists: what the mirror
+            # already holds is the starting state, and without it a resumed run
+            # re-derives an order that was valid from empty and is not valid from here.
+            adjacency: dict[str, set] = {}
+            for slug, node in nodes.items():
+                for parent in node.parents:
+                    if parent in nodes:
+                        adjacency.setdefault(slug, set()).add(parent)
+                        adjacency.setdefault(parent, set()).add(slug)
+            already = live_tag_assignments(graph_dir, roots[kind], transport, nodes)
+            pending, blocked = assignment_order(pending, adjacency, constrained, already)
+            if blocked:
+                stuck = sorted({t for node in blocked for t in node.tags if t in constrained})
+                raise MirrorError(
+                    f"cannot order {len(blocked)} assignment(s) so that "
+                    f"{', '.join(stuck)} stay(s) connected at every step. This backend "
+                    "requires such a tag to cover a connected set of nodes and checks it "
+                    "on every write, so the set has to be grown outward from one node — "
+                    "which is impossible if it is disconnected in this graph's topology. "
+                    "Check whether those nodes are all present and parented as they were "
+                    "on the source graph.")
+            out(f"  tags: ordered {len(pending)} assignment(s) to keep "
+                f"{len(constrained)} connected tag(s) whole at every step")
 
         results: list[dict] = []
         for node in pending:

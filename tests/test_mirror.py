@@ -402,6 +402,71 @@ def test_a_create_that_did_not_land_stops_before_assigning(tmp_path):
     assert not [c for c in fake.calls if c[0] == "assign_tags"]
 
 
+def test_a_cluster_tag_is_never_momentarily_split_in_two(tmp_path):
+    """The chain is wise-anchor → brave-otter → calm-fern, and the tag sits on the two
+    ends. File order would assign calm-fern first and wise-anchor second, leaving the
+    tag on two nodes with a gap between them — which this backend rejects on the write,
+    not at the end. The middle node has to go first."""
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["cluster:x"],
+                                          "brave-otter-1002": ["cluster:x"],
+                                          "calm-fern-1003": ["cluster:x"]})
+    fake = FakeTransport(graph_dir)
+    seen: list[str] = []
+    members: set[str] = set()
+    real = fake.assign_tags
+
+    def connectivity_checked(*, node_id, tag_ids, expected_revision):
+        slug = node_id[3:]
+        if "tag-cluster:x" in tag_ids:
+            parents = {"brave-otter-1002": {"wise-anchor-1001"},
+                       "calm-fern-1003": {"brave-otter-1002"}}
+            adj = {a: set(b) for a, b in parents.items()}
+            for child, ps in parents.items():
+                for p in ps:
+                    adj.setdefault(p, set()).add(child)
+            if members and not (adj.get(slug, set()) & members):
+                raise hg.MirrorError(
+                    f"tags:assign: 422 cluster tag must be a connected set ({slug})")
+            members.add(slug)
+        seen.append(slug)
+        real(node_id=node_id, tag_ids=tag_ids, expected_revision=expected_revision)
+
+    fake.assign_tags = connectivity_checked
+    push(graph_dir, config_for(graph_dir), fake)
+    assert seen[0] == "brave-otter-1002"       # the middle, or nothing else can attach
+    assert set(seen) == {"wise-anchor-1001", "brave-otter-1002", "calm-fern-1003"}
+
+
+def test_an_unsatisfiable_cluster_names_the_tag_instead_of_half_assigning(tmp_path):
+    """The two ends without the middle cannot be connected in any order. Say which tag,
+    and write nothing — a half-assigned cluster is worse than a refusal."""
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["cluster:split"],
+                                          "calm-fern-1003": ["cluster:split"]})
+    fake = FakeTransport(graph_dir)
+    with pytest.raises(hg.MirrorError, match="cluster:split"):
+        push(graph_dir, config_for(graph_dir), fake)
+    assert not [c for c in fake.calls if c[0] == "assign_tags"]
+
+
+def test_ordering_resumes_from_what_the_mirror_already_holds(tmp_path):
+    """A partial run leaves nodes tagged on the mirror. An order derived from *empty*
+    would be valid on a clean graph and wrong from here, so the live state seeds it."""
+    graph_dir = tagged_graph(tmp_path, **{"wise-anchor-1001": ["cluster:x"],
+                                          "brave-otter-1002": ["cluster:x"],
+                                          "calm-fern-1003": ["cluster:x"]})
+    nodes = {s: n for k in ("record", "state")
+             for s, n in hg.load_local_nodes(graph_dir, k).items()}
+    adj = {"brave-otter-1002": {"wise-anchor-1001", "calm-fern-1003"},
+           "wise-anchor-1001": {"brave-otter-1002"},
+           "calm-fern-1003": {"brave-otter-1002"}}
+    pending = [nodes[s] for s in ("wise-anchor-1001", "brave-otter-1002", "calm-fern-1003")]
+    # with calm-fern already on the mirror, wise-anchor may not go next
+    ordered, blocked = hg.assignment_order(
+        pending, adj, {"cluster:x"}, {"cluster:x": {"calm-fern-1003"}})
+    assert blocked == []
+    assert [n.slug for n in ordered][0] == "brave-otter-1002"
+
+
 def test_a_missing_graph_tags_key_raises_rather_than_reading_as_no_tags(tmp_path):
     """Reading an absent key as "no tags" re-creates the whole vocabulary next push."""
     with pytest.raises(hg.MirrorError, match="graph_tags"):

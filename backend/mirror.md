@@ -159,6 +159,14 @@ Five rules, each of which is a bug if you drop it:
   — the worst case is writing the same set twice. Creates keep the no-blind-retry rule
   in full. This looks like an inconsistency until you know why, which is why it is
   written down rather than left in the code.
+- **Assignment order is part of the contract when a backend constrains *where* a tag
+  may live.** Flywheel requires a `cluster:*` tag to cover a connected set of nodes and
+  checks it on every write, so a tag whose final set is connected is still rejected
+  part-way through — an atomic per-node replace builds the set one node at a time.
+  Assignments are therefore ordered so each constrained tag grows outward from a single
+  node, seeded by **what the mirror already holds**, which is what makes a resumed run
+  correct rather than merely valid-from-empty. An order that cannot exist names the tag
+  and writes nothing.
 - **Colour and flag drift is reported, never repaired.** No `tags:update`: someone may
   have deliberately restyled a tag on the host, and no invariant reads a colour.
   `tags:delete` is not wired at all — deleting a definition un-tags every node that

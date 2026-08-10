@@ -141,6 +141,15 @@ Five traps, all of them cheap to hit:
 - **An absent `graph_tags` key is not "no tags".** Reading it that way makes the next
   push re-create the entire vocabulary, and a duplicate definition cannot be cleanly
   merged. Raise instead.
+- **A `cluster:*` tag must cover a _connected_ set of nodes, and it is checked on every
+  assignment.** This is the trap that ordering alone fixes: a tag whose *final* set is
+  perfectly connected is still rejected part-way through, because an atomic per-node
+  replace builds the set one node at a time and any gap in the middle is a 422
+  (`must be assigned to a connected set of nodes. Disconnected nodes: …`). Grow each
+  constrained tag outward from one node — a spanning-tree traversal — and respect every
+  such tag at once. Measured on a real 189-node graph: all eleven `cluster:*` tags were
+  connected and all eight `kind:*`/`outcome:*` tags were freely disconnected, so the
+  rule follows the name prefix and nothing else.
 - **A node's own `graph_tags` copy is not authoritative.** In a real 189-node graph
   only 130 nodes echoed it while the other 59 carried populated `tag_ids` beside an
   empty list. Union across every node and let the parentless node win.
