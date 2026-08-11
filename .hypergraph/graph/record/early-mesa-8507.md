@@ -6,6 +6,12 @@ created_at: '2026-08-10T06:48:08+00:00'
 parents:
 - clear-moss-4527
 summary: 'The live run on neural-whoop completed: 22 definitions, 486 assignments across 188 of 189 nodes, counts identical to the archive, push --verify 0 drift, archive untouched at revision 28. Three host behaviours no fake had modelled: tags:create returns the root node not the tag (the no-guessing guard caught it after one create, and resolve-by-name recovered), cluster:* tags must stay a connected set at every write (so assignment order is part of the contract), and creating a tag bumps every node''s revision (so nodes nobody wrote read as drift). All three fixed with tests before the run resumed; the healer framework itself did not change.'
+flywheel:
+  node_id: 1921bda8-9fa4-5e4a-9e85-1d7418f1210a
+  slug: small-smoke-5943
+  revision: 0
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: b1a12b55d37455fe02e162e271918f51114bceb05e586a7fbec5af3363b2cbfe
 ---
 ## What
 

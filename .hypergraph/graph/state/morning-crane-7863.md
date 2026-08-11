@@ -9,9 +9,9 @@ summary: 'Adoption built, field-proven, and now MCP-free: mirror pull plus four 
 flywheel:
   node_id: 67d32718-3dcf-5321-978a-212599c531b4
   slug: long-hall-1227
-  revision: 8
-  pushed_at: '2026-08-09T19:23:47+00:00'
-  content_sha256: 8aff6de79c986a6c20cee8461696949734d5c9194182b2f66af9864b9bd8b4d9
+  revision: 9
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: f6cdbd591f5f07c0270eb69a792cd12dbc81346a0e6457ecd8f7459cd4454920
 ---
 Status: working
 

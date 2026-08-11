@@ -6,6 +6,12 @@ created_at: '2026-08-09T23:22:20+00:00'
 parents:
 - cool-king-8586
 summary: '`hypergraph heal`: a registry of typed graph repairs that carry a capability backwards into a repo that adopted before it existed. Detect-only until --apply, persists nothing, and never treats `origin:` as a write target. Healer #1 (tags) is proven offline on a copy of the real neural-whoop repo; the mirror half has only met FakeTransport, and the extensibility claim has one healer behind it.'
+flywheel:
+  node_id: e6fbea9b-ac04-5b61-9545-315b8f02da43
+  slug: lingering-credit-5743
+  revision: 0
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 75044b513db5d0a55a00c8d1d2193b28a67ea50d95e93e2489b558ee854383f2
 ---
 Status: working
 

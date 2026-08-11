@@ -9,9 +9,9 @@ summary: ''
 flywheel:
   node_id: 82565677-379a-5ee8-8f8d-948eec159b67
   slug: broad-hill-2841
-  revision: 2
-  pushed_at: '2026-08-09T11:42:29+00:00'
-  content_sha256: a8740e4a33b4039570b03782825a31522403d103a49dff33112334bebe613000
+  revision: 3
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 77b19748f1a8f238ad0a09f83dfa8815c1d2bc2efdbd1a4e641e443b697bb19f
 ---
 Status: working
 
@@ -21,6 +21,9 @@ Status: working
 - Two of these lessons are now **mechanical checks rather than remembered lore**: `hypergraph mirror doctor` performs a real write probe and asserts `mirror_account_id:` against the authenticated user id, so the read-vs-write gate and the wrong-account diagnosis run automatically instead of depending on an agent recalling them [rec: silver-ember-3035].
 - The lessons generalise past this benchmark. Any future experiment that spends money on agents in parallel inherits them, and `research/boxlab/preflight.py` is where they are enforced [rec: staid-field-2723].
 - **A fake models the protocol you wrote down; a live run tests the protocol the host implements** [rec: early-mesa-8507]. `FakeTransport` was not wrong about tags — it was *optimistic* in exactly the three places a real host is not, and each optimism was invisible because it was shared with the code under test. The tag push passed every test it had and then hit three distinct host behaviours on its first live run. The remedy that generalises is not more tests against the fake; it is teaching the fake each behaviour as it is discovered, so the next run's surprises are new ones.
+
+- **An agent's exit status does not attest that its tools were available** [rec: lean-field-0101]. Two separate `chassis` defects made every tool call fail — sudo scrubbing the dispatcher's context, then a verdict file two uids could not share in `/tmp` — and in both the error went to the model as an ordinary tool result, the model judged it environmental, finished the rest of the task, and the harness exited 0. This is the same shape as the unasserted provisioning step that invalidated the first nine-run, arriving through a different door: the run reports clean because nothing downstream disagrees with it.
+- The remedy that worked was not a better check on the harness but a **cheap mission with a mechanical scorer in front of the expensive one**. A five-line counting task caught both defects for a few cents; the ledger it wrote read `1,2,3` in all three runs including the two that failed, so it was the *second* artifact — the one that had to travel through the tool dispatcher — that carried the signal [rec: lean-field-0101].
 
 ## Negative knowledge
 
@@ -35,6 +38,8 @@ Status: working
 - [scope: probing a live account from an automated gate | confidence: high | evidence: silver-ember-3035] a write probe has to be parentless. Parented under the real root it would immediately read as an orphan in the next drift check, so the gate that proves the account works would itself be the thing that makes the account look wrong. The service is not scratch space: probe outside the structure you verify, and delete on the way out.
 - [scope: believing a surprising negative result from automated probes | confidence: high | evidence: solemn-dawn-6752] four independent checks agreed the project's Flywheel mirror had been deleted — `get_node` 404, `resolve_slug` not_found, 0 of 44 ids reachable, and 0 project nodes among all 2,561 visible without an owner filter — and all four were wrong. Each asked the same question with the same wrongly-authenticated credential. Corroboration between checks that share an assumption is not corroboration; when several probes agree on a surprising absence, vary the identity or the transport before believing them.
 
+- [scope: driving agents through a tool dispatcher | confidence: high | evidence: lean-field-0101] a task's exit status says the harness ran, not that the agent's tools worked. A failed tool call is a tool *result*, and a competent model treats it as an environmental constraint to route around rather than a reason to stop — so a run in which no tool ever succeeded finishes at exit 0 with a plausible narrative. Assert the tools separately, on an artifact that could only exist if they ran.
+
 ## Provenance
 
 - sweet-wave-7885 — the attribution-when-isolation-is-unavailable lesson; dead-credential tidiness
@@ -43,3 +48,4 @@ Status: working
 - solemn-dawn-6752 — shared-assumption corroboration is not corroboration
 - silver-ember-3035 — the write probe and account check made mechanical; vendor-stderr injection channel
 - early-mesa-8507 — the fake was optimistic in the three places the host was not, and every optimism was shared with the code under test
+- lean-field-0101 — two live substrate defects that let a broken tool dispatcher report success; the cheap-mission-first remedy

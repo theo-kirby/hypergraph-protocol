@@ -9,9 +9,9 @@ summary: a3go (mode A, re-mirrored) + tbinn (mode B) live; acceptance loop held;
 flywheel:
   node_id: 47030781-d078-5801-b4ae-d12ecc5d988f
   slug: bitter-sound-9744
-  revision: 4
-  pushed_at: '2026-08-09T10:15:16+00:00'
-  content_sha256: 028b363b21e19f978795f24dc250c6d67a8a02260cc53c505c49c6a340579b7c
+  revision: 5
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 5c6112d099f6b051132043163f23ef6fb498185eba9592215aaa3c5f01e2bf2d
 ---
 Status: working
 
@@ -26,6 +26,8 @@ Status: working
 - A third dogfooding surface is opening: agents on **fresh cloud boxes** adopting the protocol from PyPI with no prior context, as one arm of a controlled comparison against git and Flywheel (protocol-benchmark-4417). Unlike a3go and tbinn this one has a **control group**, so it can measure whether the protocol helps rather than only whether it holds. First evidence in hand: the published 0.0.2 installs and runs on a bare box via the real adopter route [rec: twilight-wood-1934].
 - **A sixth field defect, and the first found by measuring an adoption's inputs rather than its outputs**: neural-whoop's import carried 189 nodes and dropped the graph's whole tag taxonomy — 22 tags across 188 of them, plus a 6-hop `★ studio-baseline` pointer chain — because the protocol had no tag concept, while the hosted backend had implemented create/assign/update/delete all along [rec: fresh-spire-9002]. Nothing reported the loss and nothing could: an unrepresentable category is invisible to every check by construction. Both directions are now built — tags travel on import and push, and `hypergraph heal tags` repairs a repo that adopted first [rec: clear-moss-4527]. The live repair on neural-whoop is the outstanding datapoint.
 - **The sixth defect is repaired in the field, not only in the tooling** [rec: early-mesa-8507]: neural-whoop has its taxonomy back — 22 definitions and 486 assignments across 188 of 189 nodes, per-tag counts identical to the archive, `push --verify` 0 drift, the archive root still at revision 28, and a second `heal tags` finding nothing. It is now the evidence that **an adoption is not write-once**: a capability that lands after you adopt can be carried backwards into your graph without re-running the adoption and without the archive being touched.
+
+- **A fourth adopter, and the first genuine stranger** [rec: lean-field-0101]. `hypergraph-labs` adopted at 0.0.8 with the CLI installed from PyPI and no path back into this source tree — the route a3go, tbinn and neural-whoop all had an escape hatch from. Two roots, six seeded components, check 0/0, and a frontier that is honest about what is unproven rather than uniformly green. It is also the first adopter whose own work is *running experiments on this protocol*, so its graph and this one describe one line of work from two sides.
 
 ## Negative knowledge
 
@@ -44,3 +46,4 @@ Status: working
 - fresh-spire-9002 — the sixth field defect: 22 tags across 188 of 189 neural-whoop nodes dropped by an import that had no word for them
 - clear-moss-4527 — both directions built; the live neural-whoop repair still outstanding
 - early-mesa-8507 — neural-whoop's taxonomy recovered on the live mirror; an adoption is not write-once
+- lean-field-0101 — hypergraph-labs adopted at 0.0.8 from PyPI, the first adopter with no access to this checkout

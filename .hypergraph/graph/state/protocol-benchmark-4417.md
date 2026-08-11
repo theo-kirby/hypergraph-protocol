@@ -9,9 +9,9 @@ summary: ''
 flywheel:
   node_id: 756924b4-8adc-5bac-91a0-89158110daef
   slug: solitary-boat-7937
-  revision: 1
-  pushed_at: '2026-08-09T10:17:45+00:00'
-  content_sha256: 01dcbffc0e43197526376df2a7a73331149afca66789783744ba655a0608e5bf
+  revision: 2
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 6429c2f9b53fb1eff362149cd965f35c1c9278cf40ed3b05aa1abc3eb5b6b2d6
 ---
 Status: open
 
@@ -66,6 +66,13 @@ Fixed **before** the second launch and with no access to its data, because the f
 - **Under pi, both protocol arms run without their skills layer** — a narrower test than either packaged product offers, biasing against both [rec: scarlet-orchard-8774] [rec: staid-field-2723].
 - The lab ships nothing: both hatchling targets are allow-lists, verified by building the artifacts, and `tests/test_packaging.py` fails if `research/` is ever added [rec: twilight-wood-1934].
 
+### The lab moved out, and its environment became an artifact (2026-08-11)
+
+- **The lab now lives in a private sibling repo, `hypergraph-labs`** (roots `light-raven-6945` / `silver-fountain-4956`), and `research/` is gone from this one [rec: lean-field-0101]. Sibling repos, not submodules, on an Operator decision: labs consumes this package **from PyPI exactly as a stranger does**, so every benchmark run is also a test of the published artifact. History did not follow the split; this graph is the provenance, cited from labs as prose.
+- **The provisioning-procedure defect class is closed at the root, not patched.** The ~469 lines of bash that produced it are replaced by a container image built `FROM` a pinned `chassis` base, and every run records the chassis commit sha and both image ids. The environment is a recorded constant rather than a procedure nobody versioned — which is the input METRICS rev-2 wanted [rec: lean-field-0101].
+- **The new rig is proven live, and proving it found two more defects of the same class.** Three spikes on three boxes with a trivial counting mission; the third passed on every criterion — ledger `1,2,3`, verdicts `1,2,3`, both image ids recorded, transcripts harvested, box stopped, zero leak findings. The two that failed both failed in `chassis`: sudo's env scrub hid the tool context so no tool call ran at all, and then the per-run verdict file could not be written because `/tmp` cannot hold a file two uids share. In both, the harness reported the task complete at exit 0 [rec: lean-field-0101].
+- The relaunch itself is still **not run**, and choosing the real mission, METRICS rev-2, and E2 are each their own decision [rec: lean-field-0101].
+
 ## Negative knowledge
 
 - [scope: comparing agent memory systems | confidence: high | evidence: twilight-wood-1934] a primer that bundles research discipline with one system's mechanics cannot be used as an experimental arm — handing it to one arm and nothing to another measures prompt quality, not the system. Arms must share a byte-identical core and differ only in a length-matched section.
@@ -85,3 +92,4 @@ Fixed **before** the second launch and with no access to its data, because the f
 - sweet-wave-7885 — Operator decision: one Flywheel account for arm B declared as an asymmetric confound; keys rotated; relaunch parked
 - sweet-aspen-3667 — preflight proved readable but not writable; write probe added
 - solemn-dawn-6752 — mirror correction; FLYWHEEL_API_KEY points at the wrong account
+- lean-field-0101 — the lab split into hypergraph-labs; the environment became a digest-pinned image, proven live on three boxes

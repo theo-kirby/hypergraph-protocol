@@ -6,6 +6,12 @@ created_at: '2026-08-09T22:32:02+00:00'
 parents:
 - clever-ledge-6588
 summary: neural-whoop's import --fork carried 189 nodes and none of the 22 tags on 188 of them, including a 6-hop `★ studio-baseline` pointer chain whose hops record when but never why. Flywheel has implemented op 10 all along (create/assign/update/delete), so the loss was avoidable; SPEC's "the shipped storage does not implement" is true only of the local adapter.
+flywheel:
+  node_id: 12ee0f00-9391-5025-bcf5-be9e2cf263f5
+  slug: sweet-grass-1574
+  revision: 0
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: bf65f1479cba70f2f13b805a45a20ac0750850a3d88ff371a9116cd147b924e5
 ---
 ## What
 

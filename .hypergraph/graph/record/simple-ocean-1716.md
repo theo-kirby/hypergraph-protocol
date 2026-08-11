@@ -6,6 +6,12 @@ created_at: '2026-08-09T22:32:48+00:00'
 parents:
 - fresh-spire-9002
 summary: 'Forward: import and push carry tag names into the repo and onto the mirror. Backward: `hypergraph heal` is a registry of typed graph-diff repairs, healer #1 being tags. Underneath both, a graph comparison layer (Drift/GraphSide/diff_graphs) that verify_mirror is refactored onto byte-identically. Dry run is heal''s default because it rewrites graph content and spends an irreversible mirror budget; upgrade only refreshes reversible copies. Nothing built yet.'
+flywheel:
+  node_id: b97b67d8-2608-50fd-a339-aef0e78f667d
+  slug: tight-salad-4142
+  revision: 0
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 38c409a8f2cd7b0a95a0d5b588fa00165cc4bf5327784bf65373ad1306db5159
 ---
 ## What
 

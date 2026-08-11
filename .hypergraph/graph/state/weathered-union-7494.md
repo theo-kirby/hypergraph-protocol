@@ -9,9 +9,9 @@ summary: Parked by Operator (no date); v0.1 gate met with four unreleased change
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
-  revision: 12
-  pushed_at: '2026-08-09T19:41:14+00:00'
-  content_sha256: 5f291df267a635791ebcd8abe60266ecdb47f3f05a05fb04e0f7f57109c68ae5
+  revision: 13
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 44f61fe3d778bca74a865d9cac61f56538e9fef32c5fd5a5a9134c70346fa525
 ---
 Status: open
 
@@ -45,6 +45,8 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 
 **0.0.8 is published and verified from the public index** [rec: patient-ridge-8464]. Verification used published artifacts only, never `dist/`: `uv tool install --force --refresh` moves 0.0.7 → 0.0.8, the released package's `hypergraph skills install` lands an adopt skill carrying both the mode A walkthrough and the authoring-traps section, and `upgrade --dry-run` run from the published binary against cadex's customized AGENTS.md block reports it and steps back where 0.0.7 deleted it. The index summary carries the new framing, so "a substrate for autonomous research and engineering" is what the package advertises.
 
+**0.0.8 is now consumed from the public index by a repo with no path to this source tree** [rec: lean-field-0101]. `hypergraph-labs` declares `hypergraph-protocol==0.0.8` as an ordinary dependency, installs the CLI with `uv tool install`, and bakes the same pin into the container image its experiments run in. That is the adoption route this node has described since the shape was decided, exercised by someone who cannot fall back to a checkout — and it means every future benchmark run also tests whatever was actually published.
+
 ## Negative knowledge
 
 - [scope: naming/distribution of this project | confidence: high | evidence: damp-mountain-8757] Bare `hypergraph` is taken on PyPI; `hg*` names read as Mercurial (its CLI is `hg`); clone/fork distribution rejected — the protocol is an overlay on adopters' repos, not a template.
@@ -67,3 +69,4 @@ Remaining (the gap): spec-first announcement (venue and wording are the Operator
 - patient-sail-0175 — README front door corrected to the PyPI path; adopt promoted to a first-class quickstart route
 - sleepy-vine-2805 — 0.0.6 released and index-verified; the adoption fixes reach adopters
 - humble-rain-0304 — 0.0.7 released; the upgrade path reaches adopters
+- lean-field-0101 — the published 0.0.8 consumed as a plain PyPI dependency by a repo with no access to this checkout

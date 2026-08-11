@@ -1,1 +1,0 @@
-Cython + NumPy skip-gram with negative sampling implementation. Training loop compiled via Cython with boundscheck/wraparound disabled for speed. Heuristic weight clipping at ±5.0 per dimension.

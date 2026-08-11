@@ -6,6 +6,12 @@ created_at: '2026-08-09T23:17:51+00:00'
 parents:
 - simple-ocean-1716
 summary: 'Built the plan: tags: names in frontmatter + .hypergraph/tags.yml, import and push carrying them, a Drift/GraphSide/diff_graphs comparison layer that verify_mirror is refactored onto byte-identically, and `hypergraph heal` — a registry of typed graph repairs, detect-only until --apply. Trialled on a copy of the real neural-whoop repo: 188 nodes healed, push_plan stays free of creates and body updates, second run changes nothing. Two defects caught by running it: heal wrote untransliterated tag names, and push --plan counted tag ops as body updates.'
+flywheel:
+  node_id: 59e2de70-35eb-585a-88bf-bfe40af28a7b
+  slug: tight-mountain-7190
+  revision: 0
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 6b7b21edbc8e6ab67fb3182e2f8f68e281813d7e95c4d9b04cd2139f5d283e38
 ---
 ## What
 

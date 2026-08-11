@@ -9,9 +9,9 @@ summary: Five single-path skills (zero flywheel/lease/MCP/429/409 hits), dogfood
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 11
-  pushed_at: '2026-08-09T12:28:31+00:00'
-  content_sha256: 4453a9dbe35cff209a1476b5a635797930cb1d26fa815954a86b33c0b05c0d42
+  revision: 12
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: a0fd20bd9498f3db118f907d4beace776c07f6a03601fbd25025fb6978adada6
 ---
 Status: working
 

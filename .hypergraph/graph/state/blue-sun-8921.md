@@ -9,9 +9,9 @@ summary: INTERFACE.md as a portability contract with one shipped implementation 
 flywheel:
   node_id: d82f019d-c029-5999-ad8c-332abcfaa3ee
   slug: blue-sun-8921
-  revision: 6
-  pushed_at: '2026-08-09T11:42:29+00:00'
-  content_sha256: 0dcc1bef7df423b6b9d199dd11f29f9c5ce7a2fea94f088fbbce4ef167a9370a
+  revision: 7
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: b02e549465177da6231befcaeced7aee50e5e2ec64a452532b540b692e01d45f
 ---
 Status: working
 

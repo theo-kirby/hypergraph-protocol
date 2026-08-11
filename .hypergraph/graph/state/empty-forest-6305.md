@@ -9,9 +9,9 @@ summary: Node files are the only storage; hypergraph push/sync/mirror now execut
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 11
-  pushed_at: '2026-08-09T19:23:46+00:00'
-  content_sha256: 03657dbc89b0836f7c0357ebbc6ecf40cffa1a5b02257f36e07c20545ce985dc
+  revision: 12
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 13b48a86e5dcb73991a9003d0edad940a9e91a7b55f279a183716159fe19fff2
 ---
 Status: working
 

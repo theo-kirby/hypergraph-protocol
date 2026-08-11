@@ -1,1 +1,0 @@
-Google word analogy task (questions-words.txt) evaluation. Reports total/semantic/syntactic accuracy plus OOV skip counts.

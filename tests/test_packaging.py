@@ -1,18 +1,23 @@
-"""The distribution is an allow-list — assert `research/` can never sneak into it.
+"""The distribution is an allow-list — assert nothing local can sneak into it.
 
-`research/` holds the benchmark lab: Box drivers, comparison harnesses, captured
-run data, chart code. An end user installing the CLI has no use for any of it, so
-it must stay out of the wheel and the sdist. Both hatchling targets are allow-lists
-today (`force-include` for the wheel, `include` for the sdist), which makes the
-exclusion automatic — this test exists so that a future edit adding a broad glob,
-or dropping the sdist's explicit `include`, fails here instead of on PyPI.
+Both hatchling targets are allow-lists today (`force-include` for the wheel,
+`include` for the sdist), which makes the exclusion automatic. These tests exist
+so that a future edit adding a broad glob, or dropping the sdist's explicit
+`include`, fails here instead of on PyPI.
+
+`research/` used to live here and is named below out of caution rather than
+presence: the benchmark lab moved to the private `hypergraph-labs` repo on
+2026-08-11, so a `research/` reappearing in this tree would be something new and
+undeclared rather than the lab. `tests/` and `.hypergraph/` are the live cases —
+an end user installing the CLI has no use for this repo's own test suite or its
+memory graphs.
 """
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Directories that exist in the repo but must never be distributed.
+# Directories that must never be distributed, whether or not they exist here.
 NEVER_SHIP = ("research", "tests", ".hypergraph")
 
 
@@ -41,23 +46,30 @@ def test_sdist_include_is_an_explicit_allow_list():
         assert top not in NEVER_SHIP, f"sdist would ship {src}"
 
 
-def test_research_tree_exists_and_is_undeclared():
-    """Guard the guard: if research/ vanished, the assertions above go vacuous."""
-    assert (ROOT / "research").is_dir()
-    raw = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    # A path reference, not the bare word — the project description legitimately
-    # contains "research projects".
-    assert "research/" not in raw, "pyproject must not reference the research/ tree"
+def test_the_allow_lists_are_not_vacuous():
+    """Guard the guard.
+
+    The two assertions above iterate the declared sources and check none of them
+    starts with a NEVER_SHIP directory. That is trivially true of an empty list,
+    so this pins that the lists have real content and that the live exclusions —
+    `tests/` and `.hypergraph/` — are directories that actually exist here.
+    Without it, deleting every `force-include` entry would leave a green suite.
+    """
+    cfg = _pyproject()["tool"]["hatch"]["build"]["targets"]
+    assert cfg["wheel"]["force-include"], "wheel allow-list is empty"
+    assert cfg["sdist"]["include"], "sdist allow-list is empty"
+    for present in ("tests", ".hypergraph"):
+        assert (ROOT / present).is_dir(), f"{present}/ vanished; its exclusion is now vacuous"
 
 
 def test_module_version_matches_pyproject():
     """`hypergraph --version` must not disagree with the distribution.
 
-    The benchmark's arm-C boxes install `hypergraph-protocol==<pyproject version>`
-    and then assert the version the CLI reports, because `uv tool install` reuses
-    a cached tool and would otherwise leave a box silently running an older build
-    while the write-up names this one. That assertion is only meaningful if the
-    two numbers are the same number here.
+    The benchmark's arm-C boxes install `hypergraph-protocol==<version>` and then
+    assert the version the CLI reports, because `uv tool install` reuses a cached
+    tool and would otherwise leave a box silently running an older build while
+    the write-up names this one. That assertion is only meaningful if the two
+    numbers are the same number here.
     """
     import re
     declared = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]

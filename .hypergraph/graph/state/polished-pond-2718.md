@@ -9,9 +9,9 @@ summary: 'Five job-named views with Everything as the boot default; excaligraph'
 flywheel:
   node_id: f4d676d8-a180-55fc-ae3f-54c1e4d3bcab
   slug: polished-pond-2718
-  revision: 5
-  pushed_at: '2026-08-09T17:51:54+00:00'
-  content_sha256: 1e560c8c346b3cbe573462778fd15a268fbd1299464cd261b6ea467c56724e00
+  revision: 6
+  pushed_at: '2026-08-11T12:29:46+00:00'
+  content_sha256: 20122d4081b83d138ac43261f98c31c73759ab9a78eb44f6687e268a465b80c5
 ---
 Status: working
 
