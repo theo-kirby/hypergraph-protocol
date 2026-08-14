@@ -4,94 +4,39 @@ slug: fond-sail-3288
 title: Upgrade path
 created_at: '2026-08-09T15:54:22+00:00'
 parents:
-- cool-king-8586
-summary: ''
+- morning-crane-7863
+summary: 'How a release reaches a repo that already adopted: three things travel by three mechanisms, upgrade refreshes only reversible copies, and a customized AGENTS.md block is now detected by digest rather than overwritten.'
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 5
-  pushed_at: '2026-08-14T13:14:10+00:00'
-  content_sha256: 19e482e3bd905b2916d9eb848a4e879f4891de93b11abbb6db1c8a1cabf472b5
-  parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
+  revision: 8
+  pushed_at: '2026-08-14T13:37:28+00:00'
+  content_sha256: bd7870d52b41608d64d2def8bf2ed9b18adbc9cecc76da342948f504f901f317
+  parents_sha256: 437819574dd587d939fe237b83326a9f0d60c63e5db173f7d30329bb8d01fc22
   parents:
-  - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
+  - 67d32718-3dcf-5321-978a-212599c531b4
 ---
 Status: working
 
 ## Current
 
-How a release reaches a project that already adopted the protocol. Three things
-travel and they update by three different mechanisms, which is the whole reason this
-needed building [rec: ancient-bluff-9706]:
+How a release reaches a project that already adopted the protocol. Three things travel and they update by three different mechanisms, which is the whole reason this needed building [rec: ancient-bluff-9706]:
 
 - **The CLI** lives outside the repo; `uv tool upgrade hypergraph-protocol` handles it [rec: ancient-bluff-9706].
-- **The node files** are never touched by an upgrade — measured, not assumed: the published 0.0.5 CLI checks a 0.0.6-written graph at 0 violations, because the format is additive markdown + frontmatter [rec: ancient-bluff-9706].
-- **The copies** — the five skills under `.claude/skills/`, the sentinel AGENTS.md block, the CI workflows — are files inside the adopter's repo that `uv tool upgrade` cannot see; `hypergraph upgrade` refreshes them [rec: ancient-bluff-9706].
+- **The node files** are never touched by an upgrade — measured, not assumed: the published 0.0.5 CLI checks a 0.0.6-written graph at 0 violations, because the format is additive markdown plus frontmatter [rec: ancient-bluff-9706].
+- **The copies** — the five skills, the sentinel AGENTS.md block, the CI workflows — are files inside the adopter's repo that `uv tool upgrade` cannot see; `hypergraph upgrade` refreshes them [rec: ancient-bluff-9706].
 
-`upgrade`'s contract is **refresh what is already there, never install what is not**:
-it will not drop CI into a repo that never had it, and that same rule is what stops a
-repo-scoped command writing outside the repo it was pointed at. Skills are replaced
-wholesale so a file removed upstream is pruned (plain `skills install` merges, so it
-cannot); the AGENTS.md block is replaced between its sentinels with the adopter's own
-prose *outside* them intact — but everything **inside** them is overwritten, which
-is the defect below — and a `CLAUDE.md → AGENTS.md` symlink written through rather than broken;
-drifted workflows are reported and left alone until `--workflows`, because they are
-the one copied artifact adopters genuinely edit [rec: ancient-bluff-9706].
+`upgrade`'s contract is **refresh what is already there, never install what is not**: it will not drop CI into a repo that never had it, and that same rule is what stops a repo-scoped command writing outside the repo it was pointed at. Skills are replaced wholesale so a file removed upstream is pruned; a `CLAUDE.md → AGENTS.md` symlink is written through rather than broken; drifted workflows are reported and left alone until `--workflows`, because they are the one copied artifact adopters genuinely edit [rec: ancient-bluff-9706].
 
-`hypergraph_version:` in the config records which release installed those copies — not
-a compatibility floor. `check` compares it to the running CLI and names the remedy for
-whichever half is behind; a missing stamp is an info, not a warning, because every repo
-adopted before the stamp lacks one [rec: ancient-bluff-9706].
+`hypergraph_version:` in the config records which release installed those copies — **not** a compatibility floor. `check` compares it to the running CLI and names the remedy for whichever half is behind; a missing stamp is an info, not a warning, because every repo adopted before the stamp lacks one [rec: ancient-bluff-9706].
 
-Shipped in **0.0.7** and verified from PyPI with published artifacts only: a repo installed from 0.0.6 — old skills, an old sentinel block, a 0.0.6 stamp — took the two documented commands (`uv tool install`, then `hypergraph upgrade`) and came out with 0.0.7's skills, a refreshed block with its own prose intact, and a re-stamped config [rec: humble-rain-0304]. That is the thing that was impossible before: a fix to a skill reaching a repo that already adopted, without anyone re-running adopt. Two
-prior burns say the same gap bites in both directions — a shipped CI template once
-called `check --since` before that flag existed [rec: long-peak-1620], and the 0.0.5
-high-water-mark change needed a migration nobody could have known to run without
-`check` naming it [rec: long-peak-1620].
+Shipped in 0.0.7 and verified from PyPI with published artifacts only: a repo installed from 0.0.6 took the two documented commands and came out with 0.0.7's skills, a refreshed block with its own prose intact, and a re-stamped config — the thing that was impossible before [rec: humble-rain-0304]. Two prior burns say the gap bites in both directions: a shipped CI template once called `check --since` before that flag existed, and the 0.0.5 high-water-mark change needed a migration nobody could have known to run without `check` naming it [rec: long-peak-1620].
 
-**Broken, found on the first run against a repo that had used the feature it destroys.**
-`upgrade` replaces the *whole* sentinel block with the shipped template, and the adopt
-skill's step 8 deliberately writes per-project content into that block. On cadex it
-deleted the clause reconciling the record graph with `docs/DECISIONS.md` — required
-under "contract reconciliation" — and the epoch-marker note naming the marker slug and
-prehistory count. The two skills disagree about who owns the inside of the sentinels:
-`adopt` writes there, `upgrade` overwrites it. The same command already models the
-right behaviour for `.github/workflows/`, reporting drift and leaving it alone
-"because adopters customize these" — the block has exactly that property and the
-opposite default. Everything else in the upgrade held: skills refreshed, config
-stamped, prose outside the sentinels byte-identical [rec: vast-valley-5745].
+**It shipped broken, and the first run against a repo that had used the feature it destroys is what found that** [rec: vast-valley-5745]. `upgrade` replaced the *whole* sentinel block with the shipped template, while the adopt skill's step 8 deliberately writes per-project content into that block; on cadex it deleted the ADR-log reconciliation clause and the epoch-marker note. The two skills disagreed about who owns the inside of the sentinels. **Fixed and shipped in 0.0.8** [rec: open-eagle-4603] [rec: clever-ledge-6588]: a block is replaced only while its content digest matches one this project has shipped (`SHIPPED_BLOCK_DIGESTS`, both templates recovered from git history as blobs); anything else is reported as `customized`, left untouched, and the shipped template named so the adopter merges by hand. `--agents-block` opts into overwriting, exactly as `--workflows` does. It needs no migration and no new config field, because the evidence is the block itself. A nested-marker design was tried first and rejected: on cadex the clause is woven into the middle of a numbered item, so no pair of markers separates it.
 
-**Fixed in the tree, not yet released** [rec: open-eagle-4603]. `upgrade` now replaces
-a block only while its content digest matches one this project has shipped
-(`SHIPPED_BLOCK_DIGESTS`, both templates recovered from git history as blobs);
-anything else is reported as `customized`, left untouched, and the shipped template is
-named so the adopter merges by hand. `--agents-block` opts into overwriting, exactly as
-`--workflows` does. It needs no migration and no new config field — every repo adopted
-before the fix classifies correctly on its first run, because the evidence is the block
-itself. The nested-marker design was tried first and rejected: on cadex the ADR-log
-clause is woven into the *middle of numbered item 2*, so no pair of markers separates
-it. **Shipped in 0.0.8**, so the destructive behaviour is no longer live for an adopter who upgrades, and the status returns to `working` [rec: clever-ledge-6588]. The 0.0.8 template is registered in `SHIPPED_BLOCK_DIGESTS`, so a block still untouched is refreshed automatically and only an edited one is reported and left alone.
+**The path has two halves and the split is the point** [rec: clear-moss-4527]. `upgrade` refreshes *copies* and every effect of it is `git checkout`-reversible; **`hypergraph heal`** repairs *graph content* and spends a mirror-write budget that cannot be un-spent. So they are separate commands with opposite defaults, and `upgrade` closes by listing the heals that apply, computed offline from each healer's `blocked_by`. Heals are deliberately **not keyed off `hypergraph_version:`** — letting `upgrade` bump the stamp while a graph repair was outstanding would make it assert something it never checked.
 
-**The path now has two halves, and the split is the point** [rec: clear-moss-4527].
-`upgrade` refreshes *copies* of shipped files and every effect of it is
-`git checkout`-reversible. **`hypergraph heal`** repairs *graph content* — the
-retroactive-repair capability below — and rewrites node files while spending a
-mirror-write budget that cannot be un-spent. So they are separate commands with
-opposite defaults: `heal` is detect-only until `--apply`, the one inverted default in
-this tooling, and plain detected drift exits **0** rather than 1 for the same reason
-`check`'s version skew is a warning — a capability that landed after your adoption is
-not a broken invariant. `upgrade` closes by listing the heals that apply, computed
-**offline** from each healer's `blocked_by`.
-
-Heals are deliberately **not keyed off `hypergraph_version:`** [rec: clear-moss-4527]. The stamp records which
-release wrote this repo's copies; letting `upgrade` bump it while a graph repair was
-still outstanding would make it assert something it never checked. That would turn "not
-a compatibility floor" from a documented property into a false one.
-
-A second gap, smaller: on a repo adopted before the stamp, `check` emits only the
-"predates the stamp" info, so the case where the **CLI** is the older half cannot be
-reported at all. cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so
-[rec: vast-valley-5745].
+A smaller gap remains: on a repo adopted before the stamp, `check` emits only the "predates the stamp" info, so the case where the **CLI** is the older half cannot be reported at all — cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so [rec: vast-valley-5745].
 
 ## Negative knowledge
 
@@ -101,8 +46,10 @@ reported at all. cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so
 ## Provenance
 
 - ancient-bluff-9706 — hypergraph upgrade and the version stamp, with both compatibility directions measured
-- humble-rain-0304 — 0.0.7 published; the two-command update verified end-to-end from PyPI
-- long-peak-1620 — the CI-template/CLI skew that showed copied artifacts drift out of step with the CLI
+- humble-rain-0304 — 0.0.7 published; the two-command update verified end to end from PyPI
+- long-peak-1620 — the CI-template/CLI skew that showed copied artifacts drift out of step
+- vast-valley-5745 — the first run on a real adopted repo: the sentinel block's project-specific half overwritten
 - open-eagle-4603 — the fix: a block is ours to replace only while its digest is one we shipped
-- vast-valley-5745 — first run on a real adopted repo: the sentinel block's project-specific half is overwritten, and a pre-stamp repo cannot report a CLI-is-older skew
-- clear-moss-4527 — the path splits: `upgrade` for reversible copies, `heal` for graph content, with upgrade pointing at the heals that apply
+- clever-ledge-6588 — shipped in 0.0.8, so the destructive behaviour is no longer live
+- clear-moss-4527 — the path splits: upgrade for reversible copies, heal for graph content
+- late-sage-5549 — re-homed under Adoption, which is what it is a tail of

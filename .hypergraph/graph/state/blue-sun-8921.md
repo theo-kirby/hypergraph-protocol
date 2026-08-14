@@ -1,63 +1,60 @@
 ---
 node_id: d82f019d-c029-5999-ad8c-332abcfaa3ee
 slug: blue-sun-8921
-title: Storage interface
+title: Storage & node format
 created_at: '2026-08-06T21:41:11.400955+00:00'
 parents:
-- cool-king-8586
-summary: INTERFACE.md as a portability contract with one shipped implementation (node files); both optional ops now implemented — tags as frontmatter names, artifacts as frontmatter paths; mirroring split into backend/mirror.md and the host contract demoted to backend/flywheel.md; working.
+- wandering-sun-8831
+summary: The node files are the only storage; INTERFACE.md is a portability contract with one shipped implementation. Names and repo-relative paths are the portable identity; state topology is writable, record topology is not.
 flywheel:
   node_id: d82f019d-c029-5999-ad8c-332abcfaa3ee
   slug: blue-sun-8921
-  revision: 8
-  pushed_at: '2026-08-14T13:14:10+00:00'
-  content_sha256: 512371d4321a11ffb55a171d3695c194ac68bde9caba708044b49c14341427b2
-  parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
+  revision: 11
+  pushed_at: '2026-08-14T13:37:28+00:00'
+  content_sha256: cd29650e5f208989ada5a3b1177c9984b8299de641d4a791404e14582325fc90
+  parents_sha256: 7581a2a3ab3e0f666772fb38ea612fbca98197235dbd11585614ad362efda1a1
   parents:
-  - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
+  - 2b993e9c-708e-5940-a67f-cf80aa0955e4
 ---
 Status: working
 
 ## Current
 
-- backend/INTERFACE.md defines the 10 abstract operations the protocol is written against (create_root, append_record_node, read_node, list_children, get_tree, resolve_slug, update_state_node, export_graph, attach_artifact, tag) [rec: crimson-dawn-7137].
-- **It is now a portability contract rather than a menu.** One implementation ships — `backend/local-adapter.md`, node files in the repo — and the table states what a *replacement* store would have to satisfy. There is no `backend:` selector to set; storage is not a decision a project makes at init [rec: silver-ember-3035]. Two adapters existing at once was what previously proved the table swappable [rec: old-dawn-8747]; the claim now rests on the table's shape rather than on shipping a second one.
-- Op 7's concurrency story is a body-hash compare-and-swap (`--expect`) with git as the merge substrate, and `--reconcile` is the mechanical I3 gate — the only commands that write state nodes refuse without it [rec: old-dawn-8747] [rec: silver-ember-3035].
-- **`backend/local-adapter.md` lost its mirroring section** (105 lines) to a 5-line stub, and `## Bootstrapping from Flywheel` became `## Importing an existing graph`. Leaving mirror mechanics in the one file every skill symlinked into `references/` is exactly how the mirror stayed visible to agents that had no business knowing about it [rec: silver-ember-3035].
-- **`backend/mirror.md` is new and symlinked nowhere.** It absorbs the mechanics, rewritten from "the skill executes" to "the CLI executes", and carries what had only ever been prose: the measured slug-divergence consequences, the legend/lineage/verify rules, why results are folded incrementally, and `## Re-homing a hosted graph into the repo` — the migration path previously buried in init step 8, which is the answer for pre-0.0.2 hosted projects [rec: silver-ember-3035].
-- **`backend/flywheel-adapter.md` → `backend/flywheel.md`**, ~70 lines, banner-marked *"not an agent-facing document"*. Demoted rather than deleted: it is the only record of the six required `repo_context` keys, `local_temp_node_id`, `base_committed_revision` semantics, the 409/429 contract, the write limits, and add-parent-before-remove ordering — all of which the executing `push` depends on [rec: calm-sand-3399]. The rename and the five skills' symlink deletions were one commit, so no revision in history has dangling references.
-- Constraint: no operation may create edges between the two roots — cross-graph pointers stay markdown [rec: spring-pine-7256].
-- Node-file frontmatter carries two identity blocks that are never confused: `origin:` — where an imported node came from (immutable, written once by `import --fork`, read by nothing) — and `flywheel:` — this project's own mirror identity. Before the split one field was doing three jobs at once: provenance, push target, and change-detection baseline [rec: copper-moss-3669] [rec: tender-moss-3792]. The two are no longer described as peers: `origin:` is protocol, the mirror block is bookkeeping [rec: silver-ember-3035].
-- The mirror projects the repo, never the archive. `local-adapter.md` separates the two `import` cases explicitly — re-homing a graph you own (no `--fork`; the source stays the push target) from adopting somebody else's (`--fork` mandatory) — because getting it wrong is silent in both directions: the first omits the whole legacy history from every push, the second duplicates the entire graph [rec: tender-moss-3792].
-- Re-parenting an existing mirror node (`nodes:add-parent` / `nodes:remove-parent`): add first, then remove, so the child is never momentarily parentless; all four optimistic-lock revisions are required and the add bumps the child's revision, so re-read between calls. Verified live on two a3go nodes [rec: tender-moss-3792] [rec: northern-willow-0469].
-- `nodes:commit-new` also requires `local_temp_node_id`; omitting it is a server-side 422, so nothing is created. Identity can come back nested under `node: {node_id, slug_name, revision}` [rec: northern-willow-0469].
-- **Both optional ops are implemented — 10 (tags) and now 9 (artifacts)** [rec: clear-moss-4527] [rec: shady-bay-7654]. Neither asks the store for anything: a tag is a name in frontmatter, an artifact is a path in frontmatter, and the shipped adapter satisfies both with files. INTERFACE's old clause — *"artifacts and tags are optional; the shipped implementation omits artifacts"* — was false the moment op 9 landed and was rewritten in place [rec: shady-bay-7654]. A tag is a `tags:` list of *names* in node frontmatter, with the vocabulary — colours, `one_only`/`track_history`, and whatever id a backend minted — in a committed `.hypergraph/tags.yml` keyed by graph kind, because declaration is per graph root and there are two. **Names are the portable identity**, for the same reason `parents:` holds slugs: every store mints its own tag ids, so an id is as local to a store as a mirror's slug is. `synth_tag` derives a colour pair from `sha256(name)`, which is what keeps `tags.yml` optional — an undeclared name still works, and two machines agree on its colour without coordinating.
-- **A repo-relative path is the portable identity of an artifact (op 9)** [rec: shady-bay-7654]. The same answer as slugs for nodes and names for tags, for the same reason: every store that holds bytes mints its own artifact id, so an id is as local to a store as a mirror's slug is. A store implementing op 9 therefore *copies* evidence and never owns it — a graph whose repo is in hand finds every artifact with no store at all. Input is cwd-relative like `git add`; storage is repo-root-relative, and the root comes from git rather than from a config key, because an absolute path committed into a repo goes stale the moment the checkout moves and takes every artifact path with it.
-- **Artifacts attach to record nodes and to nothing else**, and INTERFACE says so as a contract note rather than leaving it to be discovered [rec: shady-bay-7654]. A state node is rewritten on every reconcile, so a pointer hung there has no stable owner; the route is one hop and already exists — `## Provenance` cites the record node, the record node enumerates the files. An implementation that lets a state node carry evidence is not implementing this interface.
-- **Prose and the list are both required, and they are not the same thing** [rec: shady-bay-7654]. `## Method`/`## Result` is where a path is *explained*; `artifacts:` is where it is *enumerated* so a tool can find it without parsing prose. Dropping the prose leaves a file nobody can interpret; dropping the list leaves evidence no `check`, `push` or `viz` can see. This is what the previous "commit it and reference it by path" answer was missing: it had the claim and no index.
-- **A tag is annotation, and no invariant reads one.** INTERFACE says so as a contract note rather than leaving it to be discovered: a claim that exists only as a tag is invisible to the protocol, so the home for a claim is a node body. `check` is tag-blind with exactly one exception — where `tags.yml` exists, an undeclared name is a *warning*, never a violation [rec: clear-moss-4527].
-- **Assignment is an atomic replace, and that property is load-bearing.** A re-issued assignment cannot duplicate anything, so a 409 on one may be re-read and re-issued in place — the only operation here where that is safe. A *declaration* has no such property (deleting a tag definition un-tags every node that used it), so an implementation must resolve an existing name before declaring, always [rec: clear-moss-4527].
-- Two constraints op 10 must leave room for, both learned from a live backend [rec: early-mesa-8507]: a store may constrain **where** a tag lives, not merely that it exists (Flywheel requires a `cluster:*` tag to cover a connected set of nodes, checked on every write, which makes assignment *order* part of the contract); and a tag creation may move revisions **graph-wide**, so a node's revision can change without that node being written. The second is the sharper one — it means an optimistic lock held across an unrelated operation is stale, and that nodes nobody touched can read as drift.
+What a node *is* on disk, and what a store would have to satisfy to hold one instead [rec: crimson-dawn-7137] [rec: old-dawn-8747].
+
+- **The node files are the only storage.** Markdown under `.hypergraph/graph/{record,state}/<slug>.md` is the source of truth; there is no `backend:` key to select, and a missing one means the node files, correct by construction because there is one thing it can mean [rec: old-dawn-8747] [rec: calm-sand-3399].
+- **The format**: YAML frontmatter — `node_id` (uuid5 of the slug), `slug`, `title`, `created_at`, `parents` as slugs, optional `tags:` names, optional `artifacts:` paths, optional bookkeeping blocks — over a body that is the node content byte-for-byte, so `check`, `render` and `viz` parse it unchanged [rec: old-dawn-8747]. The integration surface is one file format plus `export`: the checker, renderer and visualizer were never modified for any of this, because they only ever read the two JSON exports [rec: old-dawn-8747].
+- **Two identity blocks that are never confused**: `origin:` — where an imported node came from, immutable, written once by `import --fork`, read by nothing — and `flywheel:` — this project's own mirror identity and change-detection baseline. Before the split one field did all three jobs at once [rec: copper-moss-3669] [rec: tender-moss-3792]. They are not peers: `origin:` is protocol, the mirror block is bookkeeping [rec: silver-ember-3035].
+- **`backend/INTERFACE.md` is a portability contract, not a menu** [rec: silver-ember-3035]. It names ~10 abstract operations [rec: crimson-dawn-7137], one implementation ships — `backend/local-adapter.md`, node files in the repo — and the table states what a *replacement* store would have to satisfy. Two adapters existing at once was what previously proved the table swappable [rec: old-dawn-8747]; the claim now rests on the table's shape.
+- **Op 7's concurrency story is a body-hash compare-and-swap** (`--expect`) with git as the merge substrate, and `--reconcile` is the mechanical I3 gate [rec: old-dawn-8747] [rec: silver-ember-3035].
+- **Both optional ops are implemented, and neither asks the store for anything** [rec: clear-moss-4527] [rec: shady-bay-7654]. A tag is a name in frontmatter with the vocabulary in a committed `.hypergraph/tags.yml` keyed by graph kind; an artifact is a repo-relative path in frontmatter. INTERFACE's old clause — *"artifacts and tags are optional; the shipped implementation omits artifacts"* — was false the moment op 9 landed and was rewritten in place [rec: shady-bay-7654].
+- **Names and paths are the portable identity, for the same reason `parents:` holds slugs.** Every store mints its own tag ids and artifact ids, so an id is as local to a store as a mirror's slug is. `synth_tag` derives a colour pair from `sha256(name)`, which is what keeps `tags.yml` optional; an artifact path is typed cwd-relative like `git add` and stored repo-root-relative, with the root from git rather than a config key, because an absolute path committed into a repo goes stale the moment the checkout moves [rec: clear-moss-4527] [rec: shady-bay-7654]. A store implementing op 9 therefore *copies* evidence and never owns it.
+- **Three contract notes INTERFACE states rather than leaving to be discovered** [rec: shady-bay-7654] [rec: clear-moss-4527]: artifacts attach to record nodes and to nothing else, because a state node is rewritten on every reconcile and a pointer hung there has no stable owner; a tag is annotation and no invariant reads one, so a claim living only as a tag is invisible to the protocol; and prose and the list are both required and are not the same thing — `## Method`/`## Result` explains a path, `artifacts:` enumerates it so a tool can find it without parsing prose.
+- **Assignment is an atomic replace, and that property is load-bearing**: a re-issued assignment cannot duplicate anything, so a 409 on one may be re-read and re-issued in place — the only operation here where that is safe. A *declaration* has no such property, since deleting a tag definition un-tags every node that used it, so an implementation must resolve an existing name before declaring [rec: clear-moss-4527].
+- **Two constraints op 10 must leave room for, both learned from a live backend** [rec: early-mesa-8507]: a store may constrain *where* a tag lives, not merely that it exists, which makes assignment order part of the contract; and a tag creation may move revisions graph-wide, so a node's revision can change without that node being written. The second is sharper — an optimistic lock held across an unrelated operation is stale, and nodes nobody touched read as drift.
+- **Two storage-path defects, both found by the first mode A adoption run without its author** [rec: clever-ledge-6588]. `adopt --init` derived the config's root `node_id` from the slug unconditionally, but a mode A root arrives through `import --fork`, which preserves the archive's id verbatim — so the project would have published under an id nothing else in the repo used; it now reads the node's own id. And `mirror pull` and `export` both defaulted to the same cache path, so the first export destroyed the legacy pull, which is the only record of what stayed on the archive; the pull now writes `legacy-*.json`.
+- **A state node's parents may move; a record node's may not** [rec: autumn-glade-5802]. `hypergraph update --parent/--root` re-homes a state node with the same compare-and-swap and the same `--reconcile` gate as a body write, refusing a self-parent, a second root and any edge that would close a cycle. Record topology is causal history.
 
 ## Negative knowledge
 
 - [scope: mode-A adoption mirrors | confidence: high | evidence: copper-moss-3669, northern-willow-0469 | decision: copper-moss-3669] a mirror can verify clean while holding almost none of the graph. `import` stamped every node with the archive's `flywheel:` identity, so `push_plan` omitted all of them as already-pushed — they were on Flywheel, just on somebody else's graph — and `push --verify` was run against an export that spliced the archive roots in, which made those orphaned ids resolve. Measured on a3go: 3 record nodes mirrored of 111, with `push --plan` reporting 0 creates and verify exiting 0. **Now mechanically unreachable**: `mirror_root_ids()` refuses to treat an `archive:` root as a mirror root [rec: silver-ember-3035].
-- [scope: re-parenting nodes on a Flywheel mirror | confidence: high | evidence: northern-willow-0469] `add-parent`/`remove-parent` bump the committed revision on **both** ends of the edge, so `push --verify` reports revision skew against the node files afterwards until the mirror's revisions are fed back. Content is untouched; only the revision drifts.
 - [scope: documenting a mechanism agents should not use | confidence: high | evidence: silver-ember-3035] a reference doc symlinked into a skill's `references/` is part of that skill's context whether or not the skill's own body mentions it. Deleting the backend-dispatch preambles alone would have left every MCP recipe, the lease dance and the rate budgets one hop away. Moving the prose out of the symlinked file — not merely stopping citing it — is what makes a mechanism actually absent.
-- [scope: driving headless agent harnesses | confidence: high | evidence: scarlet-orchard-8774] an agent harness's **run log is not its session record**, and the difference is silent. pi's print mode writes only the final answer — 82 bytes for an entire run — while the turn-by-turn tree with tool calls, tokens and cost auto-saves to `~/.pi/agent/sessions/`. A harvest scoped to the workspace would have torn the box down with the evidence still on it and surfaced the loss only at analysis. Verify a measurement channel on a throwaway box before a run depends on it.
 
 ## Provenance
 
 - wandering-rice-9747 — component seeded at project init
-- spring-pine-7256 — markdown-pointers decision the interface encodes
-- crimson-dawn-7137 — INTERFACE.md + the first adapter landed (M2)
-- old-dawn-8747 — second adapter (local-adapter.md); per-adapter op-7 story
+- spring-pine-7256 — the markdown-pointers decision the interface encodes
+- crimson-dawn-7137 — INTERFACE.md and the first adapter landed (M2)
+- old-dawn-8747 — the local adapter, the node format, and the round-trip integration surface
 - kind-valley-8040 — adapter doc corrected from the first live mirror push
-- copper-moss-3669 — fork-import decision: one field doing three jobs; the archive-spliced verify
-- tender-moss-3792 — origin:/flywheel: split shipped; re-home vs adopt documented; re-parenting recipe
-- northern-willow-0469 — re-parenting and commit-new payload shape proven live on a3go
-- silver-ember-3035 — INTERFACE.md re-scoped as a portability contract; mirroring moved to backend/mirror.md
-- calm-sand-3399 — flywheel-adapter.md renamed and demoted to CLI internals
-- clear-moss-4527 — op 10 shipped: names as the portable identity, tags.yml, and the contract note that no invariant reads a tag
-- early-mesa-8507 — two host constraints op 10 has to leave room for: where a tag may live, and revisions moving graph-wide
-- shady-bay-7654 — op 9 shipped as repo-relative paths: the last optional op, and two new contract notes (a path is the identity; artifacts attach to record nodes only)
+- copper-moss-3669 — fork-import decision: one field doing three jobs
+- tender-moss-3792 — the origin:/flywheel: split shipped; re-home vs adopt documented
+- northern-willow-0469 — the stub-mirror consequence proven live on a3go
+- silver-ember-3035 — INTERFACE.md re-scoped as a portability contract; mirroring moved out
+- calm-sand-3399 — config schema migrated; the backend: key retired
+- clear-moss-4527 — op 10 shipped: names as the portable identity, and the no-invariant-reads-a-tag note
+- early-mesa-8507 — two host constraints op 10 has to leave room for
+- shady-bay-7654 — op 9 shipped as repo-relative paths, with its three contract notes
+- clever-ledge-6588 — two storage-path defects found by the first unattended mode A run
+- autumn-glade-5802 — state topology becomes writable through update --parent, with record topology refused
+- late-sage-5549 — re-homed under Protocol mechanics and given the storage half of the mirror node
