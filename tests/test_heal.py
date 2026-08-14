@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from graph_fixtures import (ARCHIVE_TAGS, archive_export_of, forked_graph, hg)
+from graph_fixtures import (ARCHIVE_TAGS, archive_export_of, forked_graph, hg,
+                            local_graph_copy)
 from test_mirror import FakeTransport, RECORD_ROOT, STATE_ROOT
 
 
@@ -59,6 +60,17 @@ def project(tmp_path, *, pushed=False, git=True):
 
 def heal(repo, config_path, *argv):
     return run("heal", "tags", "--repo", repo, "--config", config_path, *argv)
+
+
+def heal_named(repo, config_path, name, *argv):
+    """`heal` for one named healer — `heal()` above is hard-wired to `tags`."""
+    return run("heal", name, "--repo", repo, "--config", config_path, *argv)
+
+
+def heal_named_out(capsys, repo, config_path, name, *argv):
+    capsys.readouterr()
+    code = heal_named(repo, config_path, name, *argv)
+    return code, capsys.readouterr().out
 
 
 def tags_of(graph_dir, slug):
@@ -219,8 +231,8 @@ def test_heal_tags_changes_no_body_sha256_and_leaves_push_plan_empty(tmp_path):
     plan = hg.push_plan(graph_dir, do_tags=False)
     assert plan["ops"] == [] and plan["violations"] == []
     # with tags on, the only ops are the assignments — no creates, no body updates
-    creates, updates, tags = hg.plan_op_counts(hg.push_plan(graph_dir))
-    assert (creates, updates) == (0, 0) and tags == 4
+    creates, updates, tags, artifacts = hg.plan_op_counts(hg.push_plan(graph_dir))
+    assert (creates, updates, artifacts) == (0, 0, 0) and tags == 4
 
 
 def test_limit_is_never_a_silent_cap(tmp_path, capsys):
@@ -385,3 +397,81 @@ def test_heal_json_reports_findings_and_changes(tmp_path, capsys):
     entry = payload["healers"][0]
     assert entry["name"] == "tags" and entry["drift"] == 4
     assert len(entry["findings"]) == 4
+
+
+# --------------------------------------------------------- healer 2: artifacts
+# The interesting property is what this healer does *not* do. An adoption that
+# predated tags lost the names; an adoption that predated artifacts lost nothing,
+# because there was nothing local to lose. So this records an inventory of what the
+# frozen archive still holds — and never repatriates the bytes, which are not in the
+# repo and would leave the mirror holding evidence the repo cannot regenerate.
+
+def archive_with_attachments(graph_dir, slug="brave-otter-1002"):
+    export = archive_export_of(graph_dir)
+    for raw in export["nodes"]:
+        if raw["slug_name"] == slug:
+            raw["artifacts"] = [
+                {"artifact_id": "art-9001", "title": "train.log",
+                 "artifact_type": "text", "media_type": "text/plain",
+                 "created_at": "2026-01-01T00:00:00+00:00"},
+                {"artifact_id": "art-9002", "title": "loss.png",
+                 "artifact_type": "image"},
+            ]
+    return export
+
+
+def test_heal_artifacts_records_the_archive_inventory_under_origin(tmp_path, capsys):
+    repo, graph_dir, config_path = project(tmp_path)
+    source = tmp_path / "archive.json"
+    source.write_text(json.dumps(archive_with_attachments(graph_dir)))
+    assert heal_named(repo, config_path, "artifacts", "--offline", "--apply",
+                      "--source", source) == 0
+    origin = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"].meta["origin"]
+    assert [a["artifact_id"] for a in origin["artifacts"]] == ["art-9001", "art-9002"]
+    assert origin["artifacts"][0]["title"] == "train.log"
+    # untouched nodes stay untouched
+    assert "artifacts" not in \
+        hg.load_local_nodes(graph_dir, "record")["calm-fern-1003"].meta["origin"]
+    capsys.readouterr()
+
+
+def test_heal_artifacts_never_publishes_the_archives_bytes(tmp_path, capsys):
+    repo, graph_dir, config_path = project(tmp_path)
+    source = tmp_path / "archive.json"
+    source.write_text(json.dumps(archive_with_attachments(graph_dir)))
+    code, out = heal_named_out(capsys, repo, config_path, "artifacts", "--offline",
+                               "--apply", "--source", source)
+    assert code == 0
+    assert "publishing them would make the mirror the only holder" in out
+    # the local `artifacts:` list — the one `push` uploads — is never written
+    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    assert node.artifacts == []
+    assert [o for o in hg.push_plan(graph_dir, repo=repo)["ops"]
+            if o["op"] == "artifacts"] == []
+
+
+def test_heal_artifacts_changes_no_body_sha256_and_is_idempotent(tmp_path, capsys):
+    repo, graph_dir, config_path = project(tmp_path)
+    source = tmp_path / "archive.json"
+    source.write_text(json.dumps(archive_with_attachments(graph_dir)))
+    before = {slug: node.sha256
+              for kind in ("record", "state")
+              for slug, node in hg.load_local_nodes(graph_dir, kind).items()}
+    assert heal_named(repo, config_path, "artifacts", "--offline", "--apply",
+                      "--source", source) == 0
+    after = {slug: node.sha256
+             for kind in ("record", "state")
+             for slug, node in hg.load_local_nodes(graph_dir, kind).items()}
+    assert after == before
+    files = {p: p.read_text() for p in (graph_dir / "record").glob("*.md")}
+    assert heal_named(repo, config_path, "artifacts", "--offline", "--apply",
+                      "--allow-dirty", "--source", source) == 0
+    assert {p: p.read_text() for p in (graph_dir / "record").glob("*.md")} == files
+    capsys.readouterr()
+
+
+def test_heal_artifacts_does_not_apply_without_an_import(tmp_path, capsys):
+    """The normal case needs no healer, and the message has to say why."""
+    graph_dir = local_graph_copy(tmp_path)
+    reason = hg.artifacts_blocked_by({"graph_dir": str(graph_dir)}, tmp_path)
+    assert "artifacts add" in reason and "nothing to heal" in reason

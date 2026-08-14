@@ -123,6 +123,7 @@ class Node:
     parent_ids: list[str]
     created_at: str
     tags: list[str] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
 
     @property
     def ref(self) -> str:
@@ -218,6 +219,16 @@ def load_graph(path: Path) -> Graph:
             # would read as "these nodes lost their tags".
             tags=[str(t) for t in (raw.get("tags") or [])
                   if isinstance(raw.get("tags"), list)],
+            # Strings only, and for a sharper reason than the `tags`/`tag_ids` note
+            # above. A mirror export also has an `artifacts` key, and its entries are
+            # attachment **objects** — ids, titles, urls for bytes the host holds.
+            # Ours are repo-relative *paths*, which is op 9's whole identity rule
+            # (backend/INTERFACE.md). Reading one as the other would put a store's
+            # bookkeeping where a path belongs, and every consumer downstream would
+            # believe it.
+            artifacts=[a for a in (raw.get("artifacts") or [])
+                       if isinstance(a, str)] if isinstance(
+                           raw.get("artifacts"), list) else [],
         )
         if node.node_id:
             nodes[node.node_id] = node
@@ -774,8 +785,107 @@ def check_conflict_markers(graph: Graph, report: Report) -> None:
                      "a record node is immutable once published, so this would be permanent.")
 
 
+def check_artifact_placement(state: Graph, report: Report) -> None:
+    """`artifacts:` on a state node is a violation (SPEC: Evidence lives on record nodes).
+
+    Evidence hangs off the record node whose work produced it. A state node claiming
+    its own would give the same file two homes — and the state graph is rewritten on
+    every reconcile, so that home has no stable owner. The one-hop path already
+    exists and is the right one: `## Provenance` cites the record node, and the
+    record node enumerates the files."""
+    for node in state.nodes.values():
+        if not node.artifacts:
+            continue
+        report.add("violation", "-", node.ref,
+                   f"state node declares `artifacts:` ({len(node.artifacts)} path(s)). "
+                   "Evidence lives on the record node whose work produced it — cite "
+                   "that node from `## Provenance` and attach the files there.")
+
+
+def git_tracked_paths(repo_root: Path) -> set[str] | None:
+    """Every path git tracks under `repo_root`, in one call. None when it cannot say.
+
+    One `git ls-files` for the whole graph, never one per artifact: the untracked
+    report is a single collapsed line, and a per-file `git` invocation over a few
+    hundred paths is the kind of cost nobody notices until a large repo adopts.
+    Returns None rather than an empty set outside a checkout, because "git tracks
+    nothing here" would flag every artifact in the project."""
+    out = _git(Path(repo_root), "ls-files", "-z")
+    if not out:
+        return None
+    return {p for p in out.split("\0") if p}
+
+
+def check_artifact_paths(record: Graph, config: dict, report: Report, *,
+                         repo_root: Path | str | None = None) -> None:
+    """Do the declared evidence paths still point at something? Warnings and infos.
+
+    **Never a violation, and `check` still exits 0.** An artifact can legitimately be
+    a gitignored 40 GB dataset that a fresh clone was never going to have; failing CI
+    over its absence would make the feature useless for exactly the evidence it
+    exists to hold. What this catches is the other case — a `git mv` that left the
+    pointer behind, or a spelling that only resolves on a case-insensitive
+    filesystem.
+
+    Silent when no node declares an artifact: a project that never uses this hears
+    nothing at all, the same bargain `check_tag_vocabulary` makes."""
+    declared = [node for node in record.nodes.values() if node.artifacts]
+    if not declared:
+        return
+    root = Path(repo_root) if repo_root is not None else repo_root_for(
+        config, Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR))
+    tracked = git_tracked_paths(root)
+    untracked: list[str] = []
+    for node in sorted(declared, key=lambda n: n.ref):
+        seen: set[str] = set()
+        for raw in node.artifacts:
+            stored, abs_path, outside = read_artifact_path(root, raw)
+            if stored in seen:
+                report.add("warning", "-", node.ref,
+                           f"artifact `{stored}` is listed twice")
+                continue
+            seen.add(stored)
+            if outside:
+                report.add("warning", "-", node.ref,
+                           f"artifact `{raw}` resolves outside the repo (`{stored}`) — "
+                           "it cannot survive a clone, and `push` refuses to upload it")
+                continue
+            if not abs_path.exists():
+                report.add("warning", "-", node.ref,
+                           f"artifact `{stored}` is not in the working tree. If the "
+                           "file moved, `hypergraph artifacts mv` repoints the record; "
+                           "if it is gitignored, this is expected on a fresh clone.")
+                continue
+            if abs_path.is_symlink():
+                import os  # deferred, matching the rest of this file's os usage
+
+                target = Path(os.path.realpath(str(abs_path)))
+                try:
+                    target.relative_to(Path(os.path.realpath(str(root))))
+                except ValueError:
+                    report.add("info", "-", node.ref,
+                               f"artifact `{stored}` is a symlink leaving the repo "
+                               f"({target}) — the pointer travels, the bytes do not")
+            if miscased := artifact_case_mismatch(abs_path):
+                report.add("warning", "-", node.ref,
+                           f"artifact `{stored}` differs from the on-disk spelling "
+                           f"({miscased}) — this resolves here and fails on a "
+                           "case-sensitive filesystem such as Linux CI")
+            if tracked is not None and stored not in tracked:
+                untracked.append(f"{node.ref}: {stored}")
+    if untracked:
+        # One collapsed line, never one per file. Untracked is a legitimate choice
+        # (decision 6: the agent decides what gets committed) — this is a note about
+        # where the only copy will live, not a complaint.
+        sample = ", ".join(untracked[:3]) + ("…" if len(untracked) > 3 else "")
+        report.add("info", "-", "artifacts",
+                   f"{len(untracked)} artifact(s) are not tracked by git ({sample}). "
+                   "They upload normally; the mirror will be the only published copy.")
+
+
 def run_check(record_path: Path, state_path: Path, config: dict | None = None,
-              *, config_given: bool | None = None) -> Report:
+              *, config_given: bool | None = None,
+              repo_root: Path | str | None = None) -> Report:
     if config_given is None:
         config_given = bool(config)
     config = config or {}
@@ -790,8 +900,12 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
     if config_given:
         check_version_skew(config, report)
         check_tag_vocabulary(record, state, config, report)
+        # Gated with the vocabulary warning and for the same reason: it reads files
+        # outside the export, so it needs to know where the project actually lives.
+        check_artifact_paths(record, config, report, repo_root=repo_root)
     check_conflict_markers(record, report)
     check_conflict_markers(state, report)
+    check_artifact_placement(state, report)
     epoch_cutoff = resolve_epoch_cutoff(config, record, report)
     check_impacts(record, state, record_root, report, epoch_cutoff)
     check_state_nodes(record, state, state_root, report)
@@ -881,8 +995,11 @@ def check_since(ref: str, config: dict, report: Report, *, cwd: Path | None = No
 
 def cmd_check(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    # `getattr`, not `args.repo`: `cmd_sync` hand-builds this Namespace, and a
+    # required attribute added here would break it silently at the next release.
     report = run_check(args.record, args.state, config,
-                       config_given=args.config is not None)
+                       config_given=args.config is not None,
+                       repo_root=getattr(args, "repo", None))
     if getattr(args, "since", None):
         check_since(args.since, config, report)
     violations, warnings, infos = report.violations(), report.warnings(), report.infos()
@@ -1236,6 +1353,16 @@ def build_viz_data(record: Graph, state: Graph, config: dict | None = None) -> d
             "unreconciled": unreconciled,
             "impacts": impacts, "impact_none": none_reason,
             "tags": list(node.tags),
+            # Record nodes only. The state-node dict below deliberately has no
+            # `artifacts` key at all, and that absence is the documentation for
+            # "evidence lives on record nodes" — there is nothing to render because
+            # there is nothing that may be there.
+            #
+            # No existence flag is baked in either: viz.html gets emailed and
+            # committed, and a "missing" computed at render time becomes a stale
+            # claim about somebody else's machine. `hypergraph check` answers that
+            # question at the moment it is asked.
+            "artifacts": list(node.artifacts),
             "layer": ly, "order": od, "seq": seq,
             # timeline view: real chronological rank, and the `git log` lane
             "chrono": chrono_index[node.node_id], "lane": lanes[node.node_id],
@@ -1565,12 +1692,23 @@ EXPORT_VERSION = 1
 # Above this many creates in one plan, `push --plan` warns: each create is a mirror
 # write, so a plan this size is a rate-limit and partial-push risk (not a violation).
 PUSH_CREATE_WARN = 200
+# The same gate, one noun over. An artifact upload is a mirror write *and* bytes
+# leaving the machine, so both the count and the volume are worth stopping on —
+# `--yes` says you meant it.
+PUSH_ARTIFACT_WARN = 200
+PUSH_ARTIFACT_BYTES_WARN = 256 * 1024 * 1024
 # `tags` sits between `summary` and `origin`: it is annotation the author writes,
 # not provenance bookkeeping a tool stamps. Omitted entirely when empty — writing
 # `tags: []` into every node would rewrite every file in every adopting repo for
 # nothing.
+#
+# `artifacts` follows it on the same reasoning and one step further: it is the last
+# key an author writes, and the first whose value can be *wrong about the world* —
+# every other key means whatever it says, while a path can stop pointing at anything.
+# So it sits at the boundary, after the annotation an author owns and before the
+# bookkeeping a tool stamps. Omitted when empty, for the same reason `tags` is.
 FM_ORDER = ("node_id", "slug", "title", "created_at", "parents", "summary", "tags",
-            "origin", "flywheel")
+            "artifacts", "origin", "flywheel")
 # Structural bounds on a tag name. Not an invariant — no invariant reads a tag
 # (SPEC: Per-project files). The comma is the one that matters: the CLI transport
 # joins `--tag_ids` with `,`, so a name carrying one is unshippable.
@@ -1647,6 +1785,19 @@ class LocalNode:
         that mints its own tag ids, exactly as a slug does for a node."""
         raw = self.meta.get("tags") or []
         return [str(t) for t in (raw if isinstance(raw, list) else [raw])]
+
+    @property
+    def artifacts(self) -> list:
+        """Declared evidence paths, **verbatim** — never normalized on read.
+
+        `render_node_file` has to round-trip a node file byte-for-byte, so a
+        normalization here would silently rewrite the author's spelling the next time
+        anything touched the file. Entries are returned unconverted so
+        `artifact_path_problems` can still see a non-string for what it is."""
+        raw = self.meta.get("artifacts")
+        if raw is None:
+            return []
+        return list(raw) if isinstance(raw, list) else [raw]
 
     @property
     def sha256(self) -> str:
@@ -1737,6 +1888,11 @@ def load_local_nodes(graph_dir: Path, kind: str, missing_ok: bool = False) -> di
                 "the unreconciled/high-water-mark partition is timestamp-ordered")
         for problem in tag_name_problems(node.tags):
             raise LocalGraphError(f"{path}: {problem}")
+        # Shape only, and deliberately *not* the record-only rule: a graph that
+        # cannot load cannot be checked, so "artifacts on a state node" is a `check`
+        # violation rather than a load failure.
+        for problem in artifact_path_problems(node.artifacts):
+            raise LocalGraphError(f"{path}: {problem}")
         seen_ids[node.node_id] = str(path)
         nodes[node.slug] = node
     return nodes
@@ -1754,7 +1910,8 @@ def local_graph(nodes: dict[str, LocalNode], kind: str) -> Graph:
             parent_ids.append(nodes[parent].node_id)
         out[node.node_id] = Node(node_id=node.node_id, slug=node.slug, title=node.title,
                                  content=node.content, parent_ids=parent_ids,
-                                 created_at=node.created_at, tags=node.tags)
+                                 created_at=node.created_at, tags=node.tags,
+                                 artifacts=[str(a) for a in node.artifacts])
     return Graph(nodes=out, by_slug={n.slug: n for n in out.values() if n.slug})
 
 
@@ -1977,6 +2134,360 @@ def merge_tag_def(vocab: dict, kind: str, entry: dict) -> dict:
     return entries[-1]
 
 
+# --------------------------------------------------------------------- artifacts
+# INTERFACE op 9, implemented as **paths**. A record node's `artifacts:` list names
+# files in this repo that its claims rest on: a training log, a plot, a captured
+# transcript. The repo holds the bytes and stays canonical; a mirror may hold a copy,
+# and a store's artifact id is bookkeeping, never identity.
+#
+# A repo-relative path is the portable identity, for the same reason a tag's *name*
+# and a node's *slug* are: it survives a clone, a fork, a re-home, and a backend that
+# mints its own ids. Input is cwd-relative (like `git add`); storage is
+# repo-root-relative.
+#
+# Two rules that are easy to get backwards, so they are stated here once:
+#
+# 1. **Prose and the list are both required, and they are not the same thing.**
+#    `## Method` / `## Result` is where a path is *explained*; `artifacts:` is where
+#    it is *enumerated* so a tool can find it. Prose is the claim, the list is its
+#    index. Neither replaces the other.
+# 2. **A path outside the repo is stored and warned locally, and refused at upload.**
+#    `artifacts: ../../.ssh/id_rsa` is a strange but legal thing to write in a
+#    markdown file. It must never become an instruction to send that file anywhere,
+#    so `resolve_artifacts` is the gate and it is a hard skip there.
+
+ARTIFACT_PATH_MAX = 4096
+
+
+def artifact_path_problems(paths: list) -> list[str]:
+    """Structural complaints about artifact paths, in order. Empty list = fine.
+
+    Shape only, and the split matters: **load time rejects what cannot be a path at
+    all**, and `check` reports what is a path and is wrong about the world. A graph
+    that cannot load cannot be checked, so nothing here touches the filesystem."""
+    problems: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, str):
+            problems.append(
+                f"artifact {raw!r} is not a string — `artifacts:` is a list of "
+                "repo-relative paths. (A mirror export's `artifacts` are attachment "
+                "objects; those are not what this key holds.)")
+            continue
+        if not raw.strip():
+            problems.append("an `artifacts:` entry is empty")
+            continue
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
+            problems.append(f"artifact {raw!r} contains a control character")
+        if len(raw) > ARTIFACT_PATH_MAX:
+            problems.append(
+                f"artifact {raw!r} is longer than {ARTIFACT_PATH_MAX} characters")
+    return problems
+
+
+def repo_root_for(config: dict, graph_dir: Path | None = None,
+                  explicit: Path | str | None = None, *,
+                  cwd: Path | str | None = None) -> Path:
+    """What a stored artifact path is relative to: `--repo`, then git, then cwd.
+
+    **Deliberately not a config key.** A `repo_root:` in config.yml is an absolute
+    path committed into the repo; it goes stale the moment the checkout moves, and
+    then every artifact path in the graph is wrong at once. Git already knows the
+    answer and cannot go stale.
+
+    Only ever called once at least one artifact is declared, so a project that never
+    uses this pays nothing — not even a `git` invocation."""
+    if explicit is not None:
+        return Path(explicit)
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    probes = [Path(graph_dir)] if graph_dir is not None else []
+    probes.append(base)
+    for probe in probes:
+        if not probe.is_dir():
+            continue
+        top = _git(probe, "rev-parse", "--show-toplevel").strip()
+        if top:
+            return Path(top)
+    return base
+
+
+def normalize_artifact_path(raw: str, repo_root: Path | str, *,
+                            cwd: Path | str | None = None) -> tuple[str, Path, bool]:
+    """One authored path → (stored form, absolute path, is it outside the repo).
+
+    Input is **cwd-relative**, exactly as `git add` is, because that is how a person
+    or an agent types a path. Storage is **repo-root-relative** with POSIX
+    separators, because that is the form that survives a clone.
+
+    Containment is tried lexically first and only then through `realpath`. That order
+    is the point: a symlink pointing at `/Volumes/big/runs` is the pointer the author
+    meant, and resolving past it would rewrite their path into one that means
+    something else on every other machine. The `realpath` fallback exists for the
+    reverse case — macOS handing out `/tmp/...` for a repo that really lives at
+    `/private/tmp/...` — where the two spellings are the same directory."""
+    import os  # deferred, matching the rest of this file's os usage
+
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    text = str(raw).strip().replace("\\", "/")
+    given = Path(text)
+    absolute = given.is_absolute()
+    abs_path = Path(os.path.normpath(str(given if absolute else base / given)))
+    root = Path(os.path.normpath(str(repo_root)))
+
+    try:                                   # 1. lexical: follows nothing
+        return abs_path.relative_to(root).as_posix(), abs_path, False
+    except ValueError:
+        pass
+    try:                                   # 2. realpath: the /tmp → /private/tmp case
+        real = Path(os.path.realpath(str(abs_path)))
+        stored = real.relative_to(Path(os.path.realpath(str(root)))).as_posix()
+        return stored, abs_path, False
+    except (ValueError, OSError):
+        pass
+    # 3. outside the repo. An absolute input stays absolute — rewriting it as a pile
+    # of `../` would hide how far outside it reaches. A relative input is re-expressed
+    # from the repo root so the stored form still means one thing from one place.
+    if absolute:
+        return abs_path.as_posix(), abs_path, True
+    return Path(os.path.relpath(str(abs_path), str(root))).as_posix(), abs_path, True
+
+
+def read_artifact_path(repo_root: Path | str, stored: str) -> tuple[str, Path, bool]:
+    """A path *read back* from frontmatter → (stored form, absolute path, outside).
+
+    The read-side counterpart of `normalize_artifact_path`, and the distinction is
+    not cosmetic: input *there* is cwd-relative because a person or an agent typed
+    it, and input *here* is repo-relative because a node file holds it. Confusing the
+    two makes `check` report every artifact as missing the moment it runs from a
+    subdirectory."""
+    return normalize_artifact_path(stored, repo_root, cwd=repo_root)
+
+
+def artifact_is_outside(stored: str) -> bool:
+    """Does a *stored* path point out of the repo? Read from the string alone."""
+    text = str(stored)
+    return (text.startswith("/") or text == ".." or text.startswith("../")
+            or (len(text) > 1 and text[1] == ":"))
+
+
+def artifact_abspath(repo_root: Path | str, stored: str) -> Path:
+    """A stored path back to an absolute one. The inverse of `normalize_artifact_path`."""
+    import os  # deferred, matching the rest of this file's os usage
+
+    path = Path(str(stored))
+    if path.is_absolute():
+        return path
+    return Path(os.path.normpath(str(Path(repo_root) / path)))
+
+
+def artifact_case_mismatch(abs_path: Path | str) -> str | None:
+    """The on-disk spelling when it differs from the given one only in case, else None.
+
+    One `os.scandir` per path segment, and the only detector there is for
+    works-on-macOS-fails-on-Linux-CI. `Plots/Loss.PNG` opens fine on a
+    case-insensitive filesystem and is a dead pointer the moment the repo is cloned
+    onto ext4 — which is where CI runs. A segment that is genuinely absent returns
+    None: that is "missing", a different finding with different wording."""
+    import os  # deferred, matching the rest of this file's os usage
+
+    path = Path(abs_path)
+    if not path.is_absolute():
+        return None
+    parts = path.parts
+    current = Path(parts[0])
+    rebuilt = [parts[0]]
+    for segment in parts[1:]:
+        try:
+            names = {entry.name for entry in os.scandir(current)}
+        except OSError:
+            return None
+        if segment in names:
+            actual = segment
+        else:
+            actual = {n.lower(): n for n in names}.get(segment.lower())
+            if actual is None:
+                return None
+        rebuilt.append(actual)
+        current = current / actual
+    real = str(Path(*rebuilt))
+    return real if real != str(path) else None
+
+
+def write_node_artifacts(node: LocalNode, paths: list[str]) -> bool:
+    """Rewrite one node file's `artifacts:` list, and nothing else. → did it change?
+
+    The narrowness is the guarantee. `LocalNode.sha256` hashes the **body**, so
+    append-only is a property of the body — and this function cannot reach it, nor
+    the title, nor the summary. Same boundary that already lets `push` stamp
+    `flywheel:` and `heal tags` rewrite `tags:` on a record node the graph froze
+    long ago."""
+    meta = dict(node.meta)
+    if paths:
+        meta["artifacts"] = list(paths)
+    else:
+        meta.pop("artifacts", None)   # omitted when empty, exactly as `tags` is
+    text = render_node_file(meta, node.content)
+    if node.path.exists() and node.path.read_text() == text:
+        return False
+    node.path.write_text(text)
+    node.meta = meta
+    return True
+
+
+def cmd_artifacts(args: argparse.Namespace) -> int:
+    """`hypergraph artifacts {ls,add,rm,mv}` — the evidence index on a record node.
+
+    **Editing `artifacts:` on a committed record node is legal, and this is where
+    that reasoning lives permanently.** The record graph is append-only in its
+    *bodies*: `LocalNode.sha256` hashes the body alone, `push` compares that hash,
+    and `verify_mirror` rests on body byte-identity. Frontmatter that a tool owns has
+    always been outside that — `push` stamps `flywheel:` into frozen nodes on every
+    run, and `heal tags` rewrites `tags:` on nodes years old. The boundary that makes
+    it true here is that this command never touches the title, the summary or the
+    body. `hypergraph update` keeps refusing record nodes exactly as it did: a
+    correction to a *claim* is still a new child node, never an edit.
+
+    Why a command rather than hand-editing the file: the same reason `tags` is one.
+    A path typed into YAML by hand is normalized against nothing, checked against
+    nothing, and wrong in a way that only surfaces on someone else's machine."""
+    config = load_config(args.config)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    nodes = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in GRAPH_KINDS}
+    repo = repo_root_for(config, graph_dir, getattr(args, "repo", None))
+
+    if args.action == "ls":
+        return artifacts_ls(args, nodes, repo)
+
+    slug = args.slug
+    if slug in nodes["state"]:
+        raise LocalGraphError(
+            f"`{slug}` is a state node. Evidence attaches to the record node whose "
+            "work produced it, never to a claim distilled from it — cite that record "
+            "node from `## Provenance` and attach the files there (SPEC: Evidence "
+            "lives on record nodes).")
+    node = nodes["record"].get(slug)
+    if node is None:
+        raise LocalGraphError(f"`{slug}` is not a record node under {graph_dir}")
+    current = list(node.artifacts)
+
+    if args.action == "add":
+        added: list[str] = []
+        for raw in args.path:
+            for problem in artifact_path_problems([raw]):
+                raise LocalGraphError(problem)
+            stored, abs_path, outside = normalize_artifact_path(raw, repo)
+            if outside:
+                print(f"warning   `{stored}` is outside the repo — it cannot survive "
+                      "a clone, and `push` refuses to upload it", file=sys.stderr)
+            elif not abs_path.exists() and not args.allow_missing:
+                raise LocalGraphError(
+                    f"{raw}: no such file. This is the last moment a typo is still "
+                    "cheap to fix — pass --allow-missing if the file is genuinely "
+                    "meant to arrive later.")
+            elif not abs_path.exists():
+                print(f"warning   `{stored}` is not in the working tree "
+                      "(--allow-missing)", file=sys.stderr)
+            if stored in current:
+                print(f"artifacts: `{stored}` is already on `{slug}`")
+                continue
+            # **Appended in argument order, never sorted.** An evidence list has a
+            # reading order — the log, then the plot it explains — and appending
+            # keeps the git diff to the one line that changed. A deliberate
+            # divergence from `new --tag`, which sorts: a tag set is a set, an
+            # evidence list is a sequence.
+            current.append(stored)
+            added.append(stored)
+        if write_node_artifacts(node, current):
+            for stored in added:
+                print(f"artifacts: `{stored}` attached to `{slug}`")
+            if tracked := git_tracked_paths(repo):
+                loose = [p for p in added if not artifact_is_outside(p)
+                         and p not in tracked]
+                if loose:
+                    print(f"           {len(loose)} of these are untracked by git — "
+                          "if you never commit them, the mirror becomes the only "
+                          "published copy", file=sys.stderr)
+        return 0
+
+    if args.action == "rm":
+        removed: list[str] = []
+        for raw in args.path:
+            stored, _abs, _outside = normalize_artifact_path(raw, repo)
+            if stored not in current:
+                # Loud, never a silent no-op: "rm reported success" and "the pointer
+                # is gone" have to mean the same thing.
+                raise LocalGraphError(
+                    f"`{stored}` is not on `{slug}` (it declares: "
+                    f"{', '.join(current) if current else 'nothing'}). Refusing to "
+                    "report a no-op as a removal.")
+            current.remove(stored)
+            removed.append(stored)
+        write_node_artifacts(node, current)
+        for stored in removed:
+            print(f"artifacts: `{stored}` removed from `{slug}`")
+        print(f"           this detaches the pointer; it did not delete {removed[0]}")
+        return 0
+
+    if args.action == "mv":
+        old_raw, new_raw = args.path
+        for problem in artifact_path_problems([new_raw]):
+            raise LocalGraphError(problem)
+        old, _old_abs, _old_out = normalize_artifact_path(old_raw, repo)
+        new, new_abs, new_outside = normalize_artifact_path(new_raw, repo)
+        if old not in current:
+            raise LocalGraphError(
+                f"`{old}` is not on `{slug}` (it declares: "
+                f"{', '.join(current) if current else 'nothing'})")
+        if new in current:
+            raise LocalGraphError(f"`{slug}` already declares `{new}`")
+        # **In position.** That is the whole reason this exists rather than `rm`
+        # followed by `add`: a rename must not reshuffle the reading order of the
+        # evidence, and it must not turn a one-line diff into two.
+        current[current.index(old)] = new
+        write_node_artifacts(node, current)
+        print(f"artifacts: `{old}` → `{new}` on `{slug}` (in position)")
+        if new_outside:
+            print(f"warning   `{new}` is outside the repo", file=sys.stderr)
+        elif not new_abs.exists():
+            print(f"warning   `{new}` is not in the working tree yet", file=sys.stderr)
+        print("           this repoints the record only — it never touches the "
+              "working tree. Run `git mv` yourself if the file has not moved.")
+        return 0
+
+    raise LocalGraphError(f"unknown artifacts action: {args.action}")
+
+
+def artifacts_ls(args: argparse.Namespace, nodes: dict, repo: Path) -> int:
+    """Every declared path, with what is wrong with it stated inline."""
+    tracked = git_tracked_paths(repo)
+    rows: list[dict] = []
+    for slug, node in sorted(nodes["record"].items()):
+        if args.slug and slug != args.slug:
+            continue
+        for raw in node.artifacts:
+            stored, abs_path, outside = read_artifact_path(repo, raw)
+            flags: list[str] = []
+            if outside:
+                flags.append("outside repo")
+            elif not abs_path.exists():
+                flags.append("missing")
+            elif tracked is not None and stored not in tracked:
+                flags.append("untracked")
+            rows.append({"slug": slug, "path": stored, "flags": flags})
+    if args.json:
+        print(json.dumps({"repo_root": str(repo), "artifacts": rows}, indent=2,
+                         ensure_ascii=False))
+        return 0
+    if not rows:
+        where = f" on `{args.slug}`" if args.slug else ""
+        print(f"no artifacts declared{where} — "
+              "`hypergraph artifacts add <record-slug> <path>` starts one.")
+        return 0
+    for row in rows:
+        marks = "".join(f"   [{flag}]" for flag in row["flags"])
+        print(f"{row['slug']:<24} {row['path']}{marks}")
+    return 0
+
+
 def cmd_tags(args: argparse.Namespace) -> int:
     """`hypergraph tags {list,add,rm}` — so nothing ever hand-edits the YAML.
 
@@ -2080,6 +2591,9 @@ def export_graph_json(graph_dir: Path, kind: str) -> dict:
             "content": node.content,
             "summary": str(node.meta.get("summary") or ""),
             "tags": node.tags,
+            # Repo-relative paths, never a store's ids — a consumer of this export
+            # can find the evidence with nothing but the repo (INTERFACE op 9).
+            "artifacts": [str(a) for a in node.artifacts],
             "parent_ids": graph.nodes[node.node_id].parent_ids,
             "created_at": node.created_at,
         })
@@ -2217,6 +2731,23 @@ def pointer_tag_chains(raw_nodes: list[dict], tag_by_id: dict[str, str]) -> dict
     return out
 
 
+def prior_artifacts(path: Path) -> list:
+    """The `artifacts:` an existing node file already carries, or [].
+
+    Tolerant of an unreadable file on purpose: this is a *preservation* read, and
+    failing the whole import over frontmatter that is about to be replaced anyway
+    would be the wrong trade."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    try:
+        meta, _body = split_frontmatter(path.read_text(), str(path))
+    except (LocalGraphError, OSError):
+        return []
+    raw = meta.get("artifacts")
+    return list(raw) if isinstance(raw, list) else []
+
+
 def cmd_import(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
@@ -2301,8 +2832,15 @@ def cmd_import(args: argparse.Namespace) -> int:
                 flywheel["pushed_at"] = str(pushed_at)
                 flywheel["content_sha256"] = body_sha256(node.content)
                 meta["flywheel"] = flywheel
-            text = render_node_file(meta, node.content)
             target = directory / f"{node.slug}.md"
+            # Artifacts are local-only by construction: no export can supply them, so
+            # `meta` — rebuilt from scratch on every import — has no way to know about
+            # them. Without this a re-import with --force would silently delete an
+            # author's entire evidence index, and `--force` is exactly what a
+            # re-import after an upgrade needs.
+            if prior := prior_artifacts(target):
+                meta["artifacts"] = prior
+            text = render_node_file(meta, node.content)
             if target.exists() and not args.force:
                 if target.read_text() == text:
                     skipped += 1
@@ -2563,6 +3101,34 @@ def cmd_new(args: argparse.Namespace) -> int:
                           f"vocabulary — `hypergraph tags add {name}` adds it",
                           file=sys.stderr)
         meta["tags"] = tags     # omitted when empty: see FM_ORDER
+
+    if args.artifact:
+        if kind != "record":
+            raise LocalGraphError(
+                "--artifact is record-only: evidence attaches to the record node "
+                "whose work produced it, never to a state node (SPEC: Evidence lives "
+                "on record nodes).")
+        for problem in artifact_path_problems(list(args.artifact)):
+            raise LocalGraphError(problem)
+        repo = repo_root_for(config, graph_dir, getattr(args, "repo", None))
+        stored_paths: list[str] = []
+        for raw in args.artifact:
+            stored, abs_path, outside = normalize_artifact_path(raw, repo)
+            if stored in stored_paths:
+                continue
+            if outside:
+                print(f"warning   artifact `{stored}` is outside the repo — it cannot "
+                      "survive a clone, and `push` refuses to upload it",
+                      file=sys.stderr)
+            elif not abs_path.exists():
+                # Warn, never refuse. A whole node has been composed and validated by
+                # this line; throwing it away over a path would be absurd when
+                # `hypergraph artifacts rm` fixes it a second later. `artifacts add`
+                # refuses instead, because there the typo is all there is to lose.
+                print(f"warning   artifact `{stored}` is not in the working tree",
+                      file=sys.stderr)
+            stored_paths.append(stored)
+        meta["artifacts"] = stored_paths     # omitted when empty: see FM_ORDER
     directory = graph_kind_dir(graph_dir, kind)
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{slug}.md"
@@ -2676,13 +3242,13 @@ class GraphSide:
 def _side_record(*, ref: str, kind: str, key: str | None, body: str, title: str,
                  summary: str, revision: object, parents: list[str], tags: list[str],
                  created_at: str, node_id: str, slug: str, artifacts: list,
-                 has_summary: bool = True, node: object = None,
-                 raw: dict | None = None) -> dict:
+                 has_summary: bool = True, has_artifacts: bool = True,
+                 node: object = None, raw: dict | None = None) -> dict:
     return {"ref": ref, "kind": kind, "key": key, "body": body, "title": title,
             "summary": summary, "revision": revision, "parents": parents,
             "tags": tags, "created_at": created_at, "node_id": node_id, "slug": slug,
-            "artifacts": artifacts, "has_summary": has_summary, "node": node,
-            "raw": raw}
+            "artifacts": artifacts, "has_summary": has_summary,
+            "has_artifacts": has_artifacts, "node": node, "raw": raw}
 
 
 def _index(side: GraphSide) -> GraphSide:
@@ -2716,10 +3282,18 @@ def side_from_local(graph_dir: Path, *, key: str, kinds=GRAPH_KINDS,
                 block = node.meta.get(key) or {}
                 match = str(block.get("node_id") or "") or None
                 revision = block.get("revision")
+                # **Off the keyed block, never `node.artifacts`.** The comparator
+                # compares artifact *id* sets, because that is what the other side —
+                # a mirror or archive export — holds: attachment objects, not paths.
+                # This block is the path→id translation table that makes the two
+                # comparable with no mapping step anywhere. Wiring `node.artifacts`
+                # here would diff repo paths against store ids and report every node
+                # as drifted, forever.
+                artifacts = list(block.get("artifacts") or [])
             elif key == "node_id":
-                match, revision = node.node_id or None, None
+                match, revision, artifacts = node.node_id or None, None, []
             elif key == "slug":
-                match, revision = node.slug or None, None
+                match, revision, artifacts = node.slug or None, None, []
             else:
                 raise LocalGraphError(f"unknown match key for a local side: {key!r}")
             side.records.append(_side_record(
@@ -2727,7 +3301,7 @@ def side_from_local(graph_dir: Path, *, key: str, kinds=GRAPH_KINDS,
                 title=node.title, summary=str(node.meta.get("summary") or ""),
                 revision=revision, parents=node.parents, tags=node.tags,
                 created_at=node.created_at, node_id=node.node_id, slug=node.slug,
-                artifacts=[], node=node))
+                artifacts=artifacts, node=node))
     return _index(side)
 
 
@@ -2761,7 +3335,12 @@ def _export_records(raw_nodes: list[dict], key: str) -> list[dict]:
             tags=tags, created_at=str(raw.get("created_at") or ""),
             node_id=node_id, slug=slug,
             artifacts=list(raw.get("artifacts") or []),
-            has_summary="summary" in raw, raw=raw))
+            has_summary="summary" in raw,
+            # An export that never mentions `artifacts` is not asserting there are
+            # none — the `summary` reading, and deliberately the *opposite* of the
+            # `graph_tags`-absent rule. Absence is "no assertion" when it drives a
+            # report, and a hard raise when it drives a write.
+            has_artifacts="artifacts" in raw, raw=raw))
     return records
 
 
@@ -2781,14 +3360,19 @@ def side_from_export(path_or_data: object, *, key: str = "node_id",
     return _index(side)
 
 
-def plan_op_counts(plan: dict) -> tuple[int, int, int]:
-    """(creates, body updates, tag assignments). Counted by op, never by subtraction —
-    a tag assignment is not an update, and reporting it as one overstates what the
-    push does to the record graph."""
+def plan_op_counts(plan: dict) -> tuple[int, int, int, int]:
+    """(creates, body updates, tag assignments, artifact uploads).
+
+    **Counted by op, never by subtraction.** A tag assignment is not an update, and
+    reporting it as one overstates what the push does to the record graph — and the
+    moment a third op kind exists, a subtraction reintroduces that bug one noun
+    later. Which is why this is a 4-tuple rather than a 3-tuple with a wider middle."""
     ops = plan.get("ops") or []
     creates = sum(1 for o in ops if o.get("op") == "create")
+    updates = sum(1 for o in ops if o.get("op") == "update")
     tags = sum(1 for o in ops if o.get("op") == "tags")
-    return creates, len(ops) - creates - tags, tags
+    artifacts = sum(1 for o in ops if o.get("op") == "artifacts")
+    return creates, updates, tags, artifacts
 
 
 def _load_export_nodes(path: Path) -> dict[str, dict]:
@@ -2827,12 +3411,20 @@ FIELD_COMPARATORS: dict[str, FieldComparator] = {
     "parents": FieldComparator(extract=lambda r: list(r["parents"])),
     "created_at": FieldComparator(extract=lambda r: r["created_at"]),
     "tags": FieldComparator(extract=lambda r: sorted(r["tags"])),
-    # No healer reads this one yet. It is here because the extensibility claim is
-    # "a new comparison costs one entry in this table", and a claim with no second
-    # instance is not evidence.
+    # Read by `HEAL_ARTIFACTS` and by `push --verify --strict`. It was written
+    # speculatively — "a new comparison costs one entry in this table" — and the
+    # artifact feature is what turned that claim into evidence: it added **zero** new
+    # comparator entries and one registry entry, and the only real work was teaching
+    # `side_from_local` which block to read the ids out of.
+    #
+    # Ids, never paths. The other side is always an export holding attachment
+    # *objects*; the local side reads `flywheel.artifacts` / `origin.artifacts`,
+    # which is precisely the path→id table that makes the two comparable.
     "artifacts": FieldComparator(
-        extract=lambda r: sorted(str(a.get("artifact_id") or a) if isinstance(a, dict)
-                                 else str(a) for a in r["artifacts"])),
+        extract=lambda r: sorted(
+            str(a.get("artifact_id") or a.get("id") or a) if isinstance(a, dict)
+            else str(a) for a in r["artifacts"]),
+        applies=lambda left, right: right.get("has_artifacts", True)),
 }
 
 
@@ -2928,7 +3520,228 @@ def tags_sha256(names: list[str]) -> str:
     return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
 
 
-def push_plan(graph_dir: Path, *, do_tags: bool = True) -> dict:
+def artifacts_sha256(entries) -> str:
+    """A stamp for a node's evidence set: sorted `(path, file digest)` pairs.
+
+    A **sibling** of `content_sha256`, never folded into it, for exactly the two
+    reasons `tags_sha256` gives: `verify_mirror` and `push_legend` both rest on body
+    byte-identity, and folding a third input in would re-push every existing
+    adopter's whole graph the first time this shipped.
+
+    A missing file contributes no pair — and the caller must then **withhold this
+    stamp entirely** rather than write the hash of what is left. Otherwise "one file
+    is missing" would hash to a perfectly stable value, and every later push would
+    read it as "everything matches" and never retry."""
+    joined = "\n".join(f"{path}\t{digest}" for path, digest in sorted(entries))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def artifact_title(path: str, sha256: str) -> str:
+    """`<repo-relative path>@<first 12 of the file digest>` — the upload's identity.
+
+    `artifacts:upload` is an **append** with no natural idempotency key: its success
+    schema says nothing, and re-running it attaches a second copy. What comes back
+    from `artifacts:list` is the title — so putting the digest in it turns *"this
+    title is already attached"* into exactly *"these bytes, for this path, are
+    already attached"*. That equivalence is what `push_artifacts` dedupes on before
+    every batch, and what a crashed run is resolved by.
+
+    **This is the design's weakest joint, and it is written down rather than
+    hidden**: `title` is contractually a *display label*, and we read it as identity.
+    The same digest also goes into `metadata.hypergraph`, which is preferred whenever
+    it round-trips — but nothing in the contract promises that it does, so the title
+    is the guarantee. `test_live_artifact_round_trip_preserves_the_title_and_metadata`
+    is what makes the assumption checkable against the real host."""
+    return f"{path}@{str(sha256)[:12]}"
+
+
+# Host ceilings, enforced client-side so our error beats theirs — a 51-item batch
+# rejected by the server has already spent the writes for the first 50.
+ARTIFACT_MAX_BYTES = 100 * 1024 * 1024       # per file
+ARTIFACT_BATCH_ITEMS = 50                    # per batch
+ARTIFACT_BATCH_BYTES = 128 * 1024 * 1024     # per batch, ours: keeps one PUT run bounded
+# `artifacts:list --limit` is clamped to 200 server-side (measured), and the CLI
+# exposes no `--offset` — see `FlywheelCliTransport.artifacts` for what that forces.
+ARTIFACT_LIST_LIMIT = 200
+
+# Compound suffixes are matched first, because `.plotly.html` and `.vega.json` *are*
+# the convention — a plain-suffix table would classify both as their base type and
+# the host would render a plot as markup.
+#
+# Deliberately never inferred: `checkpoint`, `banner`, `diff_carousel`, and bare
+# `plotly_html` / `vega`. A `.html` that is really a Plotly export cannot be told from
+# a path, and guessing wrong is worse than the honest default. `artifact_item_for`
+# takes an `override` so that letting `artifacts:` carry an explicit type later costs
+# this half nothing.
+ARTIFACT_KIND_BY_SUFFIX: tuple = (
+    (".plotly.html", ("plotly_html", "text/html")),
+    (".vega.json", ("vega", "application/json")),
+    (".md", ("text", "text/markdown")),
+    (".txt", ("text", "text/plain")),
+    (".log", ("text", "text/plain")),
+    (".csv", ("table", "text/csv")),
+    (".tsv", ("table", "text/tab-separated-values")),
+    (".jsonl", ("json", "application/x-ndjson")),
+    (".ndjson", ("json", "application/x-ndjson")),
+    (".json", ("json", "application/json")),
+    (".png", ("image", "image/png")),
+    (".jpg", ("image", "image/jpeg")),
+    (".jpeg", ("image", "image/jpeg")),
+    (".gif", ("image", "image/gif")),
+    (".webp", ("image", "image/webp")),
+    (".svg", ("image", "image/svg+xml")),
+    (".html", ("html", "text/html")),
+    (".htm", ("html", "text/html")),
+)
+ARTIFACT_KIND_DEFAULT = ("binary", "application/octet-stream")
+
+
+def artifact_kind_for(path: str) -> tuple[str, str]:
+    """A stored path → (host `artifact_type`, media type). One table, both transports.
+
+    REST's prepare step *requires* `media_type`; the CLI is sent it too rather than
+    depending on whatever it infers internally, so the two transports cannot
+    disagree about what was uploaded."""
+    lowered = str(path).lower()
+    for suffix, kind in ARTIFACT_KIND_BY_SUFFIX:
+        if lowered.endswith(suffix):
+            return kind
+    return ARTIFACT_KIND_DEFAULT
+
+
+def artifact_item_for(path: str, sha256: str, *, abs_path: Path | str | None = None,
+                      override: dict | None = None) -> dict:
+    """One `items[]` entry for `artifacts:upload`.
+
+    `local_path` is **absolute**: the host resolves it against the subprocess cwd,
+    which is not this process's and is not the repo root."""
+    kind, media = artifact_kind_for(path)
+    if override:
+        kind = str(override.get("artifact_type") or kind)
+        media = str(override.get("media_type") or media)
+    return {
+        "local_path": str(abs_path if abs_path is not None else path),
+        "artifact_type": kind,
+        "media_type": media,
+        "title": artifact_title(path, sha256),
+        "note": f"Hypergraph evidence: {path}",
+        # Corroborating, and preferred when it round-trips. The title stays the
+        # guarantee because nothing promises this does.
+        "metadata": {"hypergraph": {"path": path, "sha256": sha256}},
+    }
+
+
+def file_sha256(path: Path, *, cache: dict | None = None) -> str:
+    """A file's digest, memoized on `(size, mtime_ns)` in `cache`.
+
+    This is why `push_plan` stopped being a pure function of the graph directory: a
+    repo carrying 400 MB of evidence would otherwise re-read all of it on every
+    `push --plan`, including the ones that only wanted to see the op list. The cache
+    key is the pair that any rewrite changes."""
+    import os  # deferred, matching the rest of this file's os usage
+
+    path = Path(path)
+    stat = os.stat(path)
+    key = str(path)
+    entry = cache.get(key) if cache is not None else None
+    if entry and entry.get("size") == stat.st_size \
+            and entry.get("mtime_ns") == stat.st_mtime_ns:
+        return str(entry["sha256"])
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    value = digest.hexdigest()
+    if cache is not None:
+        cache[key] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+                      "sha256": value}
+    return value
+
+
+def load_artifact_hash_cache(path: Path) -> dict:
+    """The stat cache, or {}. A corrupt file is {} — it is a cache, not a record."""
+    try:
+        loaded = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def save_artifact_hash_cache(path: Path, cache: dict) -> None:
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps(cache, indent=2, sort_keys=True) + "\n")
+    except OSError:
+        pass   # a cache that cannot be written is slow, never wrong
+
+
+def resolve_artifacts(repo: Path, node: LocalNode, *, cache: dict | None = None
+                      ) -> tuple[list[dict], list[str]]:
+    """A node's declared paths → (uploadable refs, problems), in declaration order.
+
+    **The path-safety gate, and the only place a path becomes an upload
+    instruction.** In order, per path: inside the repo → a regular file → within the
+    host's per-file ceiling → hashed. `artifacts: ../../.ssh/id_rsa` is a warning in
+    `check` (a path list in a markdown file is a strange but legal thing to write)
+    and a hard refusal here, because only here does it turn into bytes leaving the
+    machine.
+
+    Untracked files pass with no complaint at all (decision 6): what gets committed
+    is the agent's call, and this is not the place to have an opinion about it."""
+    refs: list[dict] = []
+    problems: list[str] = []
+    seen: set[str] = set()
+    for raw in node.artifacts:
+        stored, abs_path, outside = read_artifact_path(repo, str(raw))
+        if stored in seen:
+            continue
+        seen.add(stored)
+        if outside:
+            problems.append(
+                f"{stored}: resolves outside the repo. The repo is what travels — a "
+                "path list in a markdown file must never become an instruction to "
+                "upload something from elsewhere on this machine.")
+            continue
+        if not abs_path.exists():
+            problems.append(f"{stored}: not in the working tree")
+            continue
+        if not abs_path.is_file():
+            problems.append(f"{stored}: not a regular file")
+            continue
+        size = abs_path.stat().st_size
+        if size > ARTIFACT_MAX_BYTES:
+            problems.append(
+                f"{stored}: {size} bytes is over the host's "
+                f"{ARTIFACT_MAX_BYTES // (1024 * 1024)} MiB per-file ceiling")
+            continue
+        refs.append({"path": stored, "abs_path": str(abs_path), "size": size,
+                     "sha256": file_sha256(abs_path, cache=cache)})
+    return refs, problems
+
+
+def artifact_batches(refs: list[dict]) -> list[list[dict]]:
+    """Split one node's refs into batches the host will accept.
+
+    **One batch is one revision bump** — finalize appends the whole batch atomically —
+    so the split is also the unit of recovery, and every batch gets its own journal
+    intent."""
+    batches: list[list[dict]] = []
+    current: list[dict] = []
+    size = 0
+    for ref in refs:
+        if current and (len(current) >= ARTIFACT_BATCH_ITEMS
+                        or size + int(ref.get("size") or 0) > ARTIFACT_BATCH_BYTES):
+            batches.append(current)
+            current, size = [], 0
+        current.append(ref)
+        size += int(ref.get("size") or 0)
+    if current:
+        batches.append(current)
+    return batches
+
+
+def push_plan(graph_dir: Path, *, do_tags: bool = True, do_artifacts: bool = True,
+              repo: Path | str | None = None) -> dict:
     """Diff local files against their `flywheel:` frontmatter → an ordered op list.
 
     This tool never calls MCP; the skill layer executes the plan and feeds the
@@ -2936,6 +3749,20 @@ def push_plan(graph_dir: Path, *, do_tags: bool = True) -> dict:
     ops: list[dict] = []
     violations: list[str] = []
     tag_ops: list[dict] = []
+    artifact_ops: list[dict] = []
+    # Resolved lazily, and only once a node actually declares an artifact: a project
+    # with none must not pay a `git rev-parse`, let alone a filesystem walk.
+    artifact_repo: list = []
+    hash_cache: dict = {}
+    cache_path = Path(graph_dir).parent / "cache" / "artifact-hashes.json"
+
+    def repo_for_artifacts() -> Path:
+        if not artifact_repo:
+            artifact_repo.append(Path(repo) if repo is not None
+                                 else repo_root_for({}, graph_dir))
+            hash_cache.update(load_artifact_hash_cache(cache_path))
+        return artifact_repo[0]
+
     for kind in GRAPH_KINDS:
         nodes = load_local_nodes(graph_dir, kind, missing_ok=True)
         local_graph(nodes, kind)  # validates parent references before planning writes
@@ -2961,6 +3788,29 @@ def push_plan(graph_dir: Path, *, do_tags: bool = True) -> dict:
                                     "tags": list(node.tags), "tags_sha256": want,
                                     "flywheel_node_id": flywheel.get("node_id"),
                                     "base_revision": flywheel.get("revision")})
+            if do_artifacts and (node.artifacts or flywheel.get("artifacts_sha256")):
+                refs, problems = resolve_artifacts(
+                    repo_for_artifacts(), node, cache=hash_cache)
+                stamp = flywheel.get("artifacts_sha256")
+                # Withheld entirely when anything is wrong (see `artifacts_sha256`):
+                # a partial set must never hash to a stable value that later reads as
+                # "matches". `problems` therefore also forces the op, so a broken
+                # path is reported on every run instead of hashing to None twice and
+                # comparing equal.
+                want = None if problems else artifacts_sha256(
+                    [(r["path"], r["sha256"]) for r in refs])
+                # The `or` clause is the same one the tag test has, and here it lets a
+                # node whose last path was removed re-stamp to empty — an op that
+                # performs **no mirror write at all** (nothing is ever un-attached).
+                if problems or (node.artifacts and stamp != want) \
+                        or (stamp and not node.artifacts):
+                    artifact_ops.append({
+                        "graph": kind, "slug": node.slug, "op": "artifacts",
+                        "artifacts": refs, "problems": problems,
+                        "artifacts_sha256": want,
+                        "declared": [str(a) for a in node.artifacts],
+                        "flywheel_node_id": flywheel.get("node_id"),
+                        "base_revision": flywheel.get("revision")})
             if not flywheel.get("node_id"):
                 parent_fw = []
                 for parent in node.parents:
@@ -2978,11 +3828,15 @@ def push_plan(graph_dir: Path, *, do_tags: bool = True) -> dict:
                             "flywheel_node_id": flywheel.get("node_id"),
                             "flywheel_slug": flywheel.get("slug"),
                             "base_revision": flywheel.get("revision")})
-    # A second pass, appended after every node op: a tag assignment needs the node to
-    # exist, and a node created in this same run only gets its mirror id from
-    # `minted` partway through the loop above.
+    if artifact_repo:
+        save_artifact_hash_cache(cache_path, hash_cache)
+    # Two later passes, appended after every node op: both need the node to exist, and
+    # a node created in this same run only gets its mirror id from `minted` partway
+    # through the loop above. Artifacts go **last** — see `execute_push` for why the
+    # immune phase is the one that runs at the end.
     return {"version": EXPORT_VERSION, "graph_dir": str(graph_dir),
-            "generated_at": utc_now(), "ops": ops + tag_ops, "violations": violations}
+            "generated_at": utc_now(), "ops": ops + tag_ops + artifact_ops,
+            "violations": violations}
 
 
 def _load_export_nodes(path: Path) -> dict[str, dict]:
@@ -3006,7 +3860,11 @@ VERIFY_FIELDS = ("body", "summary", "revision")
 # parent ids are mirror ids rather than local slugs, and a re-homed node's created_at
 # is the mirror's. `--strict` maps parents before comparing, which is the only way to
 # see topology drift at all.
-VERIFY_STRICT_FIELDS = ("body", "summary", "revision", "title", "parents", "tags")
+# `artifacts` is here and **never in VERIFY_FIELDS**: a human attaching an artifact
+# through the host UI is a correct graph state, not drift, and the default findings
+# are pinned byte-for-byte by the test suite.
+VERIFY_STRICT_FIELDS = ("body", "summary", "revision", "title", "parents", "tags",
+                        "artifacts")
 
 
 def verify_mirror(graph_dir: Path, against: Path,
@@ -3060,6 +3918,7 @@ def verify_mirror(graph_dir: Path, against: Path,
         "title": "title mismatch between local file and mirror",
         "parents": "parent set differs between local file and mirror",
         "tags": "tag set differs between local file and mirror",
+        "artifacts": "artifact set differs between local file and mirror",
         "created_at": "created_at differs between local file and mirror",
     }
     for record in local.records:
@@ -3163,10 +4022,49 @@ def lineage_content(graph_dir: Path, config: dict) -> str:
         "Flywheel mints a fresh slug on create, so archive slugs do not resolve here —",
         "read them through the slug legend, which doubles as the archive→mirror map.",
         "",
-        "Artifacts did not survive the import: the local backend has no artifact",
-        "operation. They remain on the archive roots above.",
+        "Artifacts did not survive the import: what travels is a repo-relative path,",
+        "and the archive holds bytes on a store this repo does not own. They remain on",
+        "the archive roots above. Evidence recorded here since adoption travels with",
+        "the repo and is published alongside these nodes.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def merge_artifact_records(existing: object, incoming: list) -> list[dict]:
+    """Fold one batch's uploaded artifacts into a node's `flywheel.artifacts`, by path.
+
+    A **merge**, not a replace, for two reasons that both matter:
+
+    - a node's evidence uploads in batches of 50, so a replace would leave the last
+      batch as the whole record;
+    - **nothing is ever deleted** (decision 5). New bytes for a path push the previous
+      `artifact_id` into `superseded:` and keep it, so regenerating a plot stays
+      ordinary repo work and the evidence is versioned rather than frozen. A path
+      dropped from `artifacts:` keeps its entry too — the mirror still holds it, and
+      a record that pretended otherwise would be a lie about a published graph."""
+    by_path: dict[str, dict] = {}
+    order: list[str] = []
+    for record in (existing if isinstance(existing, list) else []):
+        if isinstance(record, dict) and record.get("path"):
+            by_path[str(record["path"])] = dict(record)
+            order.append(str(record["path"]))
+    for record in incoming:
+        if not isinstance(record, dict) or not record.get("path"):
+            continue
+        path = str(record["path"])
+        prior = by_path.get(path)
+        merged = dict(record)
+        superseded = list((prior or {}).get("superseded") or [])
+        if prior and prior.get("artifact_id") \
+                and prior["artifact_id"] != record.get("artifact_id") \
+                and prior["artifact_id"] not in superseded:
+            superseded.append(prior["artifact_id"])
+        if superseded:
+            merged["superseded"] = superseded
+        by_path[path] = merged
+        if path not in order:
+            order.append(path)
+    return [by_path[p] for p in order]
 
 
 def apply_push_results(graph_dir: Path, results: object, *,
@@ -3205,12 +4103,23 @@ def apply_push_results(graph_dir: Path, results: object, *,
         if not fw.get("node_id"):
             raise LocalGraphError(f"result for `{slug}` carries no Flywheel node_id")
         fw["pushed_at"] = str(entry.get("pushed_at") or utc_now())
-        fw["content_sha256"] = str(entry.get("content_sha256") or node.sha256)
-        # A sibling of content_sha256, never folded into it: the body hash is what
+        # Only ever *overwritten* by a result that carries one. An artifact result
+        # carries none — its write never touched the body — and stamping the current
+        # body hash there would mark a pending body edit as published.
+        if entry.get("content_sha256"):
+            fw["content_sha256"] = str(entry["content_sha256"])
+        elif not fw.get("content_sha256"):
+            fw["content_sha256"] = node.sha256
+        # Siblings of content_sha256, never folded into it: the body hash is what
         # `verify_mirror` and `push_legend` rest on, and moving it would re-push every
         # existing adopter's whole graph the first time this shipped.
         if entry.get("tags_sha256") is not None:
             fw["tags_sha256"] = str(entry["tags_sha256"])
+        if entry.get("artifacts_sha256") is not None:
+            fw["artifacts_sha256"] = str(entry["artifacts_sha256"])
+        if entry.get("artifacts") is not None:
+            fw["artifacts"] = merge_artifact_records(fw.get("artifacts"),
+                                                     entry["artifacts"])
         meta = dict(node.meta)
         meta["flywheel"] = fw
         node.path.write_text(render_node_file(meta, node.content))
@@ -3934,9 +4843,125 @@ HEAL_TAGS = Healer(
     blocked_by=tags_blocked_by,
 )
 
+# ---------------------------------------------------------- healer 2: artifacts
+
+def artifacts_blocked_by(config: dict, repo: Path) -> str | None:
+    """→ why `heal artifacts` does not apply here, or None when it does.
+
+    **The normal case needs no healer at all, and that difference from tags is the
+    point.** A repo that adopted before tags existed *lost the names* — they were on
+    the archive and nothing local held them. A repo that adopted before artifacts
+    existed lost nothing, because there was nothing local to lose. Adding paths to old
+    record nodes today is served by `hypergraph artifacts add` plus `push`, which
+    plans on the absent stamp. This healer exists only for the one thing that is
+    genuinely unrecoverable by hand: an inventory of what the *frozen archive* still
+    holds, per node."""
+    graph_dir = Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    if not (repo / graph_dir).is_dir() and not graph_dir.is_dir():
+        return "no graph directory — this is not a hypergraph project"
+    root = repo / graph_dir if (repo / graph_dir).is_dir() else graph_dir
+    imported = 0
+    for kind in GRAPH_KINDS:
+        for node in load_local_nodes(root, kind, missing_ok=True).values():
+            if (node.meta.get("origin") or {}).get("node_id"):
+                imported += 1
+    if not imported:
+        return ("no node carries `origin:` — nothing was imported from another graph, "
+                "so there is no archive inventory to record. To attach evidence to "
+                "existing record nodes, use `hypergraph artifacts add` and push; the "
+                "plan fires on the absent stamp and there is nothing to heal")
+    return None
+
+
+def _archive_artifact_record(raw: object) -> dict:
+    """One archive attachment → the compact inventory entry recorded under `origin:`."""
+    if not isinstance(raw, dict):
+        return {"artifact_id": str(raw)}
+    out = {"artifact_id": artifact_id_of(raw)}
+    for key in ("title", "artifact_type", "media_type", "created_at"):
+        if raw.get(key):
+            out[key] = str(raw[key])
+    return out
+
+
+def artifacts_detect(ctx: HealContext) -> list[Drift]:
+    """What the frozen archive holds against what `origin:` records, on `origin.node_id`."""
+    data, where = heal_source_export(ctx)
+    ctx.out(f"heal artifacts: reading the source graph from {where}")
+    local = side_from_local(ctx.graph_dir, key="origin", name="repo")
+    archive = side_from_export(data, key="node_id", name="archive")
+    drifts = diff_graphs(local, archive, fields=("artifacts",))
+    return [d for d in drifts if d.kind == "field" and d.field == "artifacts"]
+
+
+def artifacts_apply(ctx: HealContext, drifts: list[Drift]) -> list[Change]:
+    """Frontmatter only, and deliberately **no mirror phase at all**.
+
+    What lands is an *inventory*: which attachments the frozen archive still holds for
+    each imported node, under `origin.artifacts`. It records where the bytes are; it
+    does not fetch them, and it must not publish them. Those bytes are not in this
+    repo, so re-uploading them would leave the mirror holding evidence the repo cannot
+    regenerate — the one property `backend/mirror.md` will not trade away.
+
+    Because every write here is a frontmatter edit, this healer never needs
+    `heal_write_targets`, works offline, and is fully `git checkout`-reversible."""
+    data, _where = heal_source_export(ctx)
+    archive = side_from_export(data, key="node_id", name="archive")
+    local: dict[str, LocalNode] = {}
+    for kind in GRAPH_KINDS:
+        local.update(load_local_nodes(ctx.graph_dir, kind, missing_ok=True))
+
+    changes: list[Change] = []
+    for drift in drifts:
+        node = local.get(drift.left_ref)
+        if node is None:
+            changes.append(Change("skipped", drift.left_ref,
+                                  "no longer a node in this repo"))
+            continue
+        source = archive.nodes.get(drift.key) or {}
+        records = [_archive_artifact_record(a) for a in (source.get("artifacts") or [])]
+        if not records:
+            changes.append(Change("unchanged", drift.left_ref,
+                                  "no artifacts on the archive node"))
+            continue
+        origin = dict(node.meta.get("origin") or {})
+        origin["artifacts"] = records
+        meta = dict(node.meta)
+        meta["origin"] = origin
+        text = render_node_file(meta, node.content)
+        # Byte-compare before writing: a no-op heal must touch zero files, or the
+        # idempotence claim is unverifiable.
+        if text == node.path.read_text():
+            changes.append(Change("unchanged", node.path, ""))
+            continue
+        if ctx.args.apply:
+            node.path.write_text(text)
+        changes.append(Change("healed", node.path,
+                              f"{len(records)} archive artifact(s) inventoried"))
+    changes.append(Change("skipped", "mirror",
+                          "by design: the archive's bytes are not in this repo, so "
+                          "publishing them would make the mirror the only holder of "
+                          "evidence the repo cannot regenerate"))
+    return changes
+
+
+HEAL_ARTIFACTS = Healer(
+    name="artifacts",
+    summary="record what the frozen archive still holds per node, under "
+            "`origin.artifacts` (an inventory, never a repatriation)",
+    since="0.0.9",
+    reads="archive",
+    writes=("frontmatter",),
+    detect=artifacts_detect,
+    apply=artifacts_apply,
+    blocked_by=artifacts_blocked_by,
+)
+
 # The registry. A new healer is one entry here plus, if it compares a new field, one
-# entry in FIELD_COMPARATORS. Nothing else.
-HEALERS: tuple = (HEAL_TAGS,)
+# entry in FIELD_COMPARATORS. Nothing else — and `artifacts` is what makes that a
+# measured claim rather than a hopeful one: it needed the entry that was already
+# there, and nothing besides this line.
+HEALERS: tuple = (HEAL_TAGS, HEAL_ARTIFACTS)
 
 
 def healer_by_name(name: str) -> Healer:
@@ -4354,7 +5379,7 @@ class FlywheelCliTransport:
             return "unknown"
 
     def _run(self, command: str, *, payload: dict | None = None,
-             extra: list[str] | None = None, **flags) -> object:
+             files: dict | None = None, extra: list[str] | None = None, **flags) -> object:
         argv = [self.binary, command, "--format=json"]
         if self.env_profile:
             argv += [f"--env={self.env_profile}"]
@@ -4362,13 +5387,18 @@ class FlywheelCliTransport:
             if value is None:
                 continue
             argv += [f"--{key}={value}"]
-        if payload is not None:
-            # Always a file, never inline: node bodies are multi-KB, argv limits are
-            # platform-dependent, and a leftover payload is free forensics on a crash.
+        # Always a file, never inline: node bodies are multi-KB, an artifact `items`
+        # list is multi-KB again, argv limits are platform-dependent, and a leftover
+        # `items-00007.json` is free forensics on a crash. `payload` is sugar over
+        # `files` so there stays exactly **one** place that writes a run-dir file and
+        # renders an `@` flag.
+        writes = [("payload_json", "payload", payload)] if payload is not None else []
+        writes += [(key, key, value) for key, value in (files or {}).items()]
+        for flag, stem, value in writes:
             self._payload_seq += 1
-            path = self.run_dir / f"payload-{self._payload_seq:05d}.json"
-            path.write_text(json.dumps(payload, ensure_ascii=False))
-            argv += [f"--payload_json=@{path}"]
+            path = self.run_dir / f"{stem}-{self._payload_seq:05d}.json"
+            path.write_text(json.dumps(value, ensure_ascii=False))
+            argv += [f"--{flag}=@{path}"]
         argv += extra or []
         try:
             proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
@@ -4514,6 +5544,91 @@ class FlywheelCliTransport:
         self._run("tags:assign", node_id=node_id, tag_ids=",".join(tag_ids),
                   expected_revision=int(expected_revision))
 
+    # --- op 9: artifacts -------------------------------------------------------
+    def artifacts(self, node_id: str) -> tuple[list[dict], int]:
+        """Everything attached to one node, plus that node's current revision.
+
+        **One read answers both of `push_artifacts`'s questions**: the dedupe set (by
+        title) and the `expected_revision` the upload locks against. That single fact
+        carries the whole idempotency design — the listing is needed anyway, so
+        dropping already-attached items costs nothing extra.
+
+        Measured against the installed CLI (0.1.108): `artifacts:list` accepts
+        `--limit` and **has no `--offset`**, and the server silently clamps `limit` to
+        200. So this transport cannot page, and a node past that ceiling raises rather
+        than returning a first page — a truncated listing reads as "these are not
+        attached" and uploads them all again, which is the one failure nothing here
+        can undo."""
+        raw = self._run("artifacts:list", node_id=node_id, limit=ARTIFACT_LIST_LIMIT)
+        records, revision, has_more, _next = _parse_artifact_list(
+            raw, context=f"artifacts:list {node_id}", offset=0)
+        if has_more:
+            raise MirrorError(
+                f"artifacts:list {node_id}: more than {ARTIFACT_LIST_LIMIT} artifacts "
+                "are attached, and this CLI's `artifacts:list` has no `--offset` to "
+                "page with. Refusing to treat the first page as the whole listing — "
+                "that would re-upload everything past it. Use `--transport rest`, "
+                "which pages by offset.")
+        return records, revision
+
+    def upload_artifacts(self, *, node_id: str, expected_revision: int,
+                         items: list[dict]) -> object:
+        """One batch: prepare + PUT + finalize, inside the CLI, in one process.
+
+        **Finalize appends the whole batch with a single revision bump**, so one batch
+        is one bump and one unit of recovery. Never blind-retried — see
+        `push_artifacts`."""
+        return self._run("artifacts:upload", node_id=node_id,
+                         expected_revision=int(expected_revision),
+                         files={"items": list(items)})
+
+
+def _parse_artifact_list(raw: object, *, context: str, offset: int
+                         ) -> tuple[list[dict], int, bool, int]:
+    """One `artifacts:list` page → (artifacts, node_revision, has_more, next offset).
+
+    Three absences that must raise rather than default, all for the same reason:
+    every one of them, read charitably, produces a **duplicate upload**, and this
+    design never calls `artifacts:delete`, so a duplicate is permanent.
+
+    - no `artifacts` key → "nothing is attached" → re-upload every item. The
+      `_parse_graph_tags` rule, one noun over.
+    - no `node_revision` → assume 0 → the same refusal as `MirrorNode.from_raw`.
+    - an `offset` that does not advance → an unpaged read that silently sees only the
+      first page and re-uploads the rest. This is the legend-paging incident with a
+      different noun, and it is the one that would go unnoticed longest.
+    """
+    if not isinstance(raw, dict):
+        raise MirrorError(f"{context}: expected an object, got {type(raw).__name__}")
+    if "artifacts" not in raw:
+        raise MirrorError(
+            f"{context}: the response carries no `artifacts` key (keys: "
+            f"{sorted(raw)[:10]}). Refusing to read that as \"this node has no "
+            "artifacts\" — that would upload every one of them a second time, and "
+            "nothing here ever calls `artifacts:delete` to undo it.")
+    records = [a for a in (raw.get("artifacts") or []) if isinstance(a, dict)]
+    revision = raw.get("node_revision", raw.get("revision"))
+    if revision is None:
+        raise MirrorError(
+            f"{context}: no `node_revision` on the listing. The upload locks against "
+            "it, and refusing to assume 0 is the same rule as everywhere else here.")
+    has_more = MirrorNode._bool(raw.get("has_more")) is True
+    try:
+        page_offset = int(raw.get("offset"))
+    except (TypeError, ValueError):
+        page_offset = offset
+    next_offset = page_offset + len(records)
+    if has_more and next_offset <= offset:
+        raise MirrorError(
+            f"{context}: `has_more` is set but the page did not advance past offset "
+            f"{offset} ({len(records)} record(s) at offset {page_offset}). An unpaged "
+            "read is a duplicate generator — refusing to loop.")
+    return records, int(revision), has_more, next_offset
+
+
+def artifact_id_of(raw: dict) -> str:
+    return str(raw.get("artifact_id") or raw.get("id") or "")
+
 
 def _parse_graph_tags(raw: object, *, context: str) -> tuple[list[dict], int]:
     """A full-projection node response → (its graph's tag definitions, root revision)."""
@@ -4579,7 +5694,7 @@ class FlywheelRestTransport(FlywheelCliTransport):
         return f"rest {self.base_url}"
 
     def _request(self, method: str, path: str, *, body: dict | None = None,
-                 query: dict | None = None) -> object:
+                 query: dict | None = None, idempotency_key: str | None = None) -> object:
         import urllib.error  # deferred: keeps the non-mirror path network-module-free
         import urllib.parse
         import urllib.request
@@ -4594,7 +5709,10 @@ class FlywheelRestTransport(FlywheelCliTransport):
         req = urllib.request.Request(url, data=data, method=method, headers={
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "Idempotency-Key": str(uuid.uuid4()),
+            # Derived where a caller can derive it (the artifact path does), random
+            # otherwise. Reusing a key with a *different* payload hash is a 409, so a
+            # derived key is only safe when it is a function of the payload.
+            "Idempotency-Key": idempotency_key or str(uuid.uuid4()),
         })
         try:
             with urllib.request.urlopen(req, timeout=600) as resp:
@@ -4715,6 +5833,92 @@ class FlywheelRestTransport(FlywheelCliTransport):
         self._request("PUT", f"/nodes/{node_id}/tags", body={
             "tag_ids": list(tag_ids), "expected_revision": int(expected_revision)})
 
+    # --- op 9: artifacts -------------------------------------------------------
+    def artifacts(self, node_id: str) -> tuple[list[dict], int]:
+        records: list[dict] = []
+        revision = 0
+        offset = 0
+        while True:
+            raw = self._request("GET", f"/nodes/{node_id}/artifacts",
+                                query={"limit": 100, "offset": offset})
+            page, revision, has_more, offset = _parse_artifact_list(
+                raw, context=f"GET /nodes/{node_id}/artifacts", offset=offset)
+            records += page
+            if not has_more:
+                return records, revision
+
+    def _put_raw(self, url: str, path: Path, media_type: str) -> int:
+        """The signed PUT to the object store. **Deliberately not `_request`.**
+
+        That URL belongs to an external host, not to Flywheel, so `_request` would do
+        two wrong things at once: send our `Authorization: Bearer …` credential to a
+        third party, and stamp `Content-Type: application/json` onto bytes that are a
+        PNG. Raw bytes only — wrapping them in a JSON envelope is a contract
+        violation, not a stylistic difference.
+
+        `202` is a success here (`accepted_and_staged`), not a "try again"."""
+        import os  # deferred, matching the rest of this file's os usage
+        import urllib.error
+        import urllib.request
+
+        path = Path(path)
+        before = os.stat(path).st_size
+        data = path.read_bytes()
+        # Re-stat after reading: a run still writing its log would otherwise upload a
+        # prefix under a title whose digest describes bytes nobody holds.
+        if len(data) != before or os.stat(path).st_size != before:
+            raise MirrorError(
+                f"{path}: the file changed while it was being read. Refusing to "
+                "upload a half-written artifact — the digest in its title would "
+                "describe bytes that never existed.")
+        req = urllib.request.Request(
+            url, data=data, method="PUT",
+            headers={"Content-Type": media_type or "application/octet-stream",
+                     "Content-Length": str(len(data))})
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                code = int(getattr(resp, "status", None) or resp.getcode() or 0)
+        except urllib.error.HTTPError as exc:
+            raise MirrorError(f"PUT {path.name}: HTTP {exc.code}")
+        except urllib.error.URLError as exc:
+            raise MirrorUnavailable(f"PUT {path.name}: {exc.reason}")
+        if code not in (200, 201, 202):
+            raise MirrorError(f"PUT {path.name}: unexpected status {code}")
+        return code
+
+    def upload_artifacts(self, *, node_id: str, expected_revision: int,
+                         items: list[dict]) -> object:
+        """prepare → raw PUT per item → finalize, by hand.
+
+        The CLI does all three inside one process; over REST they are ours to
+        sequence, which is why `_put_raw` exists at all."""
+        batch = hashlib.sha256(
+            "\n".join(str(i.get("title") or "") for i in items).encode()).hexdigest()
+        key = hashlib.sha256(f"{node_id}:{batch}".encode()).hexdigest()
+        prepared = self._request(
+            "POST", f"/nodes/{node_id}/artifacts/prepare",
+            idempotency_key=key,
+            body={"expected_revision": int(expected_revision),
+                  "items": [{k: v for k, v in item.items() if k != "local_path"}
+                            for item in items]})
+        if not isinstance(prepared, dict):
+            raise MirrorError("artifacts prepare: expected an object")
+        slots = [s for s in (prepared.get("items") or []) if isinstance(s, dict)]
+        if len(slots) != len(items):
+            raise MirrorError(
+                f"artifacts prepare: {len(slots)} upload slot(s) for {len(items)} "
+                "item(s). Refusing to guess which file goes where.")
+        for item, slot in zip(items, slots):
+            url = str(slot.get("upload_url") or slot.get("url") or "")
+            if not url:
+                raise MirrorError(
+                    f"artifacts prepare: no upload url for {item.get('title')!r}")
+            self._put_raw(url, Path(item["local_path"]), str(item.get("media_type") or ""))
+        return self._request(
+            "POST", f"/nodes/{node_id}/artifacts/finalize", idempotency_key=key,
+            body={"upload_id": prepared.get("upload_id"),
+                  "expected_revision": int(expected_revision)})
+
 
 def make_transport(config: dict, *, run_dir: Path, prefer: str = "auto"):
     """The single injection seam. Tests monkeypatch this, nothing else."""
@@ -4787,6 +5991,30 @@ class PushJournal:
                                    "revision": node.revision},
                       "content_sha256": content_sha256, "pushed_at": utc_now()})
 
+    def artifact_intent(self, *, slug: str, graph: str, node_id: str,
+                        items: list[dict]) -> str:
+        """One artifact **batch**, recorded before the request. Guard B.
+
+        `push_tags` needs no journal at all — a tag create is idempotent by name, so
+        a crashed run finds the tag and adopts it. An artifact upload is an append
+        that duplicates, so it needs one. That single difference is the whole design
+        in a line.
+
+        The full items go in, not just their titles: recovery has to rebuild the same
+        `flywheel.artifacts` entries the normal path would have written."""
+        intent_id = str(uuid.uuid4())
+        self._append({"t": "intent", "id": intent_id, "op": "artifacts",
+                      "slug": slug, "graph": graph, "flywheel_node_id": node_id,
+                      "items": [dict(i) for i in items], "at": utc_now()})
+        return intent_id
+
+    def artifact_done(self, intent_id: str, *, slug: str, node_id: str,
+                      revision: object, attached: list[dict]) -> None:
+        self._append({"t": "done", "id": intent_id, "slug": slug, "op": "artifacts",
+                      "flywheel": {"node_id": node_id, "revision": revision},
+                      "artifacts": [dict(a) for a in attached],
+                      "pushed_at": utc_now()})
+
     def abandon(self, intent_id: str, reason: str) -> None:
         """The intended write demonstrably never landed; it is safe to replan."""
         self._append({"t": "abandoned", "id": intent_id, "reason": reason,
@@ -4800,10 +6028,68 @@ class PushJournal:
 
     def results(self) -> list[dict]:
         """Exactly the shape `apply_push_results` already eats."""
-        return [{"slug": e["slug"], "flywheel": e["flywheel"],
-                 "content_sha256": e.get("content_sha256"),
-                 "pushed_at": e.get("pushed_at")}
-                for e in self.entries() if e.get("t") == "done" and e.get("slug")]
+        out = []
+        for e in self.entries():
+            if e.get("t") != "done" or not e.get("slug"):
+                continue
+            entry = {"slug": e["slug"], "flywheel": e["flywheel"],
+                     "content_sha256": e.get("content_sha256"),
+                     "pushed_at": e.get("pushed_at")}
+            if e.get("artifacts") is not None:
+                entry["artifacts"] = e["artifacts"]
+            out.append(entry)
+        return out
+
+    def resolve_artifact_intent(self, entry: dict, transport, *, out=print) -> int:
+        """Resolve one crashed artifact batch **by looking**, never by re-uploading.
+
+        Three outcomes, and the third is the point:
+
+        - every title present → the batch landed; adopt the ids;
+        - none present → it never landed; abandon and let the next plan re-issue it;
+        - **some present → raise**, naming the node and the titles, leaving the intent
+          pending.
+
+        A partial batch cannot be completed safely: a second upload would duplicate
+        the half that landed, and nothing here calls `artifacts:delete`. So ambiguity
+        is reported, never resolved — the same rule `diff_graphs` applies to two nodes
+        claiming one mirror id."""
+        node_id = str(entry.get("flywheel_node_id") or "")
+        slug = entry.get("slug")
+        items = [i for i in (entry.get("items") or []) if isinstance(i, dict)]
+        if not node_id or not items:
+            self.abandon(entry["id"], "artifact intent carries no node id or items")
+            return 0
+        records, _revision = transport.artifacts(node_id)
+        by_title = {str(a.get("title") or ""): a for a in records}
+        landed = [i for i in items if str(i.get("title") or "") in by_title]
+        if not landed:
+            self.abandon(entry["id"], "artifact upload never landed")
+            out(f"  {slug}: artifact batch never landed — will be replanned")
+            return 0
+        if len(landed) != len(items):
+            missing = [str(i.get("title") or "") for i in items
+                       if str(i.get("title") or "") not in by_title]
+            raise MirrorError(
+                f"{slug}: {len(landed)} of {len(items)} artifact(s) from an "
+                f"unfinished batch are attached to {node_id}; missing "
+                f"{', '.join(missing[:3])}{'…' if len(missing) > 3 else ''}. Refusing "
+                "to guess — re-uploading would duplicate the half that landed, and "
+                "nothing here calls `artifacts:delete` to undo it. Inspect the node's "
+                "artifacts and settle it by hand; the intent stays pending on purpose.")
+        attached = [{"path": str(i.get("path") or ""), "sha256": str(i.get("sha256") or ""),
+                     "artifact_id": artifact_id_of(by_title[str(i["title"])]),
+                     "uploaded_at": str(by_title[str(i["title"])].get("created_at")
+                                        or utc_now())}
+                    for i in items]
+        # The revision is re-read here rather than carried: the fold that follows
+        # re-plans anyway, and a stale one would read as drift on the next verify.
+        _records, revision = transport.artifacts(node_id)
+        self.artifact_done(entry["id"], slug=slug, node_id=node_id, revision=revision,
+                           attached=attached)
+        out(f"  {slug}: artifact batch had landed ({len(items)} item(s)) — adopted, "
+            "not repeated")
+        return 1
 
     def reconcile_pending(self, transport, *, out=print) -> int:
         """Resolve every intent-without-done by looking, never by retrying."""
@@ -4815,6 +6101,9 @@ class PushJournal:
         resolved = 0
         for entry in pending:
             slug = entry.get("slug")
+            if entry.get("op") == "artifacts":
+                resolved += self.resolve_artifact_intent(entry, transport, out=out)
+                continue
             if entry.get("op") == "update":
                 node_id = entry.get("flywheel_node_id")
                 if not node_id:
@@ -4893,17 +6182,27 @@ class Pacer:
 MIRROR_MAX_ATTEMPTS = 4  # the CLI already retries 3x internally → 12 real requests
 
 
-def mirror_call(fn, *, pacer: Pacer, what: str, retry_conflict=None, out=print):
-    """Run one mirror write with pacing, 429 backoff, and no blind 409 retry."""
+def mirror_call(fn, *, pacer: Pacer, what: str, retry_conflict=None, out=print,
+                attempts: int = MIRROR_MAX_ATTEMPTS):
+    """Run one mirror write with pacing, 429 backoff, and no blind 409 retry.
+
+    `attempts=1` is how an **append** is called, and artifact batches pass it. The
+    generalization the tags rule was always an instance of: retry is safe when the
+    write is an *atomic replace* (`tags:assign` at worst writes the same set twice)
+    and unsafe when it is an append (`artifacts:upload` at worst attaches a second
+    copy that nothing can retract). Even a 429 is ambiguous there — the one-shot does
+    prepare + PUT + finalize in one process, so from outside, "rate limited" and
+    "finalize timed out after landing" look the same."""
     last: Exception | None = None
-    for attempt in range(MIRROR_MAX_ATTEMPTS):
+    attempts = max(1, int(attempts))
+    for attempt in range(attempts):
         pacer.wait()
         try:
             return fn()
         except MirrorRateLimited as exc:
             last = exc
-            pacer.slow_down()
-            if attempt == MIRROR_MAX_ATTEMPTS - 1:
+            pacer.slow_down()   # believe the server, even when we will not retry
+            if attempt == attempts - 1:
                 break
             delay = pacer.backoff(attempt, exc.retry_after)
             out(f"  rate limited on {what}; slowing down and retrying in {delay:.0f}s")
@@ -4983,6 +6282,7 @@ def _repo_context_for(node: LocalNode) -> dict:
 def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJournal,
                  pacer: Pacer, batch: int = 20, limit: int | None = None,
                  dry_run: bool = False, do_legend: bool = True, do_tags: bool = True,
+                 do_artifacts: bool = True, repo: Path | str | None = None,
                  out=print) -> dict:
     """Plan → execute → fold, resumable at every point.
 
@@ -4997,7 +6297,7 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
         out(f"push: folded {applied} recovered write(s) into the node files")
 
     # 2. plan *after* the fold — the fold changed what the plan is a diff against
-    plan = push_plan(graph_dir, do_tags=do_tags)
+    plan = push_plan(graph_dir, do_tags=do_tags, do_artifacts=do_artifacts, repo=repo)
     if plan["violations"]:
         for violation in plan["violations"]:
             out(f"VIOLATION {violation}")
@@ -5007,26 +6307,36 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
             "node(s). Fix the local edit — a correction is a new child node, not an "
             "edit (SPEC: record nodes are immutable).")
 
-    # Tag ops are executed by `push_tags` after the node loop and the result fold, so
-    # a node created in this same run already carries its mirror id by then.
+    # A **three-way** split, and the third arm is not optional: `o["op"] != "tags"`
+    # would sweep artifact ops into the node loop, which would try to commit a body
+    # they do not carry. Tag and artifact ops are executed after the node loop and its
+    # result fold, so a node created in this same run already carries its mirror id.
     all_ops = plan["ops"]
-    ops = [o for o in all_ops if o["op"] != "tags"]
+    ops = [o for o in all_ops if o["op"] in ("create", "update")]
     tag_ops = [o for o in all_ops if o["op"] == "tags"]
+    artifact_ops = [o for o in all_ops if o["op"] == "artifacts"]
     if limit is not None:
         ops = ops[:limit]
     creates = sum(1 for o in ops if o["op"] == "create")
     out(f"push: {creates} create(s), {len(ops) - creates} update(s)"
-        + (f", {len(tag_ops)} tag assignment(s)" if tag_ops else ""))
-    if not ops and not tag_ops:
+        + (f", {len(tag_ops)} tag assignment(s)" if tag_ops else "")
+        + (f", {len(artifact_ops)} artifact upload(s)" if artifact_ops else ""))
+    if not ops and not tag_ops and not artifact_ops:
         out("push: mirror already matches the node files — nothing to do")
-        return {"created": 0, "updated": 0, "ops": 0, "tagged": 0}
+        return {"created": 0, "updated": 0, "ops": 0, "tagged": 0, "artifacts": 0,
+                "artifact_problems": []}
 
     if dry_run:
         for op in all_ops:
-            out(f"  would {op['op']:6} {op['graph']:6} {op['slug']}"
-                + (f"   [{', '.join(op['tags'])}]" if op["op"] == "tags" else ""))
+            detail = ""
+            if op["op"] == "tags":
+                detail = f"   [{', '.join(op['tags'])}]"
+            elif op["op"] == "artifacts":
+                detail = f"   [{len(op['artifacts'])} file(s)]"
+            out(f"  would {op['op']:9} {op['graph']:6} {op['slug']}{detail}")
         return {"created": creates, "updated": len(ops) - creates, "ops": len(ops),
-                "tagged": len(tag_ops), "dry_run": True}
+                "tagged": len(tag_ops), "artifacts": len(artifact_ops),
+                "artifact_problems": [], "dry_run": True}
 
     nodes = {}
     for kind in GRAPH_KINDS:
@@ -5121,9 +6431,23 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
     tagged = 0
     if tag_ops:
         tagged = push_tags(graph_dir, config, roots, transport, pacer=pacer, out=out)
+    # **Artifacts after tags, before the legend.** `tags:create` bumps the committed
+    # revision of *every* node in the graph while an artifact finalize bumps exactly
+    # one, so whichever of the two runs second invalidates the other's stamps. Only
+    # artifacts are immune, because their `expected_revision` comes from a listing
+    # taken microseconds earlier rather than from frontmatter — so putting the immune
+    # phase last means no third resync sweep has to exist at all.
+    artifacts = {"uploaded": 0, "problems": []}
+    if artifact_ops:
+        artifacts = push_artifacts(
+            graph_dir, config, roots, transport, journal=journal, pacer=pacer,
+            repo=Path(repo) if repo is not None else repo_root_for({}, graph_dir),
+            ops=artifact_ops, out=out)
     if do_legend:
         push_legend(graph_dir, roots["record"], transport, pacer=pacer, out=out)
-    return {"created": created, "updated": updated, "ops": len(ops), "tagged": tagged}
+    return {"created": created, "updated": updated, "ops": len(ops), "tagged": tagged,
+            "artifacts": artifacts["uploaded"],
+            "artifact_problems": artifacts["problems"]}
 
 
 def push_legend(graph_dir: Path, record_root_id: str, transport, *, pacer: Pacer,
@@ -5508,6 +6832,148 @@ def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: P
     return assigned
 
 
+def push_artifacts(graph_dir: Path, config: dict, roots: dict, transport, *,
+                   journal: PushJournal, pacer: Pacer, repo: Path,
+                   ops: list[dict], out=print) -> dict:
+    """Upload each record node's declared evidence, once, and fold the bump.
+
+    A sibling of `push_tags` with one structural difference: it takes a **journal**,
+    which `push_tags` does not. That difference *is* the design. A tag create is
+    idempotent by name — a crashed run finds the tag and adopts it. An artifact
+    upload is an append, and a repeated append duplicates. So there are two guards:
+
+    - **Guard A — the listing, always.** Every batch is preceded by one
+      `artifacts:list`, which is needed anyway for `expected_revision`, and any item
+      whose title is already attached is dropped. In the common case a duplicate
+      becomes structurally unreachable, at the cost of a read we already had to make.
+      Stronger than the node-create path, which cannot afford a listing per create.
+    - **Guard B — the journal**, for the crash window between the request and the
+      fold (`resolve_artifact_intent`).
+
+    Pacing is once per **batch**: prepare and finalize are the graph writes. The
+    signed PUTs go to object storage and are deliberately unpaced — say so here, or
+    somebody will "fix" it later.
+    """
+    nodes: dict[str, LocalNode] = {}
+    for kind in GRAPH_KINDS:
+        nodes.update(load_local_nodes(graph_dir, kind, missing_ok=True))
+    uploaded = 0
+    problems: list[str] = []
+    results: list[dict] = []
+
+    for op in ops:
+        slug = op["slug"]
+        # Read from the node file, not from the op. The plan was built before the node
+        # loop ran, so a node created in *this* run carries no mirror id in the plan
+        # and does carry one here — the same reason `push_tags` re-loads.
+        local = nodes.get(slug)
+        node_id = str((local.meta.get("flywheel") or {}).get("node_id") if local else ""
+                      or op.get("flywheel_node_id") or "")
+        if not node_id:
+            out(f"  artifact: skipping `{slug}` — not on the mirror yet")
+            continue
+        for problem in op.get("problems") or []:
+            out(f"ARTIFACT MISSING {slug}: {problem}")
+            problems.append(f"{slug}: {problem}")
+        refs = list(op.get("artifacts") or [])
+        stamped = {str(r.get("path") or "")
+                   for r in (((local.meta.get("flywheel") or {}).get("artifacts") or [])
+                             if local else []) if isinstance(r, dict)}
+        for gone in sorted(stamped - {r["path"] for r in refs}):
+            # Nothing is un-attached on the mirror, ever: the only operation that
+            # would is `artifacts:delete`, and it destroys bytes. The entry stays in
+            # `flywheel.artifacts` and this line says so out loud.
+            out(f"  artifact: `{gone}` is no longer declared on `{slug}` — the mirror "
+                "copy is left in place (nothing here deletes)")
+
+        records, revision = transport.artifacts(node_id)   # Guard A: dedupe + lock
+        attached_titles = {str(a.get("title") or "") for a in records}
+        pending = [r for r in refs
+                   if artifact_title(r["path"], r["sha256"]) not in attached_titles]
+
+        for batch in artifact_batches(pending):
+            items = [artifact_item_for(r["path"], r["sha256"], abs_path=r["abs_path"])
+                     for r in batch]
+            intent = journal.artifact_intent(
+                slug=slug, graph=op["graph"], node_id=node_id,
+                items=[{"path": r["path"], "sha256": r["sha256"],
+                        "title": artifact_title(r["path"], r["sha256"])}
+                       for r in batch])
+            try:
+                mirror_call(
+                    lambda nid=node_id, rev=revision, its=items:
+                        transport.upload_artifacts(node_id=nid, expected_revision=int(rev),
+                                                   items=its),
+                    pacer=pacer, what=f"upload artifacts {slug}", out=out, attempts=1)
+            except MirrorRateLimited as exc:
+                raise MirrorRateLimited(
+                    f"upload artifacts {slug}: {exc}. Not retried, on purpose: the "
+                    "upload is one process doing prepare + PUT + finalize, so a 429 "
+                    "cannot be told apart from a finalize that landed and timed out. "
+                    "The pacer has been slowed; the next run resolves this batch by "
+                    "listing what is attached.", exc.retry_after)
+            except MirrorConflict as exc:
+                raise MirrorConflict(
+                    f"upload artifacts {slug}: {exc}. Not re-read-and-reissued: the "
+                    "tags inversion is a property of *atomic replace*, and an "
+                    "artifact upload is an **append**. Appends keep the "
+                    "no-blind-retry rule in full — a second one attaches a duplicate "
+                    "that nothing here can retract. The next run resolves it by "
+                    "listing.")
+            # **Never take the id from the upload's own response.** The mutating
+            # success schema is `{}`, and `tags:create` famously returns the wrong
+            # object entirely. Re-read and resolve by title — `tag_by_name` with a
+            # different key, for the identical reason.
+            records, revision = transport.artifacts(node_id)
+            by_title = {str(a.get("title") or ""): a for a in records}
+            landed = []
+            for ref in batch:
+                title = artifact_title(ref["path"], ref["sha256"])
+                found = by_title.get(title)
+                if found is None:
+                    raise MirrorError(
+                        f"upload artifacts {slug}: `{title}` is not attached to "
+                        f"{node_id} after the upload, so the write did not land. "
+                        "Refusing to continue — the next step would stamp an "
+                        "artifact id that does not exist.")
+                landed.append({"path": ref["path"], "sha256": ref["sha256"],
+                               "artifact_id": artifact_id_of(found),
+                               "uploaded_at": str(found.get("created_at") or utc_now())})
+            journal.artifact_done(intent, slug=slug, node_id=node_id,
+                                  revision=revision, attached=landed)
+            uploaded += len(batch)
+
+        by_title = {str(a.get("title") or ""): a for a in records}
+        attached = []
+        for ref in refs:
+            found = by_title.get(artifact_title(ref["path"], ref["sha256"]))
+            if found is None:
+                continue
+            attached.append({"path": ref["path"], "sha256": ref["sha256"],
+                             "artifact_id": artifact_id_of(found),
+                             "uploaded_at": str(found.get("created_at") or utc_now())})
+        # **The revision fold happens here, per node, from the listing already
+        # performed.** No graph-wide resync sweep: finalize bumps exactly one node,
+        # unlike `tags:create`, which moves all of them. The fold is not optional —
+        # skipping it leaves one permanent false drift finding per node, which is the
+        # 188-findings incident with a different noun.
+        entry = {"slug": slug,
+                 "flywheel": {"node_id": node_id, "revision": revision},
+                 "artifacts": attached}
+        if not op.get("problems"):
+            entry["artifacts_sha256"] = op.get("artifacts_sha256")
+        else:
+            # Withheld so the next push retries. What *did* land is still recorded.
+            out(f"  artifact: `{slug}` stamp withheld — one or more files could not "
+                "be uploaded; the next push retries them")
+        results.append(entry)
+
+    if results:
+        apply_push_results(graph_dir, results, nodes=nodes)
+        out(f"  artifacts: {uploaded} file(s) uploaded across {len(results)} node(s)")
+    return {"uploaded": uploaded, "problems": problems}
+
+
 def push_lineage(graph_dir: Path, config: dict, record_root_id: str, transport, *,
                  pacer: Pacer, out=print) -> str:
     """Write the archive-lineage body onto the mirror record root (adopted projects)."""
@@ -5657,16 +7123,19 @@ def cmd_push(args: argparse.Namespace) -> int:
     if args.plan:
         # Deliberately network-free: this is the fallback for anyone without the
         # binary, and constructs no transport at all.
-        plan = push_plan(graph_dir)
+        plan = push_plan(graph_dir, do_artifacts=not args.no_artifacts,
+                         repo=getattr(args, "repo", None))
         text = json.dumps(plan, indent=2, ensure_ascii=False) + "\n"
         if args.output:
             Path(args.output).write_text(text)
             print(f"wrote {args.output}")
         else:
             print(text, end="")
-        creates, updates, tags = plan_op_counts(plan)
+        creates, updates, tags, artifacts = plan_op_counts(plan)
         print(f"push plan: {creates} create(s), {updates} update(s)"
-              + (f", {tags} tag assignment(s)" if tags else ""), file=sys.stderr)
+              + (f", {tags} tag assignment(s)" if tags else "")
+              + (f", {artifacts} artifact upload(s)" if artifacts else ""),
+              file=sys.stderr)
         if creates > PUSH_CREATE_WARN:
             print(f"WARNING {creates} creates is one mirror write each — expect rate limits "
                   f"(429 backoff) and record results in batches so a partial run stays "
@@ -5718,7 +7187,8 @@ def cmd_push(args: argparse.Namespace) -> int:
         return stand_down(str(exc))
 
     if not args.skip_preflight:
-        report = mirror_doctor(config, graph_dir, transport, probe_write=False)
+        report = mirror_doctor(config, graph_dir, transport, probe_write=False,
+                               repo=getattr(args, "repo", None))
         for finding in report.violations():
             print(f"PREFLIGHT {finding}", file=sys.stderr)
         if report.violations():
@@ -5730,24 +7200,49 @@ def cmd_push(args: argparse.Namespace) -> int:
         return 1 if report.violations() else 0
 
     if not args.yes and not args.dry_run:
-        plan = push_plan(graph_dir)
+        plan = push_plan(graph_dir, do_artifacts=not args.no_artifacts,
+                         repo=getattr(args, "repo", None))
         creates = sum(1 for o in plan["ops"] if o["op"] == "create")
         if creates > PUSH_CREATE_WARN:
             raise MirrorError(
                 f"{creates} creates in one run is above the {PUSH_CREATE_WARN} warning "
                 "threshold. Re-run with --yes if that is intended, or --limit N to go "
                 "in chunks.")
+        files = [r for o in plan["ops"] if o["op"] == "artifacts"
+                 for r in (o.get("artifacts") or [])]
+        size = sum(int(r.get("size") or 0) for r in files)
+        if len(files) > PUSH_ARTIFACT_WARN:
+            raise MirrorError(
+                f"{len(files)} artifact files in one run is above the "
+                f"{PUSH_ARTIFACT_WARN} warning threshold. Re-run with --yes if that "
+                "is intended, or --no-artifacts to publish the node bodies first.")
+        if size > PUSH_ARTIFACT_BYTES_WARN:
+            raise MirrorError(
+                f"{size // (1024 * 1024)} MiB of artifacts in one run is above the "
+                f"{PUSH_ARTIFACT_BYTES_WARN // (1024 * 1024)} MiB warning threshold. "
+                "Re-run with --yes if that is intended, or --no-artifacts.")
 
     summary = execute_push(graph_dir, config, transport, journal=journal, pacer=pacer,
                            batch=args.batch, limit=args.limit, dry_run=args.dry_run,
-                           do_legend=not args.no_legend, do_tags=not args.no_tags)
+                           do_legend=not args.no_legend, do_tags=not args.no_tags,
+                           do_artifacts=not args.no_artifacts,
+                           repo=getattr(args, "repo", None))
     if summary.get("dry_run"):
         return 0
     if config.get("archive"):
         push_lineage(graph_dir, config, mirror_root_ids(config)["record"], transport,
                      pacer=pacer)
     print(f"push: {summary['created']} created, {summary['updated']} updated"
-          + (f", {summary['tagged']} tagged" if summary.get("tagged") else ""))
+          + (f", {summary['tagged']} tagged" if summary.get("tagged") else "")
+          + (f", {summary['artifacts']} artifact(s) uploaded"
+             if summary.get("artifacts") else ""))
+    failed_artifacts = list(summary.get("artifact_problems") or [])
+    if failed_artifacts:
+        # Everything else on those nodes still landed, and the stamp was withheld so
+        # the next push retries. Non-zero anyway: an evidence link that points at
+        # nothing must not exit 0 into somebody's CI.
+        for problem in failed_artifacts:
+            print(f"ARTIFACT MISSING {problem}", file=sys.stderr)
     if not args.no_verify:
         report = verify_against_mirror(graph_dir, config, transport, cache_dir=cache_dir)
         # A node's revision can move without that node being written — creating a tag
@@ -5767,7 +7262,7 @@ def cmd_push(args: argparse.Namespace) -> int:
                                                    cache_dir=cache_dir)
         if report.violations():
             return 1
-    return 0
+    return 1 if failed_artifacts else 0
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
@@ -5787,7 +7282,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
     cmd_render(render_args)
 
     check_args = argparse.Namespace(record=record_json, state=state_json,
-                                    config=args.config)
+                                    config=args.config,
+                                    repo=getattr(args, "repo", None))
     code = cmd_check(check_args)
     if code != 0:
         print("sync: `check` reported violations — not publishing", file=sys.stderr)
@@ -5799,9 +7295,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
         verify=False, against=None, strict=False, legend=False, lineage=False,
         output=None,
         dry_run=args.dry_run, batch=args.batch, limit=None, yes=args.yes,
-        no_legend=False, no_tags=args.no_tags, no_verify=args.no_verify,
-        skip_preflight=args.skip_preflight,
+        no_legend=False, no_tags=args.no_tags, no_artifacts=args.no_artifacts,
+        no_verify=args.no_verify, skip_preflight=args.skip_preflight,
         transport=args.transport, rate=args.rate, journal=args.journal,
+        repo=getattr(args, "repo", None),
         allow_any_branch=args.allow_any_branch, require_mirror=args.require_mirror)
     return cmd_push(push_args)
 
@@ -5809,7 +7306,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------- mirror doctor
 
 def mirror_doctor(config: dict, graph_dir: Path, transport, *,
-                  probe_write: bool = True) -> Report:
+                  probe_write: bool = True,
+                  repo: Path | str | None = None) -> Report:
     """Preflight, reported in `check`'s own shape so the output reads the same."""
     report = Report()
     if not mirror_configured(config):
@@ -5893,19 +7391,46 @@ def mirror_doctor(config: dict, graph_dir: Path, transport, *,
                                "delete it by hand; it is parentless, so nothing else "
                                "points at it")
 
+    if probe_write:
+        # Named, not probed. The only cleanup for a test artifact is
+        # `artifacts:delete`, which this design refuses to wire at all (it destroys
+        # bytes, and nothing local asked for that) — so rather than invent a probe it
+        # cannot clean up after, doctor says out loud which surface stays untested.
+        report.add("info", "mirror", "artifacts",
+                   "no write probe for artifacts: its only cleanup would be "
+                   "`artifacts:delete`, which nothing here wires. Artifact write "
+                   "scope is a known un-probed surface.")
+
     try:
-        plan = push_plan(graph_dir)
+        plan = push_plan(graph_dir, repo=repo)
     except LocalGraphError as exc:
         report.add("violation", "mirror", "plan", str(exc))
         return report
-    creates, updates, tags = plan_op_counts(plan)
+    creates, updates, tags, artifact_ops = plan_op_counts(plan)
     report.add("info", "mirror", "plan",
                f"{creates} create(s), {updates} update(s), "
-               f"{tags} tag assignment(s) pending")
+               f"{tags} tag assignment(s), {artifact_ops} artifact upload(s) pending")
     if creates > PUSH_CREATE_WARN:
         report.add("warning", "mirror", "plan",
                    f"{creates} creates at 120 writes/min is roughly "
                    f"{creates // 100 + 1} minute(s) of paced writing")
+    # Artifact preflight, computed from the plan already in hand — **zero extra
+    # requests**. Warnings, never violations: `cmd_push` raises on any doctor
+    # violation, and aborting a whole push because one evidence file moved would
+    # contradict the per-node failure handling this feature is built around.
+    files = 0
+    size = 0
+    for op in plan["ops"]:
+        if op.get("op") != "artifacts":
+            continue
+        for problem in op.get("problems") or []:
+            report.add("warning", "mirror", op["slug"], f"artifact {problem}")
+        files += len(op.get("artifacts") or [])
+        size += sum(int(r.get("size") or 0) for r in op.get("artifacts") or [])
+    if files:
+        report.add("info", "mirror", "artifacts",
+                   f"{files} artifact file(s), {size // (1024 * 1024)} MiB to upload "
+                   f"in batches of {ARTIFACT_BATCH_ITEMS}")
     for violation in plan["violations"]:
         report.add("violation", "mirror", "plan", violation)
     return report
@@ -5921,7 +7446,8 @@ def cmd_mirror(args: argparse.Namespace) -> int:
             return 0
         transport, _journal, _pacer, _cache = mirror_session(config, args)
         report = mirror_doctor(config, graph_dir, transport,
-                               probe_write=not args.no_write_probe)
+                               probe_write=not args.no_write_probe,
+                               repo=getattr(args, "repo", None))
         for finding in report.findings:
             print(f"{finding.level:9} {finding}")
         print(f"\nmirror doctor: {len(report.violations())} violation(s), "
@@ -6719,6 +8245,9 @@ VIZ_TEMPLATE = r"""<!doctype html>
   #panel ul.links li { padding:4px 0; border-bottom:1px solid var(--grid); }
   #panel ul.links li:last-child { border-bottom:0; }
   #panel ul.links .note { color:var(--muted); font-size:11.5px; display:block; }
+  /* Evidence paths: long, and worth reading whole — wrap rather than truncate. */
+  #panel ul.paths { list-style:none; padding:0; }
+  #panel ul.paths li { padding:3px 0; overflow-wrap:anywhere; }
   a.slug { color:var(--accent); text-decoration:none; cursor:pointer;
            font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px;
            border-bottom:1px dotted var(--accent); }
@@ -9506,6 +11035,14 @@ function linkList(items) {
   ).join("") + "</ul>";
 }
 
+// Paths, not links. There is nothing to link to from a page that gets emailed and
+// committed — a `file://` that resolves on one machine and 404s on every other reads
+// worse than the path itself, which is always readable and always copyable.
+function pathList(paths) {
+  return '<ul class="paths">' + paths.map(p =>
+    `<li><code>${esc(p)}</code></li>`).join("") + "</ul>";
+}
+
 function renderPanel() {
   if (!selected || !bySlug[selected]) { panel.innerHTML = legendHTML(); bindPanel(); return; }
   const { graph, node } = bySlug[selected];
@@ -9560,6 +11097,10 @@ function renderPanel() {
     html += "<h3>Impact declarations targeting this</h3>" +
       linkList(impacts.map(l => ({ slug: l.record, note: l.label })));
   }
+  // Guarded on non-empty, so an artifact-less graph's panel is byte-identical to
+  // what it was before this section existed.
+  if ((node.artifacts || []).length)
+    html += "<h3>Evidence</h3>" + pathList(node.artifacts);
   html += `<h3>Content</h3><div class="content">${mdlite(node.content)}</div>`;
   panel.innerHTML = html;
   bindPanel();
@@ -10220,6 +11761,9 @@ def main(argv: list[str] | None = None) -> int:
     p_check.add_argument("--record", type=Path, required=True, help="record-graph export JSON")
     p_check.add_argument("--state", type=Path, required=True, help="state-graph export JSON")
     p_check.add_argument("--config", type=Path, help=".hypergraph/config.yml")
+    p_check.add_argument("--repo", type=Path, metavar="PATH",
+                         help="repo root that `artifacts:` paths are relative to "
+                              "(default: `git rev-parse --show-toplevel`, else cwd)")
     p_check.add_argument("--since", metavar="REF",
                          help="also fail when REF...HEAD changes files but adds no record "
                               "node (I1 across a branch — for pull-request CI)")
@@ -10331,7 +11875,33 @@ def main(argv: list[str] | None = None) -> int:
                             "a tag is invisible to the protocol")
     p_new.add_argument("--tags-file", type=Path, metavar="PATH",
                        help=f"tag vocabulary (default: {DEFAULT_TAGS_FILE})")
+    p_new.add_argument("--artifact", action="append", metavar="PATH",
+                       help="record only: a file this node's claims rest on "
+                            "(repeatable). Given cwd-relative like `git add`, stored "
+                            "repo-relative. Explain it in `## Method`/`## Result` too "
+                            "— the prose is the claim, this list is its index")
+    p_new.add_argument("--repo", type=Path, metavar="PATH",
+                       help="repo root that --artifact paths are stored relative to "
+                            "(default: `git rev-parse --show-toplevel`, else cwd)")
     p_new.set_defaults(func=cmd_new)
+
+    p_artifacts = sub.add_parser(
+        "artifacts", help="list or edit the evidence a record node points at")
+    p_artifacts.add_argument("action", choices=["ls", "add", "rm", "mv"],
+                             help="ls: every declared path with what is wrong with "
+                                  "it. add/rm: attach or detach a pointer — never "
+                                  "the file itself. mv OLD NEW: repoint in place")
+    p_artifacts.add_argument("slug", nargs="?", help="the record node (ls: optional)")
+    p_artifacts.add_argument("path", nargs="*", help="repo path(s); mv takes OLD NEW")
+    graph_args(p_artifacts)
+    p_artifacts.add_argument("--repo", type=Path, metavar="PATH",
+                             help="repo root paths are stored relative to (default: "
+                                  "`git rev-parse --show-toplevel`, else cwd)")
+    p_artifacts.add_argument("--allow-missing", action="store_true",
+                             help="add: attach a path that is not in the working tree "
+                                  "yet (a gitignored dataset, a run still going)")
+    p_artifacts.add_argument("--json", action="store_true", help="ls: machine-readable")
+    p_artifacts.set_defaults(func=cmd_artifacts)
 
     p_tags = sub.add_parser(
         "tags", help="show or edit this project's tag vocabulary (.hypergraph/tags.yml)")
@@ -10421,9 +11991,17 @@ def main(argv: list[str] | None = None) -> int:
                        help="fail instead of standing down when the mirror cannot be "
                             "published — for CI, where a silent no-op is a broken deploy")
 
+    def artifact_repo_arg(p: argparse.ArgumentParser) -> None:
+        # Not folded into `mirror_args`: `heal` and `adopt` already declare a `--repo`
+        # of their own, and argparse refuses a second one on the same parser.
+        p.add_argument("--repo", type=Path, metavar="PATH",
+                       help="repo root that `artifacts:` paths resolve against "
+                            "(default: `git rev-parse --show-toplevel`, else cwd)")
+
     p_push = sub.add_parser("push", help="publish committed node files to the mirror")
     graph_args(p_push)
     mirror_args(p_push)
+    artifact_repo_arg(p_push)
     p_push.add_argument("--dry-run", action="store_true",
                         help="print what would be written and stop")
     p_push.add_argument("--batch", type=int, default=20, metavar="N",
@@ -10436,6 +12014,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip refreshing the mirror-only slug legend")
     p_push.add_argument("--no-tags", action="store_true",
                         help="skip the tag vocabulary and per-node assignments")
+    p_push.add_argument("--no-artifacts", action="store_true",
+                        help="skip uploading the files record nodes point at")
     p_push.add_argument("--no-verify", action="store_true",
                         help="skip the drift check after publishing")
     p_push.add_argument("--skip-preflight", action="store_true",
@@ -10465,6 +12045,7 @@ def main(argv: list[str] | None = None) -> int:
     p_sync = sub.add_parser("sync", help="export → render → check → push, in one step")
     graph_args(p_sync)
     mirror_args(p_sync)
+    artifact_repo_arg(p_sync)
     p_sync.add_argument("--out-dir", type=Path,
                         help=f"where to write the exports (default: {DEFAULT_CACHE_DIR})")
     p_sync.add_argument("--state-md", type=Path, help="STATE.md path (default: from config)")
@@ -10474,6 +12055,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip the drift check after publishing")
     p_sync.add_argument("--no-tags", action="store_true",
                         help="skip the tag vocabulary and per-node assignments")
+    p_sync.add_argument("--no-artifacts", action="store_true",
+                        help="skip uploading the files record nodes point at")
     p_sync.add_argument("--skip-preflight", action="store_true")
     p_sync.add_argument("--dry-run", action="store_true")
     p_sync.add_argument("--batch", type=int, default=20, metavar="N")
@@ -10486,6 +12069,7 @@ def main(argv: list[str] | None = None) -> int:
                                "them. pull: export a hosted graph to importable JSON")
     graph_args(p_mirror)
     mirror_args(p_mirror)
+    artifact_repo_arg(p_mirror)
     p_mirror.add_argument("--no-write-probe", action="store_true",
                           help="doctor: skip the write probe (scope is not otherwise "
                                "introspectable — a key can authenticate and still 403)")
@@ -10580,6 +12164,13 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "command", None) == "tags" and args.action in ("add", "rm") \
             and not args.name:
         parser.error(f"tags {args.action} needs a tag name")
+    if getattr(args, "command", None) == "artifacts":
+        if args.action != "ls" and not args.slug:
+            parser.error(f"artifacts {args.action} needs a record node slug")
+        if args.action in ("add", "rm") and not args.path:
+            parser.error(f"artifacts {args.action} needs at least one path")
+        if args.action == "mv" and len(args.path) != 2:
+            parser.error("artifacts mv needs exactly two paths: OLD NEW")
     if getattr(args, "command", None) == "update" and not args.print_sha:
         if not args.body:
             parser.error("update needs --body (or --print-sha)")

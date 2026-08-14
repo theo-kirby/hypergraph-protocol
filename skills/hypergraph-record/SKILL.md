@@ -78,8 +78,28 @@ Not for editing state nodes (that is reconcile's job — SPEC I3) or for orienta
    checker, and prints the minted slug. Exit 2 = nothing was written; fix and retry.
    Then `hypergraph export --config .hypergraph/config.yml` and **commit the node file
    to git** — an uncommitted node file is as invisible as no node at all.
-7. **Attach evidence** when it exists (logs, plots, data): commit the files to the repo
-   and reference them by path from `## Method` / `## Result`.
+7. **Attach evidence** when it exists (logs, plots, data). Three things, and the
+   third is the one that is easy to skip:
+   - **Commit the files** — or don't. Gitignoring a 40 GB dataset is a legitimate
+     call; it is yours to make. Just know that an uncommitted file that gets
+     published is a file the mirror alone holds.
+   - **Explain them** in `## Method` / `## Result`: what the run was, what the plot
+     shows, what you concluded. Prose is the claim.
+   - **Enumerate them** so a tool can find them. The list is the claim's index:
+     ```
+     hypergraph artifacts add <record-slug> research/runs/2026-08-14/train.log plots/loss.png
+     hypergraph artifacts ls <record-slug>       # missing / untracked / outside repo
+     ```
+     or at authoring time, `hypergraph new record --artifact plots/loss.png …`.
+     Paths are typed cwd-relative, like `git add`, and stored repo-relative so they
+     survive a clone. Order matters and is preserved — the log before the plot it
+     explains.
+
+   **Never attach to a state node** — it is a `check` violation. Evidence hangs off
+   the record node whose work produced it; a state node reaches it through
+   `## Provenance` in one hop.
+   If a file moves later, `hypergraph artifacts mv <record-slug> OLD NEW` repoints the
+   record (it never touches the working tree — run `git mv` yourself).
 8. Tell the user the new slug and its declared impact. If impacts are piling up,
    suggest running hypergraph-reconcile.
 
@@ -90,6 +110,11 @@ Not for editing state nodes (that is reconcile's job — SPEC I3) or for orienta
   which only the reconcile skill passes. Declare the impact instead.
 - Record nodes are immutable once committed: follow-ups and corrections are new child
   nodes, not edits.
+- **`artifacts:` is the one exception, and only that key.** Editing the evidence list
+  on a committed record node is fine — `hypergraph artifacts add|rm|mv` writes
+  frontmatter and the append-only hash covers the *body*, exactly as `push` stamping
+  `flywheel:` has always done. Editing the body is not fine, and `hypergraph update`
+  still refuses record nodes outright. If the claim was wrong, write a child node.
 - One node per unit of work — don't batch a week into one node, don't split one
   experiment into five.
 - Reproduction-grade content (`## Method` / `## Result`): numbers, commands,

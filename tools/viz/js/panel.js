@@ -43,6 +43,14 @@ function linkList(items) {
   ).join("") + "</ul>";
 }
 
+// Paths, not links. There is nothing to link to from a page that gets emailed and
+// committed — a `file://` that resolves on one machine and 404s on every other reads
+// worse than the path itself, which is always readable and always copyable.
+function pathList(paths) {
+  return '<ul class="paths">' + paths.map(p =>
+    `<li><code>${esc(p)}</code></li>`).join("") + "</ul>";
+}
+
 function renderPanel() {
   if (!selected || !bySlug[selected]) { panel.innerHTML = legendHTML(); bindPanel(); return; }
   const { graph, node } = bySlug[selected];
@@ -97,6 +105,10 @@ function renderPanel() {
     html += "<h3>Impact declarations targeting this</h3>" +
       linkList(impacts.map(l => ({ slug: l.record, note: l.label })));
   }
+  // Guarded on non-empty, so an artifact-less graph's panel is byte-identical to
+  // what it was before this section existed.
+  if ((node.artifacts || []).length)
+    html += "<h3>Evidence</h3>" + pathList(node.artifacts);
   html += `<h3>Content</h3><div class="content">${mdlite(node.content)}</div>`;
   panel.innerHTML = html;
   bindPanel();

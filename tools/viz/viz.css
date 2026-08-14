@@ -153,6 +153,9 @@
   #panel ul.links li { padding:4px 0; border-bottom:1px solid var(--grid); }
   #panel ul.links li:last-child { border-bottom:0; }
   #panel ul.links .note { color:var(--muted); font-size:11.5px; display:block; }
+  /* Evidence paths: long, and worth reading whole — wrap rather than truncate. */
+  #panel ul.paths { list-style:none; padding:0; }
+  #panel ul.paths li { padding:3px 0; overflow-wrap:anywhere; }
   a.slug { color:var(--accent); text-decoration:none; cursor:pointer;
            font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px;
            border-bottom:1px dotted var(--accent); }

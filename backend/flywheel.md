@@ -170,6 +170,87 @@ Five traps, all of them cheap to hit:
 Every mutating response here is `{}` on success, so the created tag's id and the
 node's new revision are both read back rather than assumed.
 
+### Artifacts → `artifacts:upload` / `artifacts:list`
+
+Op 9. Hypergraph stores repo-relative **paths** in node frontmatter and uploads the
+files here; the repo keeps custody, the mirror holds a copy.
+
+```bash
+# 1. read: the attached records AND the node's revision, in one call
+flywheel artifacts:list --node_id <node> --limit 100 --offset 0
+#   → {"artifacts": [...], "has_more": false, "limit": 100, "offset": 0,
+#      "node_id": "...", "node_revision": 23}
+
+# 2. upload: one batch, prepare + signed PUT + finalize, inside the CLI
+flywheel artifacts:upload --node_id <node> --expected_revision 23 --items=@items.json
+```
+
+`items.json` is a list; `local_path` and `artifact_type` are required, `media_type`,
+`title`, `note` and `metadata` optional:
+
+```json
+[{"local_path": "/abs/path/plots/loss.png", "artifact_type": "image",
+  "media_type": "image/png", "title": "plots/loss.png@9f2c1ab34de5",
+  "note": "Hypergraph evidence: plots/loss.png",
+  "metadata": {"hypergraph": {"path": "plots/loss.png", "sha256": "9f2c…"}}}]
+```
+
+`artifact_type` ∈ `text`, `table`, `json`, `image`, `banner`, `html`, `plotly_html`,
+`vega`, `checkpoint`, `binary`, `diff_carousel`. Hypergraph maps it from the file
+suffix, compound suffixes first:
+
+| suffix | `artifact_type` | `media_type` |
+| --- | --- | --- |
+| `.plotly.html` | `plotly_html` | `text/html` |
+| `.vega.json` | `vega` | `application/json` |
+| `.md` / `.txt` / `.log` | `text` | `text/markdown`, `text/plain` |
+| `.csv` / `.tsv` | `table` | `text/csv`, `text/tab-separated-values` |
+| `.json` / `.jsonl` | `json` | `application/json`, `application/x-ndjson` |
+| `.png` `.jpg` `.gif` `.webp` `.svg` | `image` | the matching image type |
+| `.html` | `html` | `text/html` |
+| anything else | `binary` | `application/octet-stream` |
+
+`checkpoint`, `banner`, `diff_carousel` and bare `plotly_html`/`vega` are **never
+inferred**: a `.html` that is really a Plotly export cannot be told from its path, and
+guessing wrong makes the host render a plot as markup.
+
+| op | endpoint | lock |
+| --- | --- | --- |
+| `artifacts:list` | `GET /nodes/{node_id}/artifacts` | — |
+| `artifacts:upload` | `POST /nodes/{node_id}/artifacts/prepare` → signed `PUT` → `POST …/finalize` | node revision |
+
+Traps, all measured rather than assumed:
+
+1. **`local_path` resolves against the subprocess cwd**, which is not yours. Always
+   pass absolute paths.
+2. **50 items per batch, 100 MiB per file.** Enforce it client-side — a batch rejected
+   at item 51 has already spent the writes for the first 50.
+3. **Finalize appends the whole batch with a single revision bump.** One batch = one
+   bump, so the batch is also the unit of recovery.
+4. **`node_revision` comes back on the listing.** One read gives both the dedupe set
+   and the `expected_revision` — do not spend a second call on `nodes:get`.
+5. **The CLI has no `--offset`, and the server clamps `--limit` to 200.** Measured on
+   0.1.108: `artifacts:list` exposes only `--limit`, and asking for 500 comes back
+   `"limit":200`. So the CLI transport cannot page at all; past 200 artifacts on one
+   node it must raise, because an unpaged read sees only the first page and re-uploads
+   everything after it. The REST endpoint does take `offset` — and if `has_more` is set
+   while the page does not advance, raise rather than loop. Reading an absent
+   `artifacts` key as "none" has the same effect, and is the `graph_tags` trap again.
+6. **The mutating response tells you nothing.** Resolve each artifact's id by
+   re-reading the listing and matching on title, exactly as a created tag is resolved
+   by name. Measured: the listing returns `artifact_id`, `title` byte-identical to
+   what was sent, `metadata` intact, `created_at`, `payload.media_type`,
+   `storage_path` and a signed `storage_url` — and the node's revision bumps by
+   exactly one per batch.
+7. **The signed PUT goes to an external object store.** Over REST it must not carry
+   your `Authorization` header or `Content-Type: application/json`, and the body is
+   raw bytes — a JSON envelope is a contract violation. `202` is a success
+   (`accepted_and_staged`).
+8. **The vendor's own guidance, verbatim:** *"Do not rerun `artifacts:upload`
+   automatically after finalize failed; inspect the node artifacts first."* It states
+   Hypergraph's no-blind-retry doctrine independently, and `artifacts:delete` is not
+   wired here, so a duplicate is permanent.
+
 ### Re-parenting → `nodes:add-parent` / `nodes:remove-parent`
 
 Not an INTERFACE operation — a mirror-repair move. It exists for one situation: an

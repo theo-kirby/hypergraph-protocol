@@ -50,6 +50,9 @@ class FakeTransport:
         self.calls: list[tuple[str, str]] = []
         self.faults: dict[str, list] = {}      # what → exceptions to raise, in order
         self.tags: dict[str, list[dict]] = {}  # root node_id → tag definitions
+        self.attachments: dict[str, list[dict]] = {}   # node_id → artifact records
+        self.blobs: dict[str, bytes] = {}      # artifact_id → the bytes it received
+        self._artifact_seq = 0
         self.user_id = user_id
         self._slug_by_sha: dict[str, str] = {}
         if graph_dir is not None:
@@ -209,6 +212,57 @@ class FakeTransport:
         raw["tag_ids"] = list(tag_ids)     # atomic replace, never an add
         raw["revision"] += 1               # and it moves the node
 
+    # --- op 9: artifacts -----------------------------------------------------
+    # Models the three properties the real host has and a naive fake would not:
+    # finalize appends a whole batch with **one** revision bump (a fake that bumped
+    # per item would let a broken fold pass), the listing carries the node revision
+    # so one read answers both questions, and a duplicate title is an AssertionError
+    # rather than a second row — the artifact analogue of the duplicate-create guard.
+    def artifacts(self, node_id):
+        self.calls.append(("artifacts", node_id))
+        self._maybe_fail(f"artifacts {node_id}")
+        self._maybe_fail("artifacts")
+        raw = self.nodes.get(node_id)
+        if raw is None:
+            raise hg.MirrorError(f"artifacts:list {node_id}: not found")
+        return [dict(a) for a in self.attachments.get(node_id, [])], int(raw["revision"])
+
+    def upload_artifacts(self, *, node_id, expected_revision, items):
+        self.calls.append(("upload_artifacts", node_id))
+        self._maybe_fail(f"upload_artifacts {node_id}")
+        self._maybe_fail("upload_artifacts")
+        raw = self.nodes.get(node_id)
+        if raw is None:
+            raise hg.MirrorError(f"artifacts:upload {node_id}: not found")
+        if int(expected_revision) != int(raw["revision"]):
+            raise hg.MirrorConflict(f"artifacts:upload {node_id}: stale revision")
+        if len(items) > hg.ARTIFACT_BATCH_ITEMS:
+            raise AssertionError(
+                f"{len(items)} items in one batch is over the host's "
+                f"{hg.ARTIFACT_BATCH_ITEMS} ceiling")
+        held = self.attachments.setdefault(node_id, [])
+        for item in items:
+            title = str(item["title"])
+            if any(a["title"] == title for a in held):
+                raise AssertionError(
+                    f"duplicate artifact {title!r} on {node_id} — the dedupe or the "
+                    "journal failed")
+            self._artifact_seq += 1
+            path = Path(item["local_path"])
+            if not path.is_file():
+                raise hg.MirrorError(f"artifacts:upload: no such file {path}")
+            self.blobs[f"art-{self._artifact_seq}"] = path.read_bytes()
+            held.append({"artifact_id": f"art-{self._artifact_seq}", "title": title,
+                         "artifact_type": item["artifact_type"],
+                         "media_type": item["media_type"],
+                         "metadata": item.get("metadata"),
+                         "created_at": "2026-08-14T00:00:00+00:00"})
+        raw["revision"] += 1        # ONE bump for the whole batch
+        return {}
+
+    def delete_artifact(self, *_a, **_k):
+        raise AssertionError("nothing in this design may ever call artifacts:delete")
+
     # --- assertions ----------------------------------------------------------
     def creates(self):
         """Create *attempts*, including ones that failed — not what the host holds."""
@@ -291,7 +345,8 @@ def test_second_push_is_a_no_op(tmp_path):
     push(graph_dir, config, fake)
     before = len(fake.calls)
     summary = push(graph_dir, config, fake)
-    assert summary == {"created": 0, "updated": 0, "ops": 0, "tagged": 0}
+    assert summary == {"created": 0, "updated": 0, "ops": 0, "tagged": 0,
+                       "artifacts": 0, "artifact_problems": []}
     assert len(fake.creates()) == 5                       # nothing new was minted
     assert len(fake.calls) == before                      # and nothing was even asked
 
@@ -977,6 +1032,337 @@ def test_push_reports_actionably_when_no_transport_exists(tmp_path, monkeypatch,
     assert "FLYWHEEL_BASE_URL" in capsys.readouterr().err
 
 
+# ----------------------------------------------------------------- artifacts
+# The two properties worth the most here are the same shape as the create rules
+# above, one noun over: **an artifact is never uploaded twice**, and **the revision
+# a finalize bumped is folded back**, because an unfolded bump reads as permanent
+# drift on every later verify.
+
+def artifact_repo(tmp_path, files=("runs/train.log", "plots/loss.png")):
+    """A git checkout holding the local-graph fixture plus some evidence files."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    graph_dir = repo / "graph"
+    graph_dir.mkdir()
+    for kind in ("record", "state"):
+        (graph_dir / kind).mkdir()
+        for src in (LOCAL / "graph" / kind).glob("*.md"):
+            (graph_dir / kind / src.name).write_text(src.read_text())
+    for name in files:
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"evidence for {name}\n")
+    return repo, graph_dir
+
+
+def attach(graph_dir, slug, paths, kind="record"):
+    node = hg.load_local_nodes(graph_dir, kind)[slug]
+    hg.write_node_artifacts(node, list(paths))
+    return node
+
+
+def artifact_push(repo, graph_dir, fake, **kw):
+    kw.setdefault("repo", repo)
+    return push(graph_dir, config_for(graph_dir), fake, **kw)
+
+
+def pushed_with_artifacts(tmp_path, paths=("runs/train.log",), slug="brave-otter-1002"):
+    repo, graph_dir = artifact_repo(tmp_path)
+    attach(graph_dir, slug, paths)
+    fake = FakeTransport(graph_dir)
+    artifact_push(repo, graph_dir, fake)
+    return repo, graph_dir, fake
+
+
+def test_an_artifact_uploads_once_and_the_second_push_uploads_nothing(tmp_path):
+    repo, graph_dir, fake = pushed_with_artifacts(tmp_path)
+    assert len(fake.attachments["fw-brave-otter-1002"]) == 1
+    before = len([c for c in fake.calls if c[0] == "upload_artifacts"])
+    summary = artifact_push(repo, graph_dir, fake)
+    assert summary["artifacts"] == 0
+    assert len([c for c in fake.calls if c[0] == "upload_artifacts"]) == before
+
+
+def test_artifact_upload_folds_the_bumped_revision_so_verify_stays_clean(tmp_path):
+    """The 188-findings analogue: finalize bumps the node, and an unfolded bump is
+    one permanent false drift finding per node, forever."""
+    repo, graph_dir, fake = pushed_with_artifacts(tmp_path)
+    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    stamped = node.meta["flywheel"]["revision"]
+    assert stamped == fake.nodes["fw-brave-otter-1002"]["revision"]
+    export = fake.export_subgraph([RECORD_ROOT, STATE_ROOT], tmp_path / "export.json")
+    report = hg.verify_mirror(graph_dir, export, {RECORD_ROOT, STATE_ROOT})
+    assert [str(f) for f in report.violations()] == []
+
+
+def test_an_upload_never_takes_the_artifact_id_from_its_own_response(tmp_path):
+    """`upload_artifacts` returns `{}` here, exactly as the live mutating schema does.
+    The id can only have come from the listing that followed."""
+    _repo, graph_dir, fake = pushed_with_artifacts(tmp_path)
+    stamped = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"] \
+        .meta["flywheel"]["artifacts"]
+    assert [a["artifact_id"] for a in stamped] == \
+        [a["artifact_id"] for a in fake.attachments["fw-brave-otter-1002"]]
+    assert stamped[0]["path"] == "runs/train.log"
+
+
+def test_the_title_carries_the_digest_so_it_identifies_the_bytes(tmp_path):
+    """"this title is attached" has to mean "these bytes for this path are attached",
+    or Guard A dedupes the wrong thing."""
+    repo, _graph_dir, fake = pushed_with_artifacts(tmp_path)
+    record = fake.attachments["fw-brave-otter-1002"][0]
+    path, _, digest = record["title"].partition("@")
+    assert path == "runs/train.log" and len(digest) == 12
+    # metadata corroborates; the title is the guarantee
+    assert record["metadata"]["hypergraph"] == {
+        "path": "runs/train.log",
+        "sha256": hg.file_sha256(repo / "runs/train.log")}
+    assert record["metadata"]["hypergraph"]["sha256"].startswith(digest)
+
+
+def test_changed_bytes_upload_a_new_version_and_supersede_the_old(tmp_path):
+    """Decision 5: regenerating a plot is ordinary repo work, not a plan violation."""
+    repo, graph_dir, fake = pushed_with_artifacts(tmp_path)
+    first = fake.attachments["fw-brave-otter-1002"][0]["artifact_id"]
+    (repo / "runs/train.log").write_text("a second run\n")
+    summary = artifact_push(repo, graph_dir, fake)
+    assert summary["artifacts"] == 1
+    stamped = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"] \
+        .meta["flywheel"]["artifacts"]
+    assert len(stamped) == 1
+    assert stamped[0]["artifact_id"] != first
+    assert stamped[0]["superseded"] == [first]
+    assert len(fake.attachments["fw-brave-otter-1002"]) == 2   # nothing deleted
+
+
+def test_no_delete_op_is_ever_called(tmp_path):
+    repo, graph_dir, fake = pushed_with_artifacts(tmp_path)
+    attach(graph_dir, "brave-otter-1002", [])          # the author drops the pointer
+    summary = artifact_push(repo, graph_dir, fake)
+    assert summary["artifact_problems"] == []
+    assert len(fake.attachments["fw-brave-otter-1002"]) == 1   # still there
+    assert not [c for c in fake.calls if "delete" in c[0]]
+    # the entry stays in the frontmatter too: the mirror really does still hold it
+    stamped = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"] \
+        .meta["flywheel"]
+    assert [a["path"] for a in stamped["artifacts"]] == ["runs/train.log"]
+    assert stamped["artifacts_sha256"] == hg.artifacts_sha256([])
+
+
+def test_a_missing_artifact_file_skips_the_node_stamp_and_exits_one(tmp_path, capsys):
+    repo, graph_dir = artifact_repo(tmp_path)
+    attach(graph_dir, "brave-otter-1002", ["runs/train.log", "runs/gone.log"])
+    fake = FakeTransport(graph_dir)
+    summary = artifact_push(repo, graph_dir, fake, out=print)
+    assert summary["artifacts"] == 1                   # the other item still landed
+    assert any("gone.log" in p for p in summary["artifact_problems"])
+    fw = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"].meta["flywheel"]
+    assert "artifacts_sha256" not in fw                # withheld, so the next push retries
+    assert [a["path"] for a in fw["artifacts"]] == ["runs/train.log"]
+    assert "ARTIFACT MISSING" in capsys.readouterr().out
+
+
+def test_a_path_outside_the_repo_is_refused(tmp_path):
+    """A path list in a markdown file must never become an upload instruction."""
+    repo, graph_dir = artifact_repo(tmp_path)
+    outside = tmp_path / "secret.txt"
+    outside.write_text("not yours\n")
+    attach(graph_dir, "brave-otter-1002", ["../secret.txt"])
+    fake = FakeTransport(graph_dir)
+    summary = artifact_push(repo, graph_dir, fake)
+    assert summary["artifacts"] == 0 and fake.blobs == {}
+    assert any("outside the repo" in p for p in summary["artifact_problems"])
+
+
+def test_a_batch_never_exceeds_the_hosts_fifty_item_ceiling(tmp_path):
+    names = [f"runs/r{i:03d}.log" for i in range(hg.ARTIFACT_BATCH_ITEMS + 7)]
+    repo, graph_dir = artifact_repo(tmp_path, files=names)
+    attach(graph_dir, "brave-otter-1002", names)
+    fake = FakeTransport(graph_dir)              # raises if a batch is oversized
+    summary = artifact_push(repo, graph_dir, fake)
+    assert summary["artifacts"] == len(names)
+    uploads = [c for c in fake.calls if c[0] == "upload_artifacts"]
+    assert len(uploads) == 2                     # 50 + 7, one bump each
+    assert fake.nodes["fw-brave-otter-1002"]["revision"] == 3   # create + 2 batches
+
+
+def test_untracked_files_upload_normally_with_no_gate(tmp_path):
+    """Decision 6: what gets committed is the agent's call, not this tool's."""
+    repo, graph_dir = artifact_repo(tmp_path)
+    attach(graph_dir, "brave-otter-1002", ["runs/train.log"])   # never `git add`ed
+    fake = FakeTransport(graph_dir)
+    assert artifact_push(repo, graph_dir, fake)["artifacts"] == 1
+
+
+def test_an_upload_that_crashed_after_finalize_is_adopted_not_repeated(tmp_path):
+    """Guard B. The batch landed and the process died before the fold; the next run
+    must find it by looking. FakeTransport raises on a duplicate title, so a blind
+    retry cannot pass this test."""
+    repo, graph_dir = artifact_repo(tmp_path)
+    attach(graph_dir, "brave-otter-1002", ["runs/train.log"])
+    fake = FakeTransport(graph_dir)
+    journal_path = Path(config_for(graph_dir)["cache_dir"]) / "journal.jsonl"
+    journal = hg.PushJournal(journal_path)
+    ref = hg.resolve_artifacts(repo, hg.load_local_nodes(graph_dir, "record")
+                               ["brave-otter-1002"])[0][0]
+    item = {"path": ref["path"], "sha256": ref["sha256"],
+            "title": hg.artifact_title(ref["path"], ref["sha256"])}
+    # push the bodies so the node exists, then simulate the crash
+    artifact_push(repo, graph_dir, fake, do_artifacts=False)
+    fake.upload_artifacts(node_id="fw-brave-otter-1002",
+                          expected_revision=fake.nodes["fw-brave-otter-1002"]["revision"],
+                          items=[hg.artifact_item_for(ref["path"], ref["sha256"],
+                                                      abs_path=ref["abs_path"])])
+    journal.artifact_intent(slug="brave-otter-1002", graph="record",
+                            node_id="fw-brave-otter-1002", items=[item])
+
+    pacer, _slept = instant_pacer()
+    hg.execute_push(graph_dir, config_for(graph_dir), fake, journal=journal,
+                    pacer=pacer, repo=repo, do_legend=False,
+                    out=lambda *_a, **_k: None)
+    assert len(fake.attachments["fw-brave-otter-1002"]) == 1     # adopted, not repeated
+    stamped = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"] \
+        .meta["flywheel"]["artifacts"]
+    assert stamped[0]["artifact_id"] == \
+        fake.attachments["fw-brave-otter-1002"][0]["artifact_id"]
+
+
+def test_a_partially_present_batch_raises_instead_of_guessing(tmp_path):
+    """Ambiguity is reported, never resolved: re-uploading would duplicate the half
+    that landed, and nothing here calls `artifacts:delete`."""
+    repo, graph_dir = artifact_repo(tmp_path)
+    attach(graph_dir, "brave-otter-1002", ["runs/train.log", "plots/loss.png"])
+    fake = FakeTransport(graph_dir)
+    artifact_push(repo, graph_dir, fake, do_artifacts=False)
+    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    refs, _problems = hg.resolve_artifacts(repo, node)
+    items = [{"path": r["path"], "sha256": r["sha256"],
+              "title": hg.artifact_title(r["path"], r["sha256"])} for r in refs]
+    fake.upload_artifacts(       # only the first half landed
+        node_id="fw-brave-otter-1002",
+        expected_revision=fake.nodes["fw-brave-otter-1002"]["revision"],
+        items=[hg.artifact_item_for(refs[0]["path"], refs[0]["sha256"],
+                                    abs_path=refs[0]["abs_path"])])
+    journal = hg.PushJournal(Path(config_for(graph_dir)["cache_dir"]) / "j.jsonl")
+    journal.artifact_intent(slug="brave-otter-1002", graph="record",
+                            node_id="fw-brave-otter-1002", items=items)
+    with pytest.raises(hg.MirrorError, match="Refusing to guess"):
+        journal.reconcile_pending(fake, out=lambda *_a: None)
+    assert len(journal.pending()) == 1       # left pending, on purpose
+
+
+def test_409_on_an_upload_aborts_without_reissuing_and_names_the_invariant(tmp_path):
+    repo, graph_dir = artifact_repo(tmp_path)
+    attach(graph_dir, "brave-otter-1002", ["runs/train.log"])
+    fake = FakeTransport(graph_dir)
+    fake.fail("upload_artifacts", hg.MirrorConflict("artifacts:upload: stale"))
+    with pytest.raises(hg.MirrorConflict, match="append"):
+        artifact_push(repo, graph_dir, fake)
+    assert len([c for c in fake.calls if c[0] == "upload_artifacts"]) == 1
+    assert fake.attachments.get("fw-brave-otter-1002", []) == []
+
+
+def test_429_on_an_upload_slows_the_pacer_and_does_not_retry_the_batch(tmp_path):
+    repo, graph_dir = artifact_repo(tmp_path)
+    attach(graph_dir, "brave-otter-1002", ["runs/train.log"])
+    fake = FakeTransport(graph_dir)
+    fake.fail("upload_artifacts", hg.MirrorRateLimited("429", 3.0))
+    pacer, _slept = instant_pacer()
+    before = pacer.interval
+    journal = hg.PushJournal(Path(config_for(graph_dir)["cache_dir"]) / "j.jsonl")
+    with pytest.raises(hg.MirrorRateLimited, match="resolves this batch by listing"):
+        hg.execute_push(graph_dir, config_for(graph_dir), fake, journal=journal,
+                        pacer=pacer, repo=repo, do_legend=False,
+                        out=lambda *_a, **_k: None)
+    assert pacer.interval > before                      # believe the server
+    assert len([c for c in fake.calls if c[0] == "upload_artifacts"]) == 1
+
+
+def test_a_listing_that_does_not_advance_raises(tmp_path):
+    """An unpaged read is a duplicate generator — the legend-paging incident, one
+    noun over."""
+    page = {"artifacts": [{"artifact_id": "a1", "title": "t"}], "node_revision": 4,
+            "has_more": True, "offset": 0}
+    with pytest.raises(hg.MirrorError, match="did not advance"):
+        hg._parse_artifact_list(page, context="artifacts:list n", offset=1)
+
+
+@pytest.mark.parametrize("raw,match", [
+    ({"node_revision": 2}, "no `artifacts` key"),
+    ({"artifacts": []}, "no `node_revision`"),
+])
+def test_an_absent_listing_key_raises_rather_than_reading_as_none(raw, match):
+    with pytest.raises(hg.MirrorError, match=match):
+        hg._parse_artifact_list(raw, context="artifacts:list n", offset=0)
+
+
+def test_the_type_table_matches_compound_suffixes_first():
+    assert hg.artifact_kind_for("a/b.plotly.html") == ("plotly_html", "text/html")
+    assert hg.artifact_kind_for("a/b.html") == ("html", "text/html")
+    assert hg.artifact_kind_for("a/b.vega.json") == ("vega", "application/json")
+    assert hg.artifact_kind_for("a/b.json") == ("json", "application/json")
+    assert hg.artifact_kind_for("a/b.ckpt") == ("binary", "application/octet-stream")
+
+
+def test_a_missing_file_withholds_the_stamp_rather_than_hashing_what_is_left(tmp_path):
+    """"one file is missing" must never hash to a stable value that reads as
+    "everything matches"."""
+    repo, graph_dir = artifact_repo(tmp_path)
+    attach(graph_dir, "brave-otter-1002", ["runs/train.log", "runs/gone.log"])
+    op = next(o for o in hg.push_plan(graph_dir, repo=repo)["ops"]
+              if o["op"] == "artifacts")
+    assert op["artifacts_sha256"] is None and op["problems"]
+
+
+def test_rest_upload_does_prepare_put_finalize_and_sends_raw_bytes(tmp_path, monkeypatch):
+    """The signed PUT goes to an external object store: no credential, no JSON
+    content type, no envelope around the bytes. 202 is a success."""
+    import io
+    import urllib.request
+
+    blob = tmp_path / "loss.png"
+    blob.write_bytes(b"\x89PNG-bytes")
+    seen = []
+
+    class Resp(io.BytesIO):
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        seen.append({"url": req.full_url, "method": req.get_method(),
+                     "headers": dict(req.header_items()), "body": req.data})
+        if "/prepare" in req.full_url:
+            payload = {"upload_id": "up-1",
+                       "items": [{"upload_url": "https://objects.example/put/1"}]}
+        elif "/finalize" in req.full_url:
+            payload = {}
+        else:
+            return Resp(b"")
+        return Resp(json.dumps(payload).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    transport = hg.FlywheelRestTransport(tmp_path / "run", "https://api.example/api", "k")
+    item = hg.artifact_item_for("plots/loss.png", "a" * 64, abs_path=blob)
+    transport.upload_artifacts(node_id="n1", expected_revision=3, items=[item])
+
+    assert [s["method"] for s in seen] == ["POST", "PUT", "POST"]
+    put = seen[1]
+    assert put["url"] == "https://objects.example/put/1"
+    assert put["body"] == b"\x89PNG-bytes"          # raw bytes, no JSON envelope
+    lowered = {k.lower() for k in put["headers"]}
+    assert "authorization" not in lowered           # our credential, at a third party
+    assert put["headers"]["Content-type"] == "image/png"
+    # the two graph writes share one derived key: reusing it with a different payload
+    # hash would be a 409, so it must be a function of the payload
+    assert seen[0]["headers"]["Idempotency-key"] == seen[2]["headers"]["Idempotency-key"]
+
+
 # ------------------------------------------------------------------- live test
 
 LIVE_REASON = ("live mirror test: set HYPERGRAPH_LIVE_MIRROR=1 and "
@@ -1028,3 +1414,59 @@ def test_live_mirror_round_trip(tmp_path, capsys):
                 transport.delete_node(node_id, mode="cascade")
             except hg.MirrorError as exc:
                 print(f"  cleanup failed for {node_id}: {exc}", file=sys.stderr)
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    __import__("os").environ.get("HYPERGRAPH_LIVE_MIRROR") != "1"
+    or __import__("os").environ.get("HYPERGRAPH_LIVE_MIRROR_CONFIRM")
+    != "i-understand-this-writes", reason=LIVE_REASON)
+def test_live_artifact_round_trip_preserves_the_title_and_metadata(tmp_path):
+    """**Not optional.** The identity rule reads `title` — contractually a *display
+    label* — as identity, which no unit test can settle.
+
+    Run by hand against the live host on 2026-08-14 (CLI 0.1.108): the title came back
+    byte-identical, `metadata.hypergraph` round-tripped intact, and the node revision
+    bumped by exactly one for the batch. This test is what keeps that true — a host
+    that starts normalizing titles turns a silent duplicate-upload bug into a failure
+    here."""
+    transport = hg.make_transport({}, run_dir=tmp_path / "run")
+    blob = tmp_path / "evidence.log"
+    blob.write_text("hypergraph live artifact round-trip\n")
+    digest = hg.file_sha256(blob)
+    title = hg.artifact_title("evidence.log", digest)
+    node = None
+    try:
+        node = transport.commit_new(
+            parent_ids=[], title="hypergraph live artifact test",
+            content="Throwaway node from tests/test_mirror.py.\n")
+        _existing, revision = transport.artifacts(node.node_id)
+        transport.upload_artifacts(
+            node_id=node.node_id, expected_revision=int(revision),
+            items=[hg.artifact_item_for("evidence.log", digest, abs_path=blob)])
+        records, after = transport.artifacts(node.node_id)
+
+        titles = [str(a.get("title") or "") for a in records]
+        assert title in titles, (
+            f"the host did not preserve the title byte-for-byte (got {titles}). "
+            "The identity rule rests on this — see `artifact_title`.")
+        assert int(after) > int(revision), "finalize did not bump the node revision"
+        assert len(records) == 1
+        landed = records[0]
+        assert hg.artifact_id_of(landed), "no artifact id came back from the listing"
+        # Measured to survive; asserted so that a host which stops preserving it is a
+        # failure here rather than a quiet loss of the corroborating check.
+        assert (landed.get("metadata") or {}).get("hypergraph") == {
+            "path": "evidence.log", "sha256": digest}
+
+        # and the dedupe really is a no-op the second time
+        _again, rev2 = transport.artifacts(node.node_id)
+        assert rev2 == after
+    finally:
+        if node is not None:
+            print(f"created id (delete by hand if cleanup failed): {node.node_id}",
+                  file=sys.stderr)
+            try:
+                transport.delete_node(node.node_id, mode="cascade")
+            except hg.MirrorError as exc:
+                print(f"  cleanup failed for {node.node_id}: {exc}", file=sys.stderr)

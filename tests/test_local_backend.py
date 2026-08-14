@@ -757,3 +757,316 @@ def test_unknown_parent_slug_is_rejected(tmp_path):
     (graph_dir / "record" / src.name).write_text(src.read_text())  # parent left behind
     with pytest.raises(hg.LocalGraphError, match="is not a record node"):
         hg.load_local_graph(graph_dir, "record")
+
+
+# ------------------------------------------------------------------- artifacts
+# Evidence links, local half. The load-bearing property is the first test here:
+# `artifacts:` is frontmatter a tool owns, so editing it on a *committed record
+# node* leaves the append-only body untouched. Everything else in this feature —
+# `push` stamping ids, `check` warning about a moved file — rests on that being
+# true rather than merely believed.
+
+def artifact_project(tmp_path, files=("runs/train.log",)):
+    """A git checkout holding the local-graph fixture plus some evidence files."""
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    graph_dir = repo / "graph"
+    for kind in ("record", "state"):
+        (graph_dir / kind).mkdir(parents=True)
+        for src in (LOCAL / "graph" / kind).glob("*.md"):
+            (graph_dir / kind / src.name).write_text(src.read_text())
+    for name in files:
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"evidence for {name}\n")
+    return repo, graph_dir
+
+
+def in_artifact_repo(monkeypatch, tmp_path, files=("runs/train.log",)):
+    """The project, plus a chdir into it.
+
+    Artifact paths are typed **cwd-relative**, exactly as `git add` takes them, so a
+    test that types one has to stand where an agent would."""
+    repo, graph_dir = artifact_project(tmp_path, files)
+    monkeypatch.chdir(repo)
+    return repo, graph_dir
+
+
+def artifact_config(tmp_path, graph_dir, extra=""):
+    path = tmp_path / "artifact-config.yml"
+    path.write_text(f"project: demo\ngraph_dir: {graph_dir}\n"
+                    f"cache_dir: {tmp_path / 'cache'}\n{extra}")
+    return path
+
+
+def test_artifacts_add_leaves_the_body_sha256_untouched(tmp_path, capsys, monkeypatch):
+    """**Decision 4, and the load-bearing test for the whole feature.**
+
+    The record graph is append-only in its *bodies*. `LocalNode.sha256` hashes the
+    body alone, so a frontmatter-only edit cannot reach it — which is what makes
+    `artifacts add` legal on a node that was committed and published years ago."""
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    before = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    body_before = before.sha256
+    file_before = before.path.read_text()
+
+    assert run("artifacts", "add", "brave-otter-1002", "runs/train.log",
+               "--graph-dir", graph_dir, "--repo", repo) == 0
+    after = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    assert after.sha256 == body_before
+    assert after.artifacts == ["runs/train.log"]
+    assert after.path.read_text() != file_before      # only the frontmatter moved
+    _meta, body = hg.split_frontmatter(after.path.read_text())
+    assert body == hg.split_frontmatter(file_before)[1]
+    capsys.readouterr()
+
+
+def test_artifacts_add_leaves_the_push_plan_empty(tmp_path, capsys, monkeypatch):
+    """A frontmatter-only edit must not read as a body change to publish."""
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    pushed = pushed_graph(tmp_path)          # a separate, already-stamped copy
+    for kind in ("record", "state"):
+        for src in (pushed / kind).glob("*.md"):
+            (graph_dir / kind / src.name).write_text(src.read_text())
+    assert hg.push_plan(graph_dir, do_artifacts=False)["ops"] == []
+    assert run("artifacts", "add", "brave-otter-1002", "runs/train.log",
+               "--graph-dir", graph_dir, "--repo", repo) == 0
+    plan = hg.push_plan(graph_dir, do_artifacts=False)
+    assert plan["ops"] == [] and plan["violations"] == []
+    # with artifacts on, the only op is the upload — no body update, no violation
+    creates, updates, tags, artifacts = hg.plan_op_counts(
+        hg.push_plan(graph_dir, repo=repo))
+    assert (creates, updates, tags, artifacts) == (0, 0, 0, 1)
+    capsys.readouterr()
+
+
+def test_artifacts_add_leaves_verify_mirror_clean(tmp_path, capsys, monkeypatch):
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    pushed = pushed_graph(tmp_path)
+    for kind in ("record", "state"):
+        for src in (pushed / kind).glob("*.md"):
+            (graph_dir / kind / src.name).write_text(src.read_text())
+    export = tmp_path / "export.json"
+    export.write_text(json.dumps(mirror_export_of(graph_dir)))
+    assert run("artifacts", "add", "brave-otter-1002", "runs/train.log",
+               "--graph-dir", graph_dir, "--repo", repo) == 0
+    assert hg.verify_mirror(graph_dir, export).violations() == []
+    capsys.readouterr()
+
+
+def test_update_still_refuses_record_nodes(tmp_path, capsys, monkeypatch):
+    """Proof the refusal was not weakened to make room for `artifacts`."""
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    assert run("artifacts", "add", "brave-otter-1002", "runs/train.log",
+               "--graph-dir", graph_dir, "--repo", repo) == 0
+    code, sha = run_out(capsys, "update", "brave-otter-1002", "--graph-dir", graph_dir,
+                        "--print-sha")
+    assert code == 0
+    replacement = body_file(tmp_path, "new.md", "## State Impact\n\nnone: nothing\n")
+    assert run("update", "brave-otter-1002", "--graph-dir", graph_dir,
+               "--body", replacement, "--expect", sha.strip(), "--reconcile") == 2
+    assert "append-only" in capsys.readouterr().err
+
+
+def test_a_repo_reached_through_a_symlink_still_reads_as_inside(tmp_path):
+    """Lexical containment first, `realpath` only as a fallback.
+
+    On darwin `/tmp` is a symlink to `/private/tmp`, so a repo root and a cwd
+    describing the same directory routinely disagree lexically. Free on this
+    platform, and the reason the fallback exists at all."""
+    real = tmp_path / "real"
+    (real / "runs").mkdir(parents=True)
+    (real / "runs" / "train.log").write_text("x\n")
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    stored, abs_path, outside = hg.normalize_artifact_path(
+        str(real / "runs" / "train.log"), link)
+    assert (stored, outside) == ("runs/train.log", False)
+    assert abs_path.exists()
+    # and the other direction: a path through the link, a root at the real place
+    stored, _abs, outside = hg.normalize_artifact_path(
+        str(link / "runs" / "train.log"), real)
+    assert (stored, outside) == ("runs/train.log", False)
+
+
+def test_a_symlink_inside_the_repo_is_kept_as_the_pointer_the_author_meant(tmp_path):
+    """A link into `/Volumes/big` is not rewritten into an absolute path: the author
+    pointed at the repo-relative name on purpose, and that is what travels."""
+    repo, _graph_dir = artifact_project(tmp_path, files=())
+    outside_dir = tmp_path / "big"
+    (outside_dir / "runs").mkdir(parents=True)
+    (outside_dir / "runs" / "train.log").write_text("x\n")
+    (repo / "runs").symlink_to(outside_dir / "runs")
+    stored, _abs, outside = hg.normalize_artifact_path("runs/train.log", repo,
+                                                       cwd=repo)
+    assert (stored, outside) == ("runs/train.log", False)
+
+
+def test_artifacts_on_a_state_node_is_a_violation(tmp_path):
+    repo, graph_dir = artifact_project(tmp_path)
+    node = hg.load_local_nodes(graph_dir, "state")["bright-harbor-2001"]
+    hg.write_node_artifacts(node, ["runs/train.log"])
+    report = hg.Report()
+    hg.check_artifact_placement(hg.load_local_graph(graph_dir, "state"), report)
+    assert len(report.violations()) == 1
+    assert "Provenance" in report.violations()[0].message
+
+
+def test_artifacts_add_refuses_a_state_node(tmp_path, capsys, monkeypatch):
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    assert run("artifacts", "add", "bright-harbor-2001", "runs/train.log",
+               "--graph-dir", graph_dir, "--repo", repo) == 2
+    assert "state node" in capsys.readouterr().err
+
+
+def test_a_missing_artifact_warns_and_check_still_exits_zero(tmp_path, capsys):
+    """A gitignored dataset absent on a fresh clone must never fail CI."""
+    repo, graph_dir = artifact_project(tmp_path)
+    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    hg.write_node_artifacts(node, ["runs/gone.log"])
+    config = artifact_config(tmp_path, graph_dir)
+    assert run("export", "--graph-dir", graph_dir, "--out-dir", tmp_path / "cache") == 0
+    code, out = run_out(capsys, "check", "--record", tmp_path / "cache" / "record.json",
+                        "--state", tmp_path / "cache" / "state.json",
+                        "--config", config, "--repo", repo)
+    assert code == 0
+    assert "not in the working tree" in out
+    assert "0 violation(s)" in out
+
+
+def test_a_project_that_declares_no_artifacts_hears_nothing(tmp_path, capsys):
+    repo, graph_dir = artifact_project(tmp_path)
+    config = artifact_config(tmp_path, graph_dir)
+    assert run("export", "--graph-dir", graph_dir, "--out-dir", tmp_path / "cache") == 0
+    code, out = run_out(capsys, "check", "--record", tmp_path / "cache" / "record.json",
+                        "--state", tmp_path / "cache" / "state.json",
+                        "--config", config, "--repo", repo)
+    assert code == 0 and "artifact" not in out
+
+
+def test_import_force_preserves_a_locally_added_artifact_list(tmp_path, capsys):
+    """No export can supply `artifacts:`, so a re-import would otherwise delete the
+    author's whole evidence index — and `--force` is exactly what an upgrade needs."""
+    graph_dir = imported(tmp_path)
+    node = hg.load_local_nodes(graph_dir, "record")["brisk-otter-0002"]
+    hg.write_node_artifacts(node, ["runs/train.log"])
+    assert run("import", "--graph-dir", graph_dir, "--record", CLEAN / "record.json",
+               "--state", CLEAN / "state.json", "--force") == 0
+    assert hg.load_local_nodes(graph_dir, "record")["brisk-otter-0002"].artifacts \
+        == ["runs/train.log"]
+    capsys.readouterr()
+
+
+def test_artifacts_are_appended_in_argument_order_never_sorted(tmp_path, capsys, monkeypatch):
+    """An evidence list has a reading order — the log, then the plot it explains."""
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path, files=("z.log", "a.png"))
+    assert run("artifacts", "add", "brave-otter-1002", "z.log", "a.png",
+               "--graph-dir", graph_dir, "--repo", repo) == 0
+    assert hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"].artifacts \
+        == ["z.log", "a.png"]
+    capsys.readouterr()
+
+
+def test_artifacts_add_refuses_a_missing_file_unless_allowed(tmp_path, capsys, monkeypatch):
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    assert run("artifacts", "add", "brave-otter-1002", "runs/nope.log",
+               "--graph-dir", graph_dir, "--repo", repo) == 2
+    assert "no such file" in capsys.readouterr().err
+    assert run("artifacts", "add", "brave-otter-1002", "runs/nope.log",
+               "--graph-dir", graph_dir, "--repo", repo, "--allow-missing") == 0
+    assert hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"].artifacts \
+        == ["runs/nope.log"]
+    capsys.readouterr()
+
+
+def test_artifacts_rm_is_loud_about_an_unmatched_path(tmp_path, capsys, monkeypatch):
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    assert run("artifacts", "add", "brave-otter-1002", "runs/train.log",
+               "--graph-dir", graph_dir, "--repo", repo) == 0
+    assert run("artifacts", "rm", "brave-otter-1002", "runs/other.log",
+               "--graph-dir", graph_dir, "--repo", repo) == 2
+    assert "is not on `brave-otter-1002`" in capsys.readouterr().err
+    code, out = run_out(capsys, "artifacts", "rm", "brave-otter-1002", "runs/train.log",
+                        "--graph-dir", graph_dir, "--repo", repo)
+    assert code == 0 and "it did not delete runs/train.log" in out
+    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    assert node.artifacts == [] and "artifacts" not in node.meta   # omitted when empty
+    assert (repo / "runs" / "train.log").exists()                  # and nothing deleted
+
+
+def test_artifacts_mv_replaces_in_position_and_never_touches_the_tree(tmp_path, capsys, monkeypatch):
+    repo, graph_dir = in_artifact_repo(
+        monkeypatch, tmp_path, files=("a.log", "b.png", "c.txt", "moved.png"))
+    assert run("artifacts", "add", "brave-otter-1002", "a.log", "b.png", "c.txt",
+               "--graph-dir", graph_dir, "--repo", repo) == 0
+    code, out = run_out(capsys, "artifacts", "mv", "brave-otter-1002", "b.png",
+                        "moved.png", "--graph-dir", graph_dir, "--repo", repo)
+    assert code == 0 and "git mv" in out
+    assert hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"].artifacts \
+        == ["a.log", "moved.png", "c.txt"]
+    assert (repo / "b.png").exists()          # the working tree is untouched
+
+
+def test_artifacts_ls_flags_what_is_wrong_with_each_path(tmp_path, capsys):
+    import subprocess
+
+    repo, graph_dir = artifact_project(tmp_path, files=("tracked.log", "loose.log"))
+    subprocess.run(["git", "-C", str(repo), "add", "tracked.log"], check=True)
+    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    hg.write_node_artifacts(node, ["tracked.log", "loose.log", "gone.log",
+                                   "../outside.log"])
+    code, out = run_out(capsys, "artifacts", "ls", "--graph-dir", graph_dir,
+                        "--repo", repo, "--json")
+    assert code == 0
+    flags = {r["path"]: r["flags"] for r in json.loads(out)["artifacts"]}
+    assert flags == {"tracked.log": [], "loose.log": ["untracked"],
+                     "gone.log": ["missing"], "../outside.log": ["outside repo"]}
+
+
+def test_a_non_string_artifact_entry_fails_at_load(tmp_path):
+    """A mirror export's `artifacts` are attachment objects; this key is not that."""
+    repo, graph_dir = artifact_project(tmp_path)
+    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    meta = dict(node.meta)
+    meta["artifacts"] = [{"artifact_id": "art-1"}]
+    node.path.write_text(hg.render_node_file(meta, node.content))
+    with pytest.raises(hg.LocalGraphError, match="is not a string"):
+        hg.load_local_nodes(graph_dir, "record")
+
+
+def test_new_record_carries_artifacts_and_warns_without_refusing(tmp_path, capsys, monkeypatch):
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    capsys.readouterr()
+    assert run("new", "record", "--graph-dir", graph_dir,
+               "--repo", repo, "--parent", "brave-otter-1002",
+               "--title", "Ran the sweep", "--none", "nothing yet",
+               "--artifact", "runs/train.log", "--artifact", "runs/gone.log") == 0
+    captured = capsys.readouterr()
+    node = hg.load_local_nodes(graph_dir, "record")[captured.out.split()[0]]
+    assert node.artifacts == ["runs/train.log", "runs/gone.log"]
+    # warned, not refused: the whole node was already composed and validated
+    assert "not in the working tree" in captured.err
+
+
+def test_new_state_refuses_an_artifact(tmp_path, capsys, monkeypatch):
+    repo, graph_dir = in_artifact_repo(monkeypatch, tmp_path)
+    assert run("new", "state", "--graph-dir", graph_dir, "--repo", repo, "--reconcile",
+               "--parent", "bright-harbor-2001", "--title", "Claim",
+               "--status", "working", "--prov", "brave-otter-1002 — why",
+               "--artifact", "runs/train.log") == 2
+    assert "record-only" in capsys.readouterr().err
+
+
+def test_the_viz_payload_carries_record_artifacts_and_no_state_key(tmp_path):
+    """The state-node dict's *absence* of the key documents decision 3."""
+    repo, graph_dir = artifact_project(tmp_path)
+    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
+    hg.write_node_artifacts(node, ["runs/train.log"])
+    data = hg.build_viz_data(hg.load_local_graph(graph_dir, "record"),
+                             hg.load_local_graph(graph_dir, "state"))
+    entry = next(n for n in data["record"]["nodes"] if n["slug"] == "brave-otter-1002")
+    assert entry["artifacts"] == ["runs/train.log"]
+    assert all("artifacts" not in n for n in data["state"]["nodes"])

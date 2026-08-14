@@ -200,6 +200,12 @@ I1) or reconcile hallucinated (fix: rewrite the state node from its citations).
   and commit SHA in `## Repo` (`hypergraph new record --repo-auto` fills it from git).
 - **Evidence lives on record nodes.** Artifacts (logs, plots, datasets) attach to
   record nodes, never state nodes. State nodes point at them via provenance slugs.
+  Concretely: a record node carries an `artifacts:` list of **repo-relative paths**
+  beside the prose that explains them, so the evidence is both interpretable and
+  findable. A path is the portable identity — it survives a clone, a fork and a
+  backend that mints its own ids (INTERFACE op 9). A state node carrying one is a
+  violation: state is rewritten on every reconcile, so a pointer there has no stable
+  owner.
 - **State stays small.** The whole state graph should be readable in one sitting.
   Reconcile compacts: merge redundant claims, drop superseded detail (the record graph
   keeps the history), keep negative knowledge tight.
@@ -271,9 +277,11 @@ epoch:
   provenance only (`origin:` in the node file); the repo becomes the continuing
   graph and owns its whole history, with the original topology. The archive stays
   frozen and read-only: it is the artifact pointer and nothing more.
-- **Artifacts do not travel.** The storage layer has no artifact operation, so
-  anything the archive holds as an attachment stays on the archive. A continuing
-  graph must say so explicitly rather than let its completeness be assumed.
+- **An archive's artifacts do not travel.** What travels is a repo-relative path,
+  and an archive's attachments are bytes on someone else's store — so anything the
+  archive holds stays on the archive, and a continuing graph must say so explicitly
+  rather than let its completeness be assumed. Artifacts *recorded after* adoption
+  are ordinary repo files and travel with the repo like the node bodies do.
 - **Tags travel; pointer-tag history does not.** Tag *names* come across on the
   imported nodes and into `tags.yml`, because a name is the tag's portable identity
   in the same way a slug is a node's. What does not come across is the move history of
@@ -435,7 +443,12 @@ is speculative protocol machinery only, not yet worth a standing state claim:
   `check` reporting 0 unreconciled while the live graph is ahead.
 - Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
 - `provenance.json` machine-readable artifact per state node.
-- Artifacts (op 9), which the shipped storage does not implement.
+- **Artifact custody.** Op 9 travels paths, and a path is only as good as the file
+  still being at it. A repo that publishes evidence and later deletes the file leaves
+  its mirror holding the only copy of something the repo can no longer regenerate —
+  the one place the "the mirror is a regenerable projection" property genuinely bends
+  (backend/mirror.md states it as a bounded exception). Content-addressed custody, or
+  an explicit "this evidence is retired" record, is the open question.
 - **Pointer-tag history.** A one-only tag that moves (a "current best") is
   representable, but its *chain of moves* is not modelled: every hop a real graph
   recorded carried a timestamp and no reason. A move with a reason is a decision, and

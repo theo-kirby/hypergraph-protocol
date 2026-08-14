@@ -12,8 +12,9 @@ nothing in the protocol above the Storage section mentions files. There is no
 
 Requirements on a store: a DAG of nodes with markdown content, immutable node IDs,
 immutable human-readable slugs, optimistic-locking writes, and JSON export of a
-subgraph. Artifacts and tags are optional; the shipped implementation omits artifacts
-and implements tags as frontmatter (op 10 below).
+subgraph. Artifacts and tags are optional in the sense that a *store* need not hold
+them; the shipped implementation implements both without asking the store for
+anything — tags as frontmatter names (op 10), artifacts as frontmatter paths (op 9).
 
 Mirroring committed node files to a hosted graph ([mirror.md](mirror.md)) is a separate
 concern and does **not** go through this table: a mirror is a projection the CLI
@@ -31,7 +32,7 @@ writes, not a store the protocol reads.
 | 6 | `resolve_slug` | `(slug) → node_id` | all | Must surface ambiguity explicitly rather than guessing. |
 | 7 | `update_state_node` | `(node_id, content, base_revision) → node` | **reconcile only** (I3) | Full-content replace with optimistic locking; conflicts surfaced, not silently merged. |
 | 8 | `export_graph` | `(root_id) → JSON` | reconcile | Root + all descendants, with per-node `node_id`, `slug_name`, `title`, `content`, `parent_ids`, `created_at`. Feeds `tools/hypergraph.py`. |
-| 9 | `attach_artifact` *(optional)* | `(node_id, files) → artifact-refs` | record | Evidence on record nodes only. |
+| 9 | `attach_artifact` *(optional)* | `(node_id, files) → artifact-refs` | record, push | Evidence on **record nodes only**. The shipped implementation stores repo-relative **paths** in frontmatter, not custody of bytes. |
 | 10 | `tag` *(optional)* | `declare(root_id, name, style) → tag-ref`; `assign(node_id, [name]) → ()` | record, import, push, heal | Vocabulary is declared **per graph root**; assignment is an **atomic replace** of a node's whole set. **Names**, not ids, are the portable identity. |
 
 ## Contract notes
@@ -48,6 +49,18 @@ writes, not a store the protocol reads.
   body-hash CAS (`--expect`), with git as the merge substrate underneath.
 - **Export determinism.** Op 8 output for the same graph revision should be stable
   enough for diffing; ordering by `created_at` then `node_id` is recommended.
+- **A repo-relative path is the portable identity of an artifact (op 9).** Every store
+  that holds bytes mints its own artifact id, so an id is as local to a store as a
+  mirror's slug is — bookkeeping, never identity. What travels is where the file sits
+  in the repo, which is the same answer, for the same reason, as slugs for nodes and
+  names for tags. A store that implements op 9 therefore *copies* evidence; it never
+  owns it, and a graph whose repo is in hand can find every artifact with no store at
+  all.
+- **Artifacts attach to record nodes and to nothing else.** A state node is rewritten
+  on every reconcile, so a pointer hung there has no stable owner; the one-hop path
+  (`## Provenance` → record node → its paths) is the whole mechanism. An
+  implementation that lets a state node carry evidence is not implementing this
+  interface.
 - **A tag name is the portable identity (op 10).** Every store that implements tags
   mints its own ids, so an id is as local to a store as a mirror's slug is. The
   protocol therefore travels names — the same choice, for the same reason, as

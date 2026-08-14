@@ -135,14 +135,71 @@ hypergraph export --config .hypergraph/config.yml       # → .hypergraph/cache/
 ```
 
 Emits the canonical export shape (`node_id`, `slug_name`, `title`, `content`, `summary`,
-`parent_ids`, `created_at`), nodes ordered by `created_at` then `node_id` per
+`tags`, `artifacts`, `parent_ids`, `created_at`), nodes ordered by `created_at` then `node_id` per
 INTERFACE's determinism note. This is the *whole* integration surface: `check`,
 `render`, and `viz` consume these files without knowing which backend produced them.
 The cache stays gitignored — it is regenerable from the node files at any time.
 
-### 9. `attach_artifact` *(optional)* — not implemented
+### 9. `attach_artifact` — repo-relative paths in frontmatter
 
-Commit evidence into the repo and reference it by path from `## Method` / `## Result`.
+A record node names the files its claims rest on in an `artifacts:` list, omitted
+entirely when empty:
+
+```yaml
+artifacts:
+  - research/runs/2026-08-14/train.log
+  - plots/loss-curve.png
+```
+
+```bash
+hypergraph artifacts add <record-slug> plots/loss-curve.png   # cwd-relative, like `git add`
+hypergraph artifacts ls                                       # every path, with what is wrong with it
+hypergraph artifacts mv <record-slug> OLD NEW                 # after a `git mv`, in position
+hypergraph new record --artifact plots/loss-curve.png …       # at authoring time
+```
+
+Input is **cwd-relative**, exactly as `git add` takes it; storage is
+**repo-root-relative** with POSIX separators, because that is the form that survives a
+clone. The repo root comes from `--repo`, else `git rev-parse --show-toplevel`, else
+cwd — deliberately *not* a config key, since an absolute path committed into the repo
+goes stale the moment the checkout moves and takes every artifact path with it.
+
+**The body and the list are both required, and they are not the same thing.**
+`## Method` / `## Result` is where a path is *explained* — what the run was, why the
+plot shows what it shows, what you concluded. `artifacts:` is where it is *enumerated*,
+so a tool can find it without parsing prose. The prose is the claim; the list is its
+index. Dropping the prose leaves a file nobody can interpret; dropping the list leaves
+evidence no `check`, `push` or `viz` can see. Keep both.
+
+**Record nodes only.** `artifacts:` on a state node is a `check` violation: a state
+node is rewritten on every reconcile, so a pointer hung there has no stable owner. The
+route is one hop and already exists — `## Provenance` cites the record node, and the
+record node carries the files.
+
+**Editing `artifacts:` on a committed record node is legal, and this is why.** The
+record graph is append-only in its *bodies*: the node's `sha256` — what the CAS in
+op 7 locks on, what `push` compares, what `push --verify` rests on — hashes the body
+alone. Frontmatter a tool owns has always been outside that boundary; `push` stamps
+`flywheel:` into frozen nodes on every run, and `heal tags` rewrites `tags:` on nodes
+years old. `hypergraph artifacts` never touches the title, the summary or the body, so
+it cannot reach the hash. `hypergraph update` still refuses record nodes outright: a
+correction to a *claim* is a new child node, never an edit.
+
+`check` reports paths that are wrong about the world — moved, listed twice, resolving
+outside the repo, spelled in a case that only resolves on macOS — as **warnings, and
+still exits 0**. An artifact is often a gitignored dataset a fresh clone was never
+going to have, and failing CI over its absence would make the feature useless for the
+evidence it exists to hold. A project that declares no artifacts hears nothing at all.
+
+**STATE.md does not change, deliberately.** State nodes cannot carry artifacts, and
+inlining the artifacts of every cited record node would churn the file on each
+reconcile and destroy the property that makes it useful — readable in one sitting. The
+pointer chain is already one hop: STATE.md → the state node's `## Provenance` →
+`hypergraph artifacts ls <record-slug>`.
+
+Mirroring these files to a hosted graph is a separate concern, under "Mirroring to a
+hosted graph" below and in [mirror.md](mirror.md). The repo stays canonical; the
+mirror holds a copy.
 
 ### 10. `tag` *(optional)* — frontmatter plus a committed vocabulary
 
@@ -222,10 +279,13 @@ Getting this wrong is silent in both directions: import a foreign graph *without
 still passes if the archive is spliced into the export); import your own graph *with*
 `--fork` and the next push duplicates the entire graph.
 
-The source graph stays untouched as the frozen archive (`archive:` in config). Artifacts
-do **not** survive import — the local backend has no artifact op (§9) — so the archive
-reference is the only pointer to them, and `push --lineage` says so at the mirror record
-root (below). In epoch-split mode (huge graphs, history left on the archive) the marker
+The source graph stays untouched as the frozen archive (`archive:` in config). An
+*archive's* attachments do **not** survive import: op 9 travels repo-relative paths,
+and the archive's bytes are not in this repo, so the archive reference stays the only
+pointer to them and `push --lineage` says so at the mirror record root (below).
+`hypergraph heal artifacts` records an inventory of what the archive holds under
+`origin.artifacts` — where they are, never a copy of them. Artifacts *recorded after
+adoption* are ordinary repo files and travel with the repo like everything else. In epoch-split mode (huge graphs, history left on the archive) the marker
 is authored with `--root`: node files can only parent on slugs that resolve locally, so
 the archive lineage is recorded in the marker's content instead of as a parent edge.
 

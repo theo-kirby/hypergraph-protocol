@@ -14,6 +14,14 @@ and no credential is resolved, no `PATH` consulted, no network module imported.
 - **Local files are canonical.** The mirror is a regenerable, one-way projection.
   Drift is fixed by re-pushing or by investigating the foreign write, **never** by
   editing local node files to match the mirror.
+- **Artifacts are a bounded exception to "regenerable", and it is stated here rather
+  than left to be discovered.** A node body is regenerable from the repo forever. An
+  artifact's *bytes* are regenerable only while that file still exists at that path.
+  Uploading a file that is gitignored — which this design permits without a gate,
+  because what gets committed is the agent's call — and then deleting it in a later
+  commit leaves the mirror holding the only copy of published evidence. That is
+  reachable by design, not by accident. If it matters for a given file, commit it.
+  (SPEC lists artifact *custody* as the open item this raises.)
 - **The mirror projects the repo, never the archive.** For an adopted project the
   mirror carries the full imported history under roots *this project owns*, not a
   pointer to the graph it forked from (SPEC: Adoption epochs).
@@ -75,6 +83,27 @@ in-loop at all — it stays in the journal for the next run to resolve by inspec
 This is also why results are folded **incrementally**, in batches of roughly 20, rather
 than once at the end: each fold is what makes the preceding creates invisible to the
 next plan.
+
+**A duplicate artifact is the second species, and it is milder but not free.** An
+upload is an append, so a repeated one attaches a second copy. Nothing points at it, so
+it corrupts no topology — but `artifacts:delete` is not wired (it destroys bytes, and
+no local edit ever asks for that), so a duplicate is permanent clutter. Two guards make
+it nearly unreachable: every batch is preceded by an `artifacts:list` that the upload
+needs anyway for its `expected_revision`, and any item whose title is already attached
+is dropped; and the journal covers the crash window. Accepting the residual risk is the
+first place the never-delete stance costs something, and it is recorded here as a cost
+rather than argued away.
+
+**Recovery rests on `title`, whose contract is "display label."** The title is
+`<repo-relative path>@<first 12 of the file digest>`, so "this title is attached" means
+"these bytes, for this path, are attached". The same digest also goes into
+`metadata.hypergraph`.
+
+Both were **measured against the live host** rather than assumed (CLI 0.1.108): the
+title comes back byte-identical, and `metadata` round-trips intact. The title stays the
+guarantee anyway, because it is the field the API contract names — but the corroborating
+check is real rather than aspirational, and a change to either is a
+`@pytest.mark.live` test failure rather than a silent duplicate.
 
 ## Slug divergence, measured
 
@@ -179,6 +208,82 @@ Five rules, each of which is a bug if you drop it:
   `tags:delete` is not wired at all — deleting a definition un-tags every node that
   used it.
 
+## Artifacts
+
+`push` uploads the files each record node's `artifacts:` list names, as real artifacts
+on the mirrored node. The repo stays canonical; the mirror holds a copy.
+
+```
+flywheel artifacts:upload --node_id=<id> --expected_revision=<int> --items=@items.json
+flywheel artifacts:list   --node_id=<id> [--limit] [--offset]
+```
+
+- **One listing answers both questions.** `artifacts:list` returns the attached records
+  *and* `node_revision`, so the read the upload needs for its lock is the same read that
+  supplies the dedupe set. That single fact carries the design.
+- **The CLI cannot page, so it refuses to guess.** `artifacts:list` takes `--limit`
+  (clamped to 200 server-side) and has no `--offset`. A node past that ceiling raises
+  rather than returning a first page, and points at `--transport rest`, which does page:
+  a truncated listing reads as "these are not attached" and uploads them all again.
+- **50 items per batch, 100 MiB per file**, enforced client-side so our error beats the
+  host's — a 51st item rejected server-side has already spent the writes for the first
+  50. Finalize appends the whole batch with **one** revision bump, so a batch is also
+  the unit of recovery.
+- **Never take the artifact id from the upload's own response.** The mutating success
+  schema is `{}`. The ids come from re-reading the listing and matching on title — the
+  same rule, for the same reason, as resolving a created tag by name.
+- **The revision fold is per node, from the listing already performed.** Finalize bumps
+  exactly one node, unlike `tags:create`, which moves every node in the graph — so
+  there is no graph-wide resync sweep here. Skipping the fold would leave one permanent
+  false drift finding per node.
+- **Ordering: after tags, before the legend.** `tags:create` invalidates every stamped
+  revision in the graph, while an artifact upload's `expected_revision` comes from a
+  listing taken microseconds earlier. Whichever of the two runs second invalidates the
+  other's stamps — so the *immune* phase runs last, and no third sweep has to exist.
+
+**409 is not re-read-and-reissued, and 429 is not retried.** The tags inversion — where
+a conflicting assignment may safely be re-issued — is a property of *atomic replace*,
+not a general rule. An artifact upload is an **append**, and appends keep no-blind-retry
+in full: a second one attaches a duplicate nothing can retract. That is the
+generalization the tags rule was always an instance of. A 429 is ambiguous for the same
+reason: the upload is one process doing prepare + PUT + finalize, so from outside, "rate
+limited" and "finalize landed then timed out" look identical. The pacer is slowed —
+believe the server — and the batch is left for the next run to resolve by listing. The
+vendor's own guidance says the same thing in its own words: *"Do not rerun
+artifacts:upload automatically after finalize failed; inspect the node artifacts
+first."*
+
+**Nothing is ever un-attached.** Changed bytes upload a new version and push the prior
+id into `superseded:` (regenerating a plot is ordinary repo work, not a violation). A
+path removed from `artifacts:` leaves the mirror copy in place and keeps its entry in
+`flywheel.artifacts`, because the mirror really does still hold it. Note the asymmetry
+with tags and why it is not an inconsistency: tag *clearing* is pushed because
+`tags:assign` is an atomic replace that cannot destroy a definition, whereas artifacts
+have no atomic replace and the only un-attach destroys bytes.
+
+**A path outside the repo is refused at upload.** Locally it is a `check` warning — a
+path list in a markdown file is a strange but legal thing to write. At push time it is
+a hard skip, because only there does it become an instruction to send a file somewhere.
+`artifacts: ../../.ssh/id_rsa` must never be an upload.
+
+**A missing, oversize or outside-the-repo file does not abort the push.** Every other
+item on that node still uploads, the failure is reported as `ARTIFACT MISSING <slug>:
+<path>`, and the node's `artifacts_sha256` stamp is **withheld** so the next push
+retries. `cmd_push` exits 1. `mirror doctor` reports the same conditions as *warnings*,
+never violations, precisely because a doctor violation aborts the whole push. There is
+deliberately **no artifact write probe**: its only cleanup would be `artifacts:delete`,
+so doctor names artifact write scope as a known un-probed surface instead of inventing
+a probe it cannot clean up after.
+
+**No healer for the normal case, and that difference from tags is the point.** An
+adoption that predated tags *lost the names* — they were on the archive and nothing
+local held them. An adoption that predated artifacts lost nothing, because there was
+nothing local to lose. A repo adding paths to old record nodes today is served by
+`push`: the plan fires on the absent stamp. `heal artifacts` exists only to record an
+*inventory* of what the frozen archive still holds, under `origin.artifacts` — it never
+repatriates the bytes, because they are not in this repo and re-uploading them would
+leave the mirror holding evidence the repo cannot regenerate.
+
 ## Retroactive repair
 
 `hypergraph heal` carries a capability *backwards* into a repo that adopted before the
@@ -282,6 +387,11 @@ one writer by protocol, so smoothing is strictly better than bursting.
 - **409** → never blind-retry. One structured re-read: if the live body hash already
   equals what we meant to write, treat it as success. Otherwise abort, naming SPEC I3 —
   a conflict means something else wrote, and single-writer has been violated.
+- **Retry is safe for an atomic replace and unsafe for an append.** That is the
+  general rule, and the two named exceptions are instances of it: `tags:assign` may be
+  re-read and re-issued because the worst case is writing the same set twice, while a
+  create and an `artifacts:upload` keep no-blind-retry in full. Artifact batches are
+  therefore called with a single attempt.
 - **401/403** → abort immediately, before any node file is stamped.
 - Total attempts cap at 4. The `flywheel` CLI already retries 3 times internally, so
   4 × 3 = 12 real requests is the true ceiling.

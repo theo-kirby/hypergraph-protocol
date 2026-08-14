@@ -181,8 +181,10 @@ draws an adoption epoch so legacy nodes are exempt from template compliance, dis
 a state graph from what the project actually knows, and installs the AGENTS.md
 onboarding. The import is a **fork**: the source graph stays frozen as the archive,
 and the repo becomes the continuing graph, owning its whole history with the original
-topology. Artifacts do not travel — they stay on the archive, and the adopted project
-says so. After either route, the loop is the same.
+topology. The *archive's* artifacts do not travel — what travels is a repo-relative
+path, and those bytes live on someone else's store — so they stay on the archive and
+the adopted project says so. Evidence recorded from then on is an ordinary repo file
+and travels with the repo. After either route, the loop is the same.
 
 The whole loop, in the repo — no account, no network:
 

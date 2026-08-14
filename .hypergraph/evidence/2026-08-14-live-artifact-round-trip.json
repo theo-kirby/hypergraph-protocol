@@ -1,0 +1,51 @@
+{
+  "_note": [
+    "Captured verbatim from `flywheel artifacts:list --node_id=f6b6de60-6126-5155-b7c0-3213b995beb2`",
+    "on 2026-08-14 (flywheel CLI 0.1.108), immediately after `hypergraph push` uploaded",
+    "backend/flywheel-host.md as evidence on record node wise-river-3571.",
+    "",
+    "This is the live verification behind shady-bay-7654's central Result claim: the",
+    "artifact identity rule reads `title`, whose contract is only 'display label'.",
+    "Two things had to be measured rather than assumed, and both are visible below:",
+    "  1. `title` came back byte-identical to what was sent (`<path>@<sha256[:12]>`),",
+    "     which is what makes Guard A's dedupe correct at all;",
+    "  2. `metadata.hypergraph` round-tripped intact, so the corroborating check is",
+    "     real rather than aspirational.",
+    "`node_revision` also confirms one bump for the batch (the node was at 0 before).",
+    "",
+    "ONE FIELD WAS REMOVED: `artifacts[0].storage_url`, a signed S3 URL carrying",
+    "AWS credentials and a one-hour expiry. It is a secret and it is already dead;",
+    "everything else is byte-for-byte as returned.",
+    "",
+    "The artifact was deleted from the mirror by hand after this capture — it was",
+    "verification scaffolding, not evidence for wise-river-3571's own claims."
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "be8168cd-7f40-59d6-9299-3034e0ead440",
+      "artifact_type": "text",
+      "created_at": "2026-08-14T11:13:07.417087+00:00",
+      "execution_id": null,
+      "metadata": {
+        "hypergraph": {
+          "path": "backend/flywheel-host.md",
+          "sha256": "128f0c512bf747509fcea62d79f188a083d4b06d0a8ca487655a06621ab90d76"
+        }
+      },
+      "note": "Hypergraph evidence: backend/flywheel-host.md",
+      "payload": {
+        "media_type": "text/markdown",
+        "path": "flywheel-host.md"
+      },
+      "storage_path": "artifacts/nodes/f6b6de60-6126-5155-b7c0-3213b995beb2/be8168cd-7f40-59d6-9299-3034e0ead440.md",
+      "storage_url": "<removed: signed S3 URL with credentials, 1h expiry>",
+      "title": "backend/flywheel-host.md@128f0c512bf7"
+    }
+  ],
+  "has_more": false,
+  "limit": 50,
+  "node_id": "f6b6de60-6126-5155-b7c0-3213b995beb2",
+  "node_revision": 1,
+  "offset": 0,
+  "total": 1
+}

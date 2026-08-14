@@ -8,6 +8,7 @@
       "content": "Record root for the local-backend fixture. Append-only historical log: every unit of\nwork lands here as a causally-parented child node.\n",
       "summary": "",
       "tags": [],
+      "artifacts": [],
       "parent_ids": [],
       "created_at": "2026-08-02T00:00:00+00:00"
     },
@@ -18,6 +19,7 @@
       "content": "## What\n\nBuilt the first ingest prototype and measured it on a 2.3GB CSV.\n\n## Why\n\nRoot of an independent workstream: nothing ingests data yet.\n\n## Method\n\n`python ingest.py --input big.csv`, pandas chunked reader, chunksize=100k.\n\n## Result\n\nOOM at 6.1GB RSS on a 4GB box. The chunked reader still materializes the whole\nframe at concat time; this approach is dead without a memory budget.\n\n## State Impact\n\n- target: NEW ingest — new component covering CSV ingest, status open\n",
       "summary": "",
       "tags": [],
+      "artifacts": [],
       "parent_ids": [
         "2373d921-b6a8-597f-964a-7188ca8aecbf"
       ],
@@ -30,6 +32,7 @@
       "content": "## What\n\nReplaced the pandas path with a streaming csv parser.\n\n## Why\n\nFollows directly from the OOM measured in the prototype.\n\n## Method\n\n`python ingest.py --input big.csv --streaming`, stdlib `csv` + a row-wise validator.\n\n## Result\n\n2.3GB ingested in 84s at 210MB peak RSS. Ingest is working.\n\n## State Impact\n\n- target: quiet-summit-2002 — status open → working; OOM becomes negative knowledge\n",
       "summary": "",
       "tags": [],
+      "artifacts": [],
       "parent_ids": [
         "9810511f-edb5-563f-a7c6-320bc6e11516"
       ],
