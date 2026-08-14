@@ -8,7 +8,7 @@ summary: Single-writer distilled state graph root for the hypergraph-protocol pr
 flywheel:
   node_id: 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
   slug: cool-king-8586
-  revision: 35
+  revision: 36
   pushed_at: '2026-08-14T11:21:56+00:00'
   content_sha256: d1c6eb4c6c6c6286bcb4cc4d0c372f75b704737eca3e983973d0449a300facfa
 ---

@@ -284,6 +284,44 @@ nothing local to lose. A repo adding paths to old record nodes today is served b
 repatriates the bytes, because they are not in this repo and re-uploading them would
 leave the mirror holding evidence the repo cannot regenerate.
 
+## Topology
+
+`push` moves parent edges. Before this existed the `update` op fired only when
+`content_sha256` moved and carried no parents, so a **pure re-parent produced no
+mirror op at all** — local topology forked from mirror topology silently and forever,
+and `parents` sat in the strict-only verify field set where nothing would notice.
+
+The ops are `nodes:add-parent` / `nodes:remove-parent` (backend/flywheel.md): four
+optimistic locks, add before remove, re-read after the add because it bumps the child.
+Only state nodes move — a parent edge in the record graph says "this happened after
+that", so a *stamped* record node whose parent set changed is a plan-level violation,
+the same stance as a record body edit.
+
+Four rules, each of which is a bug if you drop it:
+
+- **The mirror is the authority on current topology, not the local stamp.**
+  `nodes:get` reports `has_parents` and **no parent ids at any projection** — measured
+  on CLI 0.1.108, core and full alike — so an export is the only read that carries
+  edges. `push_parents` takes exactly one and re-derives the add/remove sets from it.
+  The `flywheel.parents` bookkeeping is only the *trigger* that says "look".
+- **Which is what makes the first run safe rather than lucky.** No graph pushed before
+  this shipped carries the stamp, so every parented node plans a move; the export shows
+  every one of them already correct and the whole migration collapses into a stamp with
+  zero mirror writes. Measured here: 87 planned, 0 written. A stamp seeded from the
+  local set instead could not tell "never stamped" from "re-parented before stamping".
+- **A root is never stamped.** An empty parent set hashes to a perfectly stable value,
+  and stamping a root with it makes "root, as designed" indistinguishable from "parents
+  cleared locally" — which the plan reads as a move. Same shape as the withheld
+  `artifacts_sha256` when a file is missing.
+- **Mirror-*only* roots are exempt from removal, not every configured root.** An
+  adopted project's local roots hang off freshly minted `mirror_roots` that have no
+  local counterpart, and detaching those would orphan the graph. A *re-homed* project
+  — this repo included — mirrors into the very roots its node files declare, so
+  exempting by id refuses to detach a node from the graph root and leaves it
+  permanently double-parented. The live canary landed in exactly that state and
+  `push --verify` is what reported it, which is the whole argument for `parents` being
+  a default verify field rather than a strict one.
+
 ## Retroactive repair
 
 `hypergraph heal` carries a capability *backwards* into a repo that adopted before the
@@ -329,12 +367,19 @@ reconcile publishes before it commits. Nothing about heal is inside that flow.
 node files — read-only, exit 1 on any drift, `check`-style DRIFT report. It flags local
 nodes never pushed or missing from the export, body-hash mismatches, summary
 mismatches, local edits pending push (`flywheel.content_sha256` vs current body), and
-revision skew between the export and each file's `flywheel:` block.
+revision skew between the export and each file's `flywheel:` block, and **parent-set
+drift**.
 
-`--strict` additionally compares title, parents and tags. It is off by default because
-each of those fires on a *correct* graph: mirror root titles differ from local ones by
-doctrine, and mirror parents are mirror ids rather than local slugs — `--strict` maps
-them before comparing, which is the only way to see genuine topology drift at all.
+Parents are compared by default, and that is a deliberate move out of `--strict`:
+topology is the one thing a node file asserts that `push` used to be unable to change,
+so leaving it strict-only made the whole class undetectable. Local parents are slugs
+and mirror parents are mirror ids, so the mapping that used to happen only under
+`--strict` is now unconditional — without it every node reports drift over a difference
+in vocabulary rather than in topology.
+
+`--strict` additionally compares title, tags and artifacts. Those stay off by default
+because each fires on a *correct* graph: mirror root titles differ from local ones by
+doctrine, and a human attaching an artifact through the host UI is a correct state.
 
 Underneath, all of this is one typed comparison (`diff_graphs`) over declared match
 keys. Two rules it enforces that the hand-rolled loops did not state: a match key is
@@ -355,7 +400,9 @@ Two rules with teeth:
 
 Mirror-only structure is exempt by design: the legend node (by title) and any roots
 declared under `mirror_roots:` in config, since adopted projects mirror under fresh
-roots that have no local counterpart.
+roots that have no local counterpart. For the parent comparison "mirror-only" is read
+strictly — a configured root that *does* have a local node claiming it is compared like
+any other parent, or a re-homed project's whole first generation would report drift.
 
 ## Preflight, and two incidents it retires
 

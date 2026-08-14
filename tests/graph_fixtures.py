@@ -41,13 +41,29 @@ def pushed_graph(tmp_path):
     indistinguishable, and the verify assertions work against both."""
     graph_dir = local_graph_copy(tmp_path)
     plan = hg.push_plan(graph_dir)
-    results = {"results": [{"slug": op["slug"],
-                            "flywheel": {"node_id": f"fw-{op['slug']}",
-                                         "slug_name": f"wild-river-{op['slug'][-4:]}",
-                                         "revision": 1},
-                            "content_sha256": op["content_sha256"]} for op in plan["ops"]]}
-    hg.apply_push_results(graph_dir, results)
+    hg.apply_push_results(graph_dir, {"results": [create_result(op)
+                                                  for op in plan["ops"]]})
     return graph_dir
+
+
+def create_result(op, *, prefix="fw-", slug_prefix="wild-river-", revision=1):
+    """What one executed `create` op folds back — ids, body stamp, **and topology**.
+
+    The parent stamp is not decoration here: a create is a node's first edge write, so
+    a fixture that skips it leaves a graph whose next `push_plan` schedules an edge
+    move for edges the create already made. Fabricating it is what keeps "stamped by
+    the fixture" and "stamped by driving the real loop" indistinguishable — including
+    the part where a **root is never stamped**, because an empty parent set hashes to a
+    stable value that the plan would then read as "parents cleared locally"."""
+    result = {"slug": op["slug"],
+              "flywheel": {"node_id": f"{prefix}{op['slug']}",
+                           "slug_name": f"{slug_prefix}{op['slug'][-4:]}",
+                           "revision": revision},
+              "content_sha256": op["content_sha256"]}
+    if op["parent_slugs"]:
+        result["parents_sha256"] = op["parents_sha256"]
+        result["parents"] = [f"{prefix}{p}" for p in op["parent_slugs"]]
+    return result
 
 
 # The archive vocabulary the heal tests repair against. Shaped like the real one
@@ -113,13 +129,20 @@ def archive_export_of(graph_dir, assignments=None, *, echo_every=3):
 
 
 def mirror_export_of(graph_dir):
-    """The export a faithful mirror would produce for pushed_graph."""
+    """The export a faithful mirror would produce for pushed_graph.
+
+    `parent_ids` is part of "faithful": a real `export:subgraph` carries the edges —
+    it is the only read that does, since `nodes:get` reports `has_parents` and no ids
+    at any projection — and `verify_mirror` compares them by default."""
     nodes = []
     for kind in ("record", "state"):
-        for node in hg.load_local_nodes(graph_dir, kind).values():
+        local = hg.load_local_nodes(graph_dir, kind)
+        for node in local.values():
             fw = node.meta["flywheel"]
             nodes.append({"node_id": fw["node_id"], "slug_name": fw["slug"],
                           "title": node.title, "content": node.content,
                           "summary": str(node.meta.get("summary") or ""),
-                          "revision": fw["revision"]})
+                          "revision": fw["revision"],
+                          "parent_ids": [local[p].meta["flywheel"]["node_id"]
+                                         for p in node.parents if p in local]})
     return {"version": 1, "nodes": nodes}

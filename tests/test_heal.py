@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from graph_fixtures import (ARCHIVE_TAGS, archive_export_of, forked_graph, hg,
-                            local_graph_copy)
+from graph_fixtures import (ARCHIVE_TAGS, archive_export_of, create_result,
+                            forked_graph, hg, local_graph_copy)
 from test_mirror import FakeTransport, RECORD_ROOT, STATE_ROOT
 
 
@@ -32,11 +32,7 @@ def project(tmp_path, *, pushed=False, git=True):
     if pushed:
         # what a completed `push` leaves: a *separate* mirror identity beside origin
         plan = hg.push_plan(graph_dir, do_tags=False)
-        hg.apply_push_results(graph_dir, [
-            {"slug": op["slug"],
-             "flywheel": {"node_id": f"fw-{op['slug']}",
-                          "slug_name": f"wild-river-{op['slug'][-4:]}", "revision": 1},
-             "content_sha256": op["content_sha256"]} for op in plan["ops"]])
+        hg.apply_push_results(graph_dir, [create_result(op) for op in plan["ops"]])
 
     config = {
         "project": "adopted", "graph_dir": str(graph_dir), "cache_dir": str(cache),
@@ -304,12 +300,12 @@ def mirror_project(tmp_path, monkeypatch):
     # verify export reaches them
     for kind, root in (("record", RECORD_ROOT), ("state", STATE_ROOT)):
         for slug, node in hg.load_local_nodes(graph_dir, kind).items():
+            parents = [f"fw-{p}" for p in node.parents] or [root]
             fake.nodes[f"fw-{slug}"] = {
                 "node_id": f"fw-{slug}", "slug_name": f"wild-river-{slug[-4:]}",
                 "title": node.title, "content": node.content,
                 "summary": str(node.meta.get("summary") or ""), "revision": 1,
-                "can_write": True, "is_owner": True}
-            parents = [f"fw-{p}" for p in node.parents] or [root]
+                "can_write": True, "is_owner": True, "parent_ids": parents}
             for parent in parents:
                 fake.kids.setdefault(parent, []).append(f"fw-{slug}")
             fake.kids.setdefault(f"fw-{slug}", [])

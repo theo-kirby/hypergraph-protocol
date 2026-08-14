@@ -4,14 +4,17 @@ slug: retroactive-repair-5104
 title: Retroactive repair
 created_at: '2026-08-09T23:22:20+00:00'
 parents:
-- cool-king-8586
+- wandering-sun-8831
 summary: '`hypergraph heal`: a registry of typed graph repairs that carry a capability backwards into a repo that adopted before it existed. Detect-only until --apply, persists nothing, and never treats `origin:` as a write target. Healer #1 (tags) is proven offline on a copy of the real neural-whoop repo; the mirror half has only met FakeTransport, and the extensibility claim has one healer behind it.'
 flywheel:
   node_id: e6fbea9b-ac04-5b61-9545-315b8f02da43
   slug: lingering-credit-5743
-  revision: 1
-  pushed_at: '2026-08-14T11:21:56+00:00'
+  revision: 3
+  pushed_at: '2026-08-14T13:16:15+00:00'
   content_sha256: bc09a7d03086e3072d20b260d9f3ea6b6d61d12f925469ba14566e37156bfd86
+  parents_sha256: 7581a2a3ab3e0f666772fb38ea612fbca98197235dbd11585614ad362efda1a1
+  parents:
+  - 2b993e9c-708e-5940-a67f-cf80aa0955e4
 ---
 Status: working
 

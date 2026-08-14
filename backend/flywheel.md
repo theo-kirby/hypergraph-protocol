@@ -276,6 +276,13 @@ Prove it on a single node before trusting it on a batch. If a node cannot be
 re-parented, leave the placeholder edge in place and record the limitation — never
 re-mint the mirror to fix topology.
 
+Wired as `FlywheelCliTransport.add_parent` / `remove_parent` and driven by
+`push_parents`; the placeholder-parent case above is no longer the only caller, since
+a distilled state node legitimately moves. What the mirror currently holds comes from
+an **export**, never from `nodes:get` — measured on 0.1.108, `nodes:get` reports
+`has_parents` and no parent ids at either projection. See `backend/mirror.md`
+§ Topology for the four rules that follow from that.
+
 ## Write limits and failure handling
 
 - **120 node creates/min, 2,000 creates/24h, 120 graph writes/min** (graph writes

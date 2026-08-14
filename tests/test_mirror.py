@@ -155,6 +155,65 @@ class FakeTransport:
         self.calls.append(("delete", node_id))
         self.nodes.pop(node_id, None)
 
+    # --- re-parenting --------------------------------------------------------
+    # Models the four properties the real host has and a naive fake would not: both
+    # endpoints take four optimistic locks, the add **bumps the child** (so a caller
+    # that computes a revision once and reuses it across a batch 409s), the add
+    # refuses an edge that would close a cycle, and removing the last parent is
+    # refused — the reason add-before-remove is the stated ordering.
+    def _edge_locks(self, node_id, parent_id, expected_revision,
+                    expected_parent_revision, what):
+        child, parent = self.nodes.get(node_id), self.nodes.get(parent_id)
+        if child is None or parent is None:
+            raise hg.MirrorError(f"{what}: {node_id} or {parent_id} not found")
+        if int(expected_revision) != int(child["revision"]):
+            raise hg.MirrorConflict(f"{what} {node_id}: stale child revision")
+        if int(expected_parent_revision) != int(parent["revision"]):
+            raise hg.MirrorConflict(f"{what} {parent_id}: stale parent revision")
+        return child, parent
+
+    def add_parent(self, *, node_id, parent_id, expected_revision,
+                   expected_parent_revision):
+        self.calls.append(("add_parent", f"{node_id}->{parent_id}"))
+        self._maybe_fail(f"add_parent {node_id}")
+        self._maybe_fail("add_parent")
+        child, _parent = self._edge_locks(node_id, parent_id, expected_revision,
+                                          expected_parent_revision, "nodes:add-parent")
+        seen, stack = set(), [parent_id]
+        while stack:
+            current = stack.pop()
+            if current == node_id:
+                raise hg.MirrorError(
+                    f"nodes:add-parent {node_id}: that edge would create a cycle")
+            if current in seen:
+                continue
+            seen.add(current)
+            stack.extend(self.nodes.get(current, {}).get("parent_ids") or [])
+        held = child.setdefault("parent_ids", [])
+        if parent_id not in held:
+            held.append(parent_id)
+            self.kids.setdefault(parent_id, []).append(node_id)
+        child["revision"] += 1
+
+    def remove_parent(self, *, node_id, parent_id, expected_revision,
+                      expected_parent_revision):
+        self.calls.append(("remove_parent", f"{node_id}->{parent_id}"))
+        self._maybe_fail(f"remove_parent {node_id}")
+        self._maybe_fail("remove_parent")
+        child, _parent = self._edge_locks(node_id, parent_id, expected_revision,
+                                          expected_parent_revision,
+                                          "nodes:remove-parent")
+        held = child.setdefault("parent_ids", [])
+        if held == [parent_id]:
+            raise AssertionError(
+                f"removing {parent_id} would leave {node_id} parentless — "
+                "add-before-remove exists to make this unreachable")
+        if parent_id in held:
+            held.remove(parent_id)
+            if node_id in self.kids.get(parent_id, []):
+                self.kids[parent_id].remove(node_id)
+        child["revision"] += 1
+
     # --- op 10: tags ---------------------------------------------------------
     # Models the two properties the real host has and a naive fake would not:
     # `tags:create` bumps the *root* revision every time, and `tags:assign` is an
@@ -346,7 +405,7 @@ def test_second_push_is_a_no_op(tmp_path):
     before = len(fake.calls)
     summary = push(graph_dir, config, fake)
     assert summary == {"created": 0, "updated": 0, "ops": 0, "tagged": 0,
-                       "artifacts": 0, "artifact_problems": []}
+                       "artifacts": 0, "reparented": 0, "artifact_problems": []}
     assert len(fake.creates()) == 5                       # nothing new was minted
     assert len(fake.calls) == before                      # and nothing was even asked
 
@@ -552,7 +611,8 @@ def test_push_converges_a_revision_the_mirror_moved_without_writing_the_node(
                 "title": node.title, "content": node.content,
                 "summary": str(node.meta.get("summary") or ""),
                 "revision": 9,                       # the host moved underneath us
-                "can_write": True, "is_owner": True}
+                "can_write": True, "is_owner": True,
+                "parent_ids": [f"fw-{p}" for p in node.parents]}
             fake.kids.setdefault(root, []).append(f"fw-{slug}")
             fake.kids.setdefault(f"fw-{slug}", [])
 
@@ -606,6 +666,145 @@ def test_record_body_edit_after_push_aborts_the_whole_run(tmp_path):
     with pytest.raises(hg.MirrorError, match="append-only"):
         push(graph_dir, config_for(graph_dir), fake)
     assert fake.creates() == []                            # nothing was written
+
+
+# ------------------------------------------------------------------ re-parenting
+# The defect these close: `push_plan` emitted an `update` op only when
+# `content_sha256` moved, and that op carries no parents — so a *pure* re-parent
+# produced no mirror op at all and forked local topology from mirror topology
+# silently, forever, with `parents` sitting in the strict-only verify field set where
+# nothing would notice.
+
+def reparent(graph_dir, slug, *parents):
+    """Move a state node's parents the way `hypergraph update --parent` does."""
+    path = next(graph_dir.glob(f"*/{slug}.md"))
+    meta, body = hg.split_frontmatter(path.read_text())
+    meta["parents"] = list(parents)
+    path.write_text(hg.render_node_file(meta, body))
+    return path
+
+
+def pushed_via_fake(tmp_path):
+    """A three-deep state graph, driven through the real push loop.
+
+    LOCAL's state graph is a root and one child, which is one node short of being able
+    to move anything: the two graphs are disjoint, so the only legal new parent for a
+    state node is another state node. The third node is what makes a re-parent
+    expressible at all — and every stamp here is one this code wrote rather than one a
+    fixture fabricated."""
+    graph_dir = local_graph_copy(tmp_path)
+    src = graph_dir / "state" / "quiet-summit-2002.md"
+    meta, body = hg.split_frontmatter(src.read_text())
+    meta = dict(meta, node_id=hg.node_id_for("plain-cedar-2003"),
+                slug="plain-cedar-2003", title="A third state node",
+                parents=["bright-harbor-2001"])
+    # a distinct body: FakeTransport resolves a create's slug by body digest, exactly
+    # as `pushed_graph`'s fabricated ids do, so two identical bodies would collide
+    (graph_dir / "state" / "plain-cedar-2003.md").write_text(
+        hg.render_node_file(meta, body + "\nA third state node.\n"))
+    fake = FakeTransport(graph_dir)
+    push(graph_dir, config_for(graph_dir), fake)
+    return graph_dir, fake
+
+
+def test_a_pure_reparent_plans_a_parents_op_and_no_body_update(tmp_path):
+    graph_dir, _fake = pushed_via_fake(tmp_path)
+    reparent(graph_dir, "plain-cedar-2003", "quiet-summit-2002")
+    plan = hg.push_plan(graph_dir)
+    assert [(o["op"], o["slug"]) for o in plan["ops"]] == [("parents", "plain-cedar-2003")]
+    op = plan["ops"][0]
+    assert op["add"] == ["fw-quiet-summit-2002"] and op["remove"] == ["fw-bright-harbor-2001"]
+
+
+def test_a_reparent_adds_before_it_removes(tmp_path):
+    """backend/flywheel.md's stated ordering, and the reason it is stated: the other
+    order leaves the node momentarily parentless."""
+    graph_dir, fake = pushed_via_fake(tmp_path)
+    reparent(graph_dir, "plain-cedar-2003", "quiet-summit-2002")
+    assert push(graph_dir, config_for(graph_dir), fake)["reparented"] == 1
+    assert [c for c in fake.calls if c[0] in ("add_parent", "remove_parent")] == [
+        ("add_parent", "fw-plain-cedar-2003->fw-quiet-summit-2002"),
+        ("remove_parent", "fw-plain-cedar-2003->fw-bright-harbor-2001")]
+    assert fake.nodes["fw-plain-cedar-2003"]["parent_ids"] == ["fw-quiet-summit-2002"]
+    assert hg.push_plan(graph_dir)["ops"] == []            # and it converged
+
+
+def test_the_first_run_after_this_shipped_stamps_without_writing_an_edge(tmp_path):
+    """Every graph pushed before `parents_sha256` existed carries no stamp, so every
+    parented node plans a move. The export says they are all already correct, and the
+    whole migration collapses to bookkeeping — the reason the mirror is the authority
+    and the local stamp is only the trigger."""
+    graph_dir, fake = pushed_via_fake(tmp_path)
+    for kind in ("record", "state"):
+        for path in (graph_dir / kind).glob("*.md"):
+            meta, body = hg.split_frontmatter(path.read_text())
+            meta["flywheel"].pop("parents_sha256", None)
+            meta["flywheel"].pop("parents", None)
+            path.write_text(hg.render_node_file(meta, body))
+    assert len(hg.push_plan(graph_dir)["ops"]) == 4        # every non-root node
+    before = [c for c in fake.calls if c[0] in ("add_parent", "remove_parent")]
+    assert push(graph_dir, config_for(graph_dir), fake)["reparented"] == 0
+    assert [c for c in fake.calls if c[0] in ("add_parent", "remove_parent")] == before
+    assert hg.push_plan(graph_dir)["ops"] == []
+
+
+def test_a_record_node_reparent_aborts_the_whole_run(tmp_path):
+    graph_dir, fake = pushed_via_fake(tmp_path)
+    reparent(graph_dir, "calm-fern-1003", "wise-anchor-1001")
+    with pytest.raises(hg.MirrorError, match="immutable"):
+        push(graph_dir, config_for(graph_dir), fake)
+    assert not [c for c in fake.calls if c[0] in ("add_parent", "remove_parent")]
+
+
+def test_nothing_ever_detaches_a_node_from_every_parent_it_has(tmp_path, capsys):
+    graph_dir, fake = pushed_via_fake(tmp_path)
+    reparent(graph_dir, "plain-cedar-2003")                # locally promoted to root
+    capsys.readouterr()
+    push(graph_dir, config_for(graph_dir), fake, out=print)
+    assert "nothing here detaches a node from every parent" in capsys.readouterr().out
+    assert fake.nodes["fw-plain-cedar-2003"]["parent_ids"] == ["fw-bright-harbor-2001"]
+
+
+def test_a_root_edge_is_removable_when_the_mirror_root_is_a_local_node(tmp_path):
+    """The re-homed case: a project whose `mirror_roots` fall back to the record/state
+    roots its own node files declare. Exempting every configured root **by id** would
+    refuse to detach a node from the graph root and leave it permanently
+    double-parented — which is exactly what the first live canary run did, and what
+    `push --verify` then reported."""
+    graph_dir, fake = pushed_via_fake(tmp_path)
+    config = config_for(graph_dir)
+    config["mirror_roots"]["state"] = {"node_id": "fw-bright-harbor-2001"}
+    reparent(graph_dir, "plain-cedar-2003", "quiet-summit-2002")
+    assert push(graph_dir, config, fake)["reparented"] == 1
+    assert fake.nodes["fw-plain-cedar-2003"]["parent_ids"] == ["fw-quiet-summit-2002"]
+
+
+def test_a_cycle_is_refused_before_any_edge_is_written(tmp_path):
+    """The add validates against cycles host-side too, but a plan that gets that far
+    has already written the first half of a two-edge move."""
+    graph_dir, fake = pushed_via_fake(tmp_path)
+    reparent(graph_dir, "bright-harbor-2001", "plain-cedar-2003")   # root under its own child
+    with pytest.raises(hg.LocalGraphError, match="cycle|parent"):
+        push(graph_dir, config_for(graph_dir), fake)
+    assert not [c for c in fake.calls if c[0] in ("add_parent", "remove_parent")]
+
+
+def test_verify_reports_parent_drift_by_default_not_only_under_strict(tmp_path):
+    graph_dir, fake = pushed_via_fake(tmp_path)
+    fake.nodes["fw-plain-cedar-2003"]["parent_ids"] = ["fw-quiet-summit-2002"]
+    export = fake.export_subgraph([RECORD_ROOT, STATE_ROOT], tmp_path / "e.json")
+    findings = [str(f) for f in hg.verify_mirror(graph_dir, export).violations()]
+    assert any("parent set differs" in f for f in findings), findings
+
+
+def test_a_mirror_root_edge_is_never_read_as_drift(tmp_path):
+    """An adopted project's local roots hang off the minted mirror roots. That edge
+    has no local counterpart, and reading it as drift would report both graph roots on
+    every correct push."""
+    graph_dir, fake = pushed_via_fake(tmp_path)
+    export = fake.export_subgraph([RECORD_ROOT, STATE_ROOT], tmp_path / "e.json")
+    assert fake.nodes["fw-wise-anchor-1001"]["parent_ids"] == [RECORD_ROOT]
+    assert hg.verify_mirror(graph_dir, export, {RECORD_ROOT, STATE_ROOT}).violations() == []
 
 
 # ------------------------------------------------------------- the crash journal

@@ -1899,7 +1899,12 @@ def load_local_nodes(graph_dir: Path, kind: str, missing_ok: bool = False) -> di
 
 
 def local_graph(nodes: dict[str, LocalNode], kind: str) -> Graph:
-    """Resolve parent *slugs* to node_ids and build the same Graph load_graph builds."""
+    """Resolve parent *slugs* to node_ids and build the same Graph load_graph builds.
+
+    Also the one place a **cycle** is caught. `push_plan` calls this before planning any
+    write for exactly that reason: a cyclic parent set is not something the mirror
+    should be asked to reproduce edge by edge, and by the time the host refuses the
+    add, half of a two-edge move has already landed."""
     out: dict[str, Node] = {}
     for node in nodes.values():
         parent_ids = []
@@ -1912,6 +1917,18 @@ def local_graph(nodes: dict[str, LocalNode], kind: str) -> Graph:
                                  content=node.content, parent_ids=parent_ids,
                                  created_at=node.created_at, tags=node.tags,
                                  artifacts=[str(a) for a in node.artifacts])
+    pending = {slug: {p for p in node.parents} for slug, node in nodes.items()}
+    while pending:
+        ready = [s for s, ps in pending.items() if not ps]
+        if not ready:
+            raise LocalGraphError(
+                f"the {kind} graph has a parent cycle among "
+                f"{', '.join(sorted(pending))} — no node in that set can be reached "
+                "from a root")
+        for slug in ready:
+            pending.pop(slug)
+        for remaining in pending.values():
+            remaining.difference_update(ready)
     return Graph(nodes=out, by_slug={n.slug: n for n in out.values() if n.slug})
 
 
@@ -3164,9 +3181,24 @@ def cmd_update(args: argparse.Namespace) -> int:
             f"{args.expect} but `{args.slug}` is now {node.sha256}. Re-read the node, "
             "re-fold your delta onto the current content, and retry.")
 
-    content = read_body(args.body)
+    # `--body` is optional so that a pure re-parent is not forced to rewrite a body it
+    # is not changing; absent, the current content is kept verbatim.
+    content = node.content if args.body is None else read_body(args.body)
     if not content.endswith("\n"):
         content += "\n"
+
+    parents = update_parents(node, existing["state"], args)
+    meta = dict(node.meta)
+    if parents is not None:
+        meta["parents"] = parents
+    if args.title:
+        meta["title"] = args.title
+    if args.summary is not None:
+        meta["summary"] = args.summary
+
+    # Validate against the graph as it will be, not as it was: a re-parent changes
+    # which node is the root, and `validate_node_content` reads that.
+    node.meta.update(meta)
     record = local_graph(existing["record"], "record")
     state = local_graph(existing["state"], "state")
     is_root = not node.parents
@@ -3175,14 +3207,55 @@ def cmd_update(args: argparse.Namespace) -> int:
                               node.created_at, record, state, is_root),
         f"update to state node `{args.slug}`")
 
-    meta = dict(node.meta)
-    if args.title:
-        meta["title"] = args.title
-    if args.summary is not None:
-        meta["summary"] = args.summary
     node.path.write_text(render_node_file(meta, content))
-    print(f"updated {node.path} ({node.sha256[:12]} → {body_sha256(content)[:12]})")
+    moved = f", parents → {', '.join(parents) or 'root'}" if parents is not None else ""
+    print(f"updated {node.path} ({node.sha256[:12]} → {body_sha256(content)[:12]}){moved}")
     return 0
+
+
+def update_parents(node: LocalNode, state: dict, args: argparse.Namespace
+                   ) -> list[str] | None:
+    """The new parent slug list for `hypergraph update --parent/--root`, or None.
+
+    None means "leave the parents alone" — the flag was not passed — and is distinct
+    from `[]`, which is a node being promoted to root.
+
+    **State nodes only.** `cmd_update` already refuses record nodes outright, and this
+    is why that refusal is not a warning: record topology *is* causal history, and a
+    parent edge there says "this happened after that". Distillation moves; history
+    does not."""
+    if not args.parent and not args.root:
+        return None
+    if args.parent and args.root:
+        raise LocalGraphError("--root nodes are parentless; drop --parent or --root")
+    parents = list(dict.fromkeys(args.parent or []))
+    for parent in parents:
+        if parent not in state:
+            raise LocalGraphError(f"parent `{parent}` is not a state node")
+        if parent == node.slug:
+            raise LocalGraphError(f"`{node.slug}` cannot be its own parent")
+    if args.root:
+        others = [s for s, n in state.items() if not n.parents and s != node.slug]
+        if others:
+            raise LocalGraphError(
+                f"the state graph already has a root: {', '.join(others)}. A second "
+                "parentless node would split the graph, not re-home it.")
+    # Walk up from each new parent: reaching this node means the edge would close a
+    # cycle. `local_graph` resolves parent slugs but does not detect one, and a cycle
+    # is unrecoverable through this command — the file that would fix it no longer
+    # loads.
+    seen, stack = set(), list(parents)
+    while stack:
+        current = stack.pop()
+        if current == node.slug:
+            raise LocalGraphError(
+                f"parenting `{node.slug}` under `{', '.join(parents)}` would create a "
+                f"cycle — `{node.slug}` is already an ancestor of it")
+        if current in seen or current not in state:
+            continue
+        seen.add(current)
+        stack.extend(state[current].parents)
+    return parents
 
 
 # --------------------------------------------------------- graph comparison layer
@@ -3536,6 +3609,21 @@ def artifacts_sha256(entries) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
+def parents_sha256(slugs: list[str]) -> str:
+    """A stamp for a node's parent set — the third sibling of `content_sha256`.
+
+    Over **local slugs**, not mirror ids, for the same reason `parents:` frontmatter
+    holds slugs: a name survives a fork, a re-home, and a mirror that mints its own
+    ids. The mirror ids that set resolved to on the last push are bookkeeping and live
+    beside it as `flywheel.parents`, exactly as `flywheel.artifacts` is the path→id
+    table next to `artifacts_sha256`.
+
+    Never folded into the body hash, for the two reasons `tags_sha256` gives:
+    `verify_mirror` and `push_legend` both rest on body byte-identity, and folding a
+    fourth input in would re-push every existing adopter's whole graph."""
+    return hashlib.sha256("\n".join(sorted(slugs)).encode("utf-8")).hexdigest()
+
+
 def artifact_title(path: str, sha256: str) -> str:
     """`<repo-relative path>@<first 12 of the file digest>` — the upload's identity.
 
@@ -3741,7 +3829,7 @@ def artifact_batches(refs: list[dict]) -> list[list[dict]]:
 
 
 def push_plan(graph_dir: Path, *, do_tags: bool = True, do_artifacts: bool = True,
-              repo: Path | str | None = None) -> dict:
+              do_parents: bool = True, repo: Path | str | None = None) -> dict:
     """Diff local files against their `flywheel:` frontmatter → an ordered op list.
 
     This tool never calls MCP; the skill layer executes the plan and feeds the
@@ -3749,6 +3837,7 @@ def push_plan(graph_dir: Path, *, do_tags: bool = True, do_artifacts: bool = Tru
     ops: list[dict] = []
     violations: list[str] = []
     tag_ops: list[dict] = []
+    parent_ops: list[dict] = []
     artifact_ops: list[dict] = []
     # Resolved lazily, and only once a node actually declares an artifact: a project
     # with none must not pay a `git rev-parse`, let alone a filesystem walk.
@@ -3788,6 +3877,43 @@ def push_plan(graph_dir: Path, *, do_tags: bool = True, do_artifacts: bool = Tru
                                     "tags": list(node.tags), "tags_sha256": want,
                                     "flywheel_node_id": flywheel.get("node_id"),
                                     "base_revision": flywheel.get("revision")})
+            # `flywheel.node_id` in the guard: a node that has never been pushed gets
+            # its topology from the `create` op, which carries `parent_flywheel_ids`
+            # and stamps `parents_sha256` on the way back. Planning an edge move for it
+            # as well would be a second write for an edge the create just made.
+            if do_parents and flywheel.get("node_id") \
+                    and (node.parents or flywheel.get("parents_sha256")):
+                stamp = flywheel.get("parents_sha256")
+                want = parents_sha256(node.parents)
+                # The same `or` clause the tag and artifact stamps carry, and the same
+                # reason: with no stamp and no parents there is nothing to do, but a
+                # stamp with an empty set is a node whose parents were *cleared*
+                # locally, which without this would stay attached on the mirror forever.
+                if (node.parents and stamp != want) or (stamp and not node.parents):
+                    if kind == "record" and stamp:
+                        # A *stamped* record node whose parent set moved is an edit to
+                        # causal history. An unstamped one is only this feature's first
+                        # run seeding its bookkeeping, which is not a change at all.
+                        violations.append(
+                            f"{node.slug}: record node parents changed since it was "
+                            "pushed — causal history is immutable; do not mirror this "
+                            "edit")
+                    desired = [str(pfw) for pfw in
+                               ((nodes[p].meta.get("flywheel") or {}).get("node_id")
+                                for p in node.parents) if pfw]
+                    was = [str(p) for p in (flywheel.get("parents") or [])]
+                    # The intent, not the authority. `nodes:get` reports `has_parents`
+                    # and no parent ids at any projection, so what the mirror actually
+                    # holds is only knowable from an export — `push_parents` takes one
+                    # and re-derives these two sets from it before writing anything.
+                    parent_ops.append({
+                        "graph": kind, "slug": node.slug, "op": "parents",
+                        "parent_slugs": list(node.parents), "parents": desired,
+                        "add": [p for p in desired if p not in was],
+                        "remove": [p for p in was if p not in desired],
+                        "parents_sha256": want,
+                        "flywheel_node_id": flywheel.get("node_id"),
+                        "base_revision": flywheel.get("revision")})
             if do_artifacts and (node.artifacts or flywheel.get("artifacts_sha256")):
                 refs, problems = resolve_artifacts(
                     repo_for_artifacts(), node, cache=hash_cache)
@@ -3818,6 +3944,7 @@ def push_plan(graph_dir: Path, *, do_tags: bool = True, do_artifacts: bool = Tru
                     parent_fw.append(pfw)
                 ops.append({**payload, "op": "create", "parent_slugs": node.parents,
                             "parent_flywheel_ids": parent_fw,
+                            "parents_sha256": parents_sha256(node.parents),
                             "created_at": node.created_at})
             elif flywheel.get("content_sha256") != node.sha256:
                 if kind == "record":
@@ -3830,12 +3957,14 @@ def push_plan(graph_dir: Path, *, do_tags: bool = True, do_artifacts: bool = Tru
                             "base_revision": flywheel.get("revision")})
     if artifact_repo:
         save_artifact_hash_cache(cache_path, hash_cache)
-    # Two later passes, appended after every node op: both need the node to exist, and
-    # a node created in this same run only gets its mirror id from `minted` partway
-    # through the loop above. Artifacts go **last** — see `execute_push` for why the
-    # immune phase is the one that runs at the end.
+    # Three later passes, appended after every node op: each needs the node to exist,
+    # and a node created in this same run only gets its mirror id from `minted` partway
+    # through the loop above. Parents go before tags (an edge change bumps the child,
+    # and a tag assignment locks against that revision); artifacts go **last** — see
+    # `execute_push` for why the immune phase is the one that runs at the end.
     return {"version": EXPORT_VERSION, "graph_dir": str(graph_dir),
-            "generated_at": utc_now(), "ops": ops + tag_ops + artifact_ops,
+            "generated_at": utc_now(),
+            "ops": ops + parent_ops + tag_ops + artifact_ops,
             "violations": violations}
 
 
@@ -3854,15 +3983,21 @@ def _load_export_nodes(path: Path) -> dict[str, dict]:
     return out
 
 
-VERIFY_FIELDS = ("body", "summary", "revision")
-# Off by default and opt-in through `push --verify --strict`, because each would fire
-# on correct graphs: mirror root titles differ from local ones by doctrine, mirror
-# parent ids are mirror ids rather than local slugs, and a re-homed node's created_at
-# is the mirror's. `--strict` maps parents before comparing, which is the only way to
-# see topology drift at all.
-# `artifacts` is here and **never in VERIFY_FIELDS**: a human attaching an artifact
-# through the host UI is a correct graph state, not drift, and the default findings
-# are pinned byte-for-byte by the test suite.
+VERIFY_FIELDS = ("body", "summary", "revision", "parents")
+# `parents` is in the **default** set, and that is a deliberate move out of `--strict`.
+# Topology is the one thing a node file asserts that `push` used to be unable to
+# change: an `update` op fires only when `content_sha256` moves and carries no parents,
+# so a pure re-parent produced no mirror op at all and forked local topology from
+# mirror topology silently, forever. Closing that (`push_parents`) without also
+# checking it by default would leave the same class of drift undetectable — an
+# unmeasured category is invisible to every check by construction [rec: fresh-spire-9002].
+# The slug→mirror-id mapping this needs is therefore unconditional too.
+#
+# Still off by default and opt-in through `push --verify --strict`, because each of
+# these would fire on correct graphs: mirror root titles differ from local ones by
+# doctrine, and a re-homed node's created_at is the mirror's. `artifacts` is here and
+# **never in VERIFY_FIELDS**: a human attaching an artifact through the host UI is a
+# correct graph state, not drift.
 VERIFY_STRICT_FIELDS = ("body", "summary", "revision", "title", "parents", "tags",
                         "artifacts")
 
@@ -3887,14 +4022,22 @@ def verify_mirror(graph_dir: Path, against: Path,
     mirror = side_from_export(against, name="mirror")
     if strict:
         fields = VERIFY_STRICT_FIELDS
-        # Local parents are slugs, mirror parents are mirror ids: map before
-        # comparing, or every node reports drift over a difference in vocabulary
-        # rather than in topology. Both sides sort — parent *order* is not meaning.
-        by_slug = {r["slug"]: r["key"] for r in local.records if r["slug"] and r["key"]}
-        for record in local.records:
-            record["parents"] = sorted(str(by_slug.get(p) or p) for p in record["parents"])
-        for record in mirror.records:
-            record["parents"] = sorted(str(p) for p in record["parents"])
+    # Local parents are slugs, mirror parents are mirror ids: map before comparing, or
+    # every node reports drift over a difference in vocabulary rather than in topology.
+    # Both sides sort — parent *order* is not meaning. Unconditional since `parents`
+    # joined VERIFY_FIELDS; without it the default run would report every node.
+    by_slug = {r["slug"]: r["key"] for r in local.records if r["slug"] and r["key"]}
+    for record in local.records:
+        record["parents"] = sorted(str(by_slug.get(p) or p) for p in record["parents"])
+    # A mirror root a local root hangs off by design: exempt *and* with no local node
+    # claiming it. Both halves are load-bearing. Without the first, real drift onto a
+    # stray parent would be hidden; without the second, this repo — which mirrors into
+    # the very roots its node files declare — would have its whole first generation
+    # report drift, because those roots are exempt and do have local counterparts.
+    mirror_only_roots = exempt_ids - {r["key"] for r in local.records if r["key"]}
+    for record in mirror.records:
+        record["parents"] = sorted(str(p) for p in record["parents"]
+                                   if str(p) not in mirror_only_roots)
     # The legend is mirror-only bookkeeping and has no local counterpart by design.
     exempt_right = exempt_ids | {
         r["key"] for r in mirror.records
@@ -4117,6 +4260,12 @@ def apply_push_results(graph_dir: Path, results: object, *,
             fw["tags_sha256"] = str(entry["tags_sha256"])
         if entry.get("artifacts_sha256") is not None:
             fw["artifacts_sha256"] = str(entry["artifacts_sha256"])
+        if entry.get("parents_sha256") is not None:
+            fw["parents_sha256"] = str(entry["parents_sha256"])
+            # Replaced whole, never merged: the mirror ids this node's parent slugs
+            # resolved to *as of that stamp*. Merging would keep a detached edge in the
+            # table forever and make the next plan re-issue its removal on every run.
+            fw["parents"] = [str(p) for p in (entry.get("parents") or [])]
         if entry.get("artifacts") is not None:
             fw["artifacts"] = merge_artifact_records(fw.get("artifacts"),
                                                      entry["artifacts"])
@@ -5502,6 +5651,24 @@ class FlywheelCliTransport:
     def delete_node(self, node_id: str, *, mode: str = "detach_shared") -> None:
         self._run("nodes:delete", node_id=node_id, delete_mode=mode, extra=["--yes"])
 
+    # --- re-parenting ----------------------------------------------------------
+    # Not an INTERFACE operation — a topology repair (backend/flywheel.md). Both are
+    # graph writes and both take **four** optimistic locks, two per endpoint. Nothing
+    # here re-reads them: the caller does, immediately before each call, because the
+    # add bumps the child and a revision computed once and reused across a batch is
+    # stale after the first edge.
+    def add_parent(self, *, node_id: str, parent_id: str, expected_revision: int,
+                   expected_parent_revision: int) -> None:
+        self._run("nodes:add-parent", node_id=node_id, parent_id=parent_id,
+                  expected_revision=int(expected_revision),
+                  expected_parent_revision=int(expected_parent_revision))
+
+    def remove_parent(self, *, node_id: str, parent_id: str, expected_revision: int,
+                      expected_parent_revision: int) -> None:
+        self._run("nodes:remove-parent", node_id=node_id, parent_id=parent_id,
+                  expected_revision=int(expected_revision),
+                  expected_parent_revision=int(expected_parent_revision))
+
     # --- op 10: tags -----------------------------------------------------------
     def graph_tags(self, root_node_id: str) -> tuple[list[dict], int]:
         """The vocabulary on one graph root, plus that root's current revision.
@@ -5811,6 +5978,19 @@ class FlywheelRestTransport(FlywheelCliTransport):
     def delete_node(self, node_id: str, *, mode: str = "detach_shared") -> None:
         self._request("DELETE", f"/nodes/{node_id}", query={"delete_mode": mode})
 
+    # --- re-parenting ----------------------------------------------------------
+    def add_parent(self, *, node_id, parent_id, expected_revision,
+                   expected_parent_revision) -> None:
+        self._request("POST", f"/nodes/{node_id}/parents/add", body={
+            "parent_id": parent_id, "expected_revision": int(expected_revision),
+            "expected_parent_revision": int(expected_parent_revision)})
+
+    def remove_parent(self, *, node_id, parent_id, expected_revision,
+                      expected_parent_revision) -> None:
+        self._request("POST", f"/nodes/{node_id}/parents/remove", body={
+            "parent_id": parent_id, "expected_revision": int(expected_revision),
+            "expected_parent_revision": int(expected_parent_revision)})
+
     # --- op 10: tags -----------------------------------------------------------
     def graph_tags(self, root_node_id: str) -> tuple[list[dict], int]:
         raw = self._request("GET", f"/nodes/{root_node_id}",
@@ -6008,6 +6188,29 @@ class PushJournal:
                       "items": [dict(i) for i in items], "at": utc_now()})
         return intent_id
 
+    def parents_intent(self, *, slug: str, graph: str, node_id: str,
+                       add: list[str], remove: list[str]) -> str:
+        """One node's whole edge move, recorded before the first `nodes:add-parent`.
+
+        Not for idempotency — an add and a remove are both **idempotent by inspection**
+        (the next run's export shows the edge present or absent, and re-derives the
+        move from that), so nothing here has to resolve a pending one. It is recorded
+        because a crash *between* the add and the remove leaves the node with two
+        parents, which is a valid graph that nobody asked for: add-before-remove buys
+        "never momentarily parentless" at the price of "momentarily double-parented".
+        This line is what tells the operator which of the two windows they landed in."""
+        intent_id = str(uuid.uuid4())
+        self._append({"t": "intent", "id": intent_id, "op": "parents",
+                      "slug": slug, "graph": graph, "flywheel_node_id": node_id,
+                      "add": list(add), "remove": list(remove), "at": utc_now()})
+        return intent_id
+
+    def parents_done(self, intent_id: str, *, slug: str, node_id: str,
+                     revision: object, parents: list[str]) -> None:
+        self._append({"t": "done", "id": intent_id, "slug": slug, "op": "parents",
+                      "flywheel": {"node_id": node_id, "revision": revision},
+                      "parents": list(parents), "pushed_at": utc_now()})
+
     def artifact_done(self, intent_id: str, *, slug: str, node_id: str,
                       revision: object, attached: list[dict]) -> None:
         self._append({"t": "done", "id": intent_id, "slug": slug, "op": "artifacts",
@@ -6103,6 +6306,16 @@ class PushJournal:
             slug = entry.get("slug")
             if entry.get("op") == "artifacts":
                 resolved += self.resolve_artifact_intent(entry, transport, out=out)
+                continue
+            if entry.get("op") == "parents":
+                # Nothing to resolve and nothing to adopt: `push_parents` re-derives
+                # the move from a fresh export every run, so an interrupted one simply
+                # replans. Abandoned *loudly*, because the crash window between the add
+                # and the remove leaves a legitimately double-parented node.
+                self.abandon(entry["id"], "edge move interrupted; replanned from the export")
+                out(f"  {slug}: an edge move was interrupted (add "
+                    f"{len(entry.get('add') or [])}, remove {len(entry.get('remove') or [])}) "
+                    "— the next export re-derives it")
                 continue
             if entry.get("op") == "update":
                 node_id = entry.get("flywheel_node_id")
@@ -6282,8 +6495,8 @@ def _repo_context_for(node: LocalNode) -> dict:
 def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJournal,
                  pacer: Pacer, batch: int = 20, limit: int | None = None,
                  dry_run: bool = False, do_legend: bool = True, do_tags: bool = True,
-                 do_artifacts: bool = True, repo: Path | str | None = None,
-                 out=print) -> dict:
+                 do_artifacts: bool = True, do_parents: bool = True,
+                 repo: Path | str | None = None, out=print) -> dict:
     """Plan → execute → fold, resumable at every point.
 
     `push_plan()` is a pure diff against each file's `flywheel:` frontmatter, so it
@@ -6297,34 +6510,37 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
         out(f"push: folded {applied} recovered write(s) into the node files")
 
     # 2. plan *after* the fold — the fold changed what the plan is a diff against
-    plan = push_plan(graph_dir, do_tags=do_tags, do_artifacts=do_artifacts, repo=repo)
+    plan = push_plan(graph_dir, do_tags=do_tags, do_artifacts=do_artifacts,
+                     do_parents=do_parents, repo=repo)
     if plan["violations"]:
         for violation in plan["violations"]:
             out(f"VIOLATION {violation}")
         raise MirrorError(
             "refusing to push: the record graph is append-only and the plan carries "
-            f"{len(plan['violations'])} body change(s) to already-pushed record "
-            "node(s). Fix the local edit — a correction is a new child node, not an "
-            "edit (SPEC: record nodes are immutable).")
+            f"{len(plan['violations'])} change(s) to already-pushed record node(s). "
+            "Fix the local edit — a correction is a new child node, not an edit "
+            "(SPEC: record nodes are immutable).")
 
-    # A **three-way** split, and the third arm is not optional: `o["op"] != "tags"`
-    # would sweep artifact ops into the node loop, which would try to commit a body
-    # they do not carry. Tag and artifact ops are executed after the node loop and its
+    # A **four-way** split, and none of the later arms is optional: `o["op"] !=
+    # "tags"` would sweep artifact and parent ops into the node loop, which would try
+    # to commit a body they do not carry. All three run after the node loop and its
     # result fold, so a node created in this same run already carries its mirror id.
     all_ops = plan["ops"]
     ops = [o for o in all_ops if o["op"] in ("create", "update")]
+    parent_ops = [o for o in all_ops if o["op"] == "parents"]
     tag_ops = [o for o in all_ops if o["op"] == "tags"]
     artifact_ops = [o for o in all_ops if o["op"] == "artifacts"]
     if limit is not None:
         ops = ops[:limit]
     creates = sum(1 for o in ops if o["op"] == "create")
     out(f"push: {creates} create(s), {len(ops) - creates} update(s)"
+        + (f", {len(parent_ops)} parent set(s)" if parent_ops else "")
         + (f", {len(tag_ops)} tag assignment(s)" if tag_ops else "")
         + (f", {len(artifact_ops)} artifact upload(s)" if artifact_ops else ""))
-    if not ops and not tag_ops and not artifact_ops:
+    if not ops and not parent_ops and not tag_ops and not artifact_ops:
         out("push: mirror already matches the node files — nothing to do")
         return {"created": 0, "updated": 0, "ops": 0, "tagged": 0, "artifacts": 0,
-                "artifact_problems": []}
+                "reparented": 0, "artifact_problems": []}
 
     if dry_run:
         for op in all_ops:
@@ -6333,10 +6549,16 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
                 detail = f"   [{', '.join(op['tags'])}]"
             elif op["op"] == "artifacts":
                 detail = f"   [{len(op['artifacts'])} file(s)]"
+            elif op["op"] == "parents":
+                # "planned" and not "would": the export `push_parents` takes is the
+                # authority, and it routinely reduces one of these to a pure stamp.
+                detail = (f"   [planned +{len(op['add'])}/-{len(op['remove'])}, "
+                          f"→ {', '.join(op['parent_slugs']) or 'root'}]")
             out(f"  would {op['op']:9} {op['graph']:6} {op['slug']}{detail}")
         return {"created": creates, "updated": len(ops) - creates, "ops": len(ops),
                 "tagged": len(tag_ops), "artifacts": len(artifact_ops),
-                "artifact_problems": [], "dry_run": True}
+                "reparented": len(parent_ops), "artifact_problems": [],
+                "dry_run": True}
 
     nodes = {}
     for kind in GRAPH_KINDS:
@@ -6398,6 +6620,10 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
             journal.done(intent, slug=slug, node=node, content_sha256=op["content_sha256"])
             minted[slug] = node.node_id
             created += 1
+            # A create *is* the node's first edge write, so it stamps topology too.
+            # Without this the very next plan would schedule an edge move for a node
+            # whose edges this call had just made correctly.
+            created_parents = [p for p in parent_ids if p not in roots.values()]
         else:
             node_id = str(op["flywheel_node_id"])
             base = op.get("base_revision")
@@ -6419,14 +6645,30 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
             journal.done(intent, slug=slug, node=node, content_sha256=op["content_sha256"])
             updated += 1
 
-        pending_results.append({
-            "slug": slug,
-            "flywheel": {"node_id": node.node_id, "slug_name": node.slug,
-                         "revision": node.revision},
-            "content_sha256": op["content_sha256"]})
+        result = {"slug": slug,
+                  "flywheel": {"node_id": node.node_id, "slug_name": node.slug,
+                               "revision": node.revision},
+                  "content_sha256": op["content_sha256"]}
+        # **Only a node that has parents is stamped.** An empty set hashes to a
+        # perfectly stable value, and stamping a root with it would make "root, as
+        # designed" indistinguishable from "parents cleared locally" — which is
+        # precisely what the `(stamp and not node.parents)` arm of the plan reads as a
+        # move. The tag stamp gets this for free by never being written on a create.
+        if op["op"] == "create" and op["parent_slugs"]:
+            result["parents_sha256"] = op["parents_sha256"]
+            result["parents"] = created_parents
+        pending_results.append(result)
         if len(pending_results) >= batch:
             flush()
     flush()
+
+    # **Parents before tags.** An edge change bumps the child's committed revision and
+    # a tag assignment locks against the revision in frontmatter, so the other order
+    # would make every re-parented node's assignment conflict on its first attempt.
+    reparented = 0
+    if parent_ops:
+        reparented = push_parents(graph_dir, config, roots, transport,
+                                  journal=journal, pacer=pacer, ops=parent_ops, out=out)
 
     tagged = 0
     if tag_ops:
@@ -6446,7 +6688,7 @@ def execute_push(graph_dir: Path, config: dict, transport, *, journal: PushJourn
     if do_legend:
         push_legend(graph_dir, roots["record"], transport, pacer=pacer, out=out)
     return {"created": created, "updated": updated, "ops": len(ops), "tagged": tagged,
-            "artifacts": artifacts["uploaded"],
+            "artifacts": artifacts["uploaded"], "reparented": reparented,
             "artifact_problems": artifacts["problems"]}
 
 
@@ -6703,6 +6945,166 @@ def restamp_revisions(graph_dir: Path, live: dict[str, int], *, out=print) -> in
         out(f"  re-stamped `flywheel.revision` on {restamped} node file(s) — a node's "
             "revision moves when a tag is created, without that node being written")
     return restamped
+
+
+def push_parents(graph_dir: Path, config: dict, roots: dict, transport, *,
+                 journal: PushJournal, pacer: Pacer, ops: list[dict],
+                 out=print) -> int:
+    """Bring the mirror's parent edges in line with the node files.
+
+    **The one phase that cannot plan offline.** Measured against the installed CLI
+    (0.1.108): `nodes:get` reports `has_parents` and **no parent ids at any
+    projection** — core or full. So what the mirror actually holds is only knowable
+    from an *export*, and this takes exactly one, the same call `push --verify` makes.
+    `push_plan`'s `add`/`remove` are the intent, derived from the `flywheel.parents`
+    bookkeeping; the export is the authority, and the two are re-diffed here before a
+    single edge is touched.
+
+    That is also what makes this feature's **first run** safe rather than lucky. No
+    node carries the bookkeeping yet, so every parented node plans a move — and the
+    export shows every one of them already correct, which collapses the whole
+    migration into a stamp with zero mirror writes. A stamp seeded from the local set
+    instead could not have told "never stamped" apart from "re-parented before
+    stamping", and would have written a lie that verify then had to catch.
+
+    Two refusals, both about never making the graph worse than it was:
+
+    - **A node is never left parentless.** Add-before-remove is the ordering
+      (backend/flywheel.md), and a move whose desired set is empty, or whose parents
+      are not all on the mirror yet, is skipped and reported rather than half-applied.
+    - **A mirror-only root edge is never removed.** For an adopted project the local
+      roots hang off the configured `mirror_roots`, an edge that exists on the mirror
+      by design and has no local counterpart to justify it. Reading it as "not
+      desired" would detach the whole graph from its root on the first push.
+      **Mirror-*only*** is the load-bearing half, and it is the half this got wrong
+      first: a re-homed project — this one included — mirrors into the very roots its
+      node files declare, so exempting every configured root by id would refuse to
+      detach a node from the graph root and leave it double-parented forever. The live
+      canary landed in exactly that state, and `push --verify` is what reported it,
+      which is the whole argument for `parents` being in the default field set."""
+    nodes: dict[str, LocalNode] = {}
+    for kind in GRAPH_KINDS:
+        nodes.update(load_local_nodes(graph_dir, kind, missing_ok=True))
+    cache_dir = Path(config.get("cache_dir") or DEFAULT_CACHE_DIR)
+    export = transport.export_subgraph(list(roots.values()),
+                                       cache_dir / "mirror-parents.json")
+    live = {}
+    for node_id, raw in _load_export_nodes(export).items():
+        live[node_id] = (
+            set(_norm_parents(raw.get("parent_ids") or raw.get("parents")
+                              or raw.get("incoming_ids"))),
+            raw.get("committed_revision", raw.get("revision")))
+    mirror_only_roots = {str(r) for r in roots.values()} - {
+        str((n.meta.get("flywheel") or {}).get("node_id") or "") for n in nodes.values()}
+
+    def revision_of(node_id: str) -> int:
+        """Always re-read, never carried. The add bumps the child, so a revision
+        computed once and reused across a batch is stale after the first edge."""
+        live_node = transport.get_node(node_id)
+        if live_node.revision is None:
+            raise MirrorError(
+                f"{node_id}: the mirror reported no revision — refusing to guess an "
+                "optimistic lock for an edge change")
+        return int(live_node.revision)
+
+    results: list[dict] = []
+    moved = 0
+    for op in ops:
+        slug = op["slug"]
+        # Read the mirror id from the node file, not from the op: the plan was built
+        # before the node loop ran, so a node created in *this* run carries one here
+        # and not there. The same reason `push_tags` and `push_artifacts` re-load.
+        local = nodes.get(slug)
+        node_id = str((local.meta.get("flywheel") or {}).get("node_id") if local else ""
+                      or op.get("flywheel_node_id") or "")
+        if not node_id:
+            out(f"  parents: skipping `{slug}` — not on the mirror yet")
+            continue
+        if node_id not in live:
+            out(f"  parents: skipping `{slug}` — {node_id} is not in the mirror export")
+            continue
+
+        desired, unpushed = [], []
+        for parent_slug in op["parent_slugs"]:
+            parent = nodes.get(parent_slug)
+            pid = str((parent.meta.get("flywheel") or {}).get("node_id") if parent else "")
+            (desired if pid else unpushed).append(pid or parent_slug)
+        if unpushed:
+            out(f"  parents: skipping `{slug}` — parent(s) {', '.join(unpushed)} are "
+                "not on the mirror yet")
+            continue
+        if not desired:
+            out(f"  parents: skipping `{slug}` — it declares no parent on the mirror, "
+                "and nothing here detaches a node from every parent it has")
+            continue
+
+        held, _revision = live[node_id]
+        add = [p for p in desired if p not in held]
+        remove = sorted(p for p in held
+                        if p not in desired and p not in mirror_only_roots)
+        if not add and not remove:
+            # The whole first-run migration lands here: the edges are already right
+            # and only the bookkeeping was missing.
+            results.append({"slug": slug,
+                            "flywheel": {"node_id": node_id,
+                                         "revision": live[node_id][1]},
+                            "parents_sha256": op["parents_sha256"],
+                            "parents": desired})
+            continue
+
+        intent = journal.parents_intent(slug=slug, graph=op["graph"], node_id=node_id,
+                                        add=add, remove=remove)
+        for parent_id in add:
+            def _reissue(_exc, _child=node_id, _parent=parent_id):
+                """The 409 recipe backend/flywheel.md states: re-read, then retry —
+                never blind-retry. Safe here in a way an artifact upload is not: an
+                edge is a *set* member, so re-issuing at worst asserts an edge that
+                already exists, which is the `tags:assign` property one noun over."""
+                transport.add_parent(
+                    node_id=_child, parent_id=_parent,
+                    expected_revision=revision_of(_child),
+                    expected_parent_revision=revision_of(_parent))
+                return True
+            mirror_call(
+                lambda c=node_id, p=parent_id: transport.add_parent(
+                    node_id=c, parent_id=p, expected_revision=revision_of(c),
+                    expected_parent_revision=revision_of(p)),
+                pacer=pacer, what=f"add parent {slug} → {parent_id}",
+                retry_conflict=_reissue, out=out)
+        for parent_id in remove:
+            def _reissue_rm(_exc, _child=node_id, _parent=parent_id):
+                transport.remove_parent(
+                    node_id=_child, parent_id=_parent,
+                    expected_revision=revision_of(_child),
+                    expected_parent_revision=revision_of(_parent))
+                return True
+            mirror_call(
+                lambda c=node_id, p=parent_id: transport.remove_parent(
+                    node_id=c, parent_id=p, expected_revision=revision_of(c),
+                    expected_parent_revision=revision_of(p)),
+                pacer=pacer, what=f"remove parent {slug} → {parent_id}",
+                retry_conflict=_reissue_rm, out=out)
+
+        revision = revision_of(node_id)
+        journal.parents_done(intent, slug=slug, node_id=node_id, revision=revision,
+                             parents=desired)
+        out(f"  parents: {slug} +{len(add)}/-{len(remove)} → "
+            f"{', '.join(op['parent_slugs'])}")
+        results.append({"slug": slug,
+                        "flywheel": {"node_id": node_id, "revision": revision},
+                        "parents_sha256": op["parents_sha256"], "parents": desired})
+        moved += 1
+
+    if results:
+        # **The revision fold is not optional**, for the reason the tag path spells
+        # out: an edge change bumps the child, and `verify_mirror` treats revision skew
+        # as a violation, so skipping it leaves one permanent false drift finding per
+        # re-parented node.
+        apply_push_results(graph_dir, results, nodes=nodes)
+        stamped = len(results) - moved
+        out(f"  parents: {moved} edge move(s)"
+            + (f", {stamped} already correct (stamped only)" if stamped else ""))
+    return moved
 
 
 def push_tags(graph_dir: Path, config: dict, roots: dict, transport, *, pacer: Pacer,
@@ -11932,9 +12334,17 @@ def main(argv: list[str] | None = None) -> int:
     p_update = sub.add_parser("update", help="replace a state node's body (reconcile only)")
     p_update.add_argument("slug")
     graph_args(p_update)
-    p_update.add_argument("--body", help="new full markdown body, or `-` for stdin")
+    p_update.add_argument("--body",
+                          help="new full markdown body, or `-` for stdin (omit to "
+                               "keep the current body — a re-parent need not rewrite it)")
     p_update.add_argument("--title")
     p_update.add_argument("--summary")
+    p_update.add_argument("--parent", action="append", metavar="SLUG",
+                          help="re-home this state node under SLUG (repeatable, "
+                               "replaces the whole parent set). State nodes only: "
+                               "record parents are causal history and immutable")
+    p_update.add_argument("--root", action="store_true",
+                          help="promote this state node to the parentless graph root")
     p_update.add_argument("--expect", help="sha256 of the body you read (optimistic lock)")
     p_update.add_argument("--print-sha", action="store_true",
                           help="print the current body sha256 and exit (the read half of the CAS)")
@@ -12172,8 +12582,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "mv" and len(args.path) != 2:
             parser.error("artifacts mv needs exactly two paths: OLD NEW")
     if getattr(args, "command", None) == "update" and not args.print_sha:
-        if not args.body:
-            parser.error("update needs --body (or --print-sha)")
+        if not any((args.body, args.parent, args.root, args.title,
+                    args.summary is not None)):
+            parser.error("update needs --body, --parent/--root, --title or --summary "
+                         "(or --print-sha)")
         if not args.expect:
             parser.error("update needs --expect <sha256> — get it with --print-sha first")
     try:

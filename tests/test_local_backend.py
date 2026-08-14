@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from graph_fixtures import mirror_export_of, pushed_graph
+from graph_fixtures import create_result, mirror_export_of, pushed_graph
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tools" / "fixtures"
@@ -299,6 +299,59 @@ def test_update_refuses_record_nodes_outright(tmp_path, capsys):
     assert "append-only" in capsys.readouterr().err
 
 
+# ------------------------------------------------------- op 7: re-parenting
+# `--parent` on a state node is how the distilled graph gains depth. It is refused
+# on record nodes by the same guard that refuses a body edit there — a parent edge in
+# the record graph says "this happened after that", and history does not move.
+
+def sha_of(capsys, graph_dir, slug):
+    code, sha = run_out(capsys, "update", slug, "--graph-dir", graph_dir, "--print-sha")
+    assert code == 0
+    return sha.strip()
+
+
+def test_update_reparents_a_state_node_without_touching_its_body(tmp_path, capsys):
+    graph_dir = imported(tmp_path)
+    target = graph_dir / "state" / "quiet-lantern-0103.md"
+    before = hg.split_frontmatter(target.read_text())[1]
+    assert run("update", "quiet-lantern-0103", "--graph-dir", graph_dir, "--reconcile",
+               "--expect", sha_of(capsys, graph_dir, "quiet-lantern-0103"),
+               "--parent", "mellow-quartz-0102") == 0
+    meta, content = hg.split_frontmatter(target.read_text())
+    assert meta["parents"] == ["mellow-quartz-0102"]
+    assert content == before          # no --body: the body is kept verbatim
+    capsys.readouterr()
+
+
+def test_update_refuses_a_reparent_that_would_close_a_cycle(tmp_path, capsys):
+    graph_dir = imported(tmp_path)
+    before = (graph_dir / "state" / "amber-harbor-0101.md").read_text()
+    assert run("update", "amber-harbor-0101", "--graph-dir", graph_dir, "--reconcile",
+               "--expect", sha_of(capsys, graph_dir, "amber-harbor-0101"),
+               "--parent", "mellow-quartz-0102") == 2
+    assert "cycle" in capsys.readouterr().err
+    assert (graph_dir / "state" / "amber-harbor-0101.md").read_text() == before
+
+
+def test_update_refuses_a_second_root_and_an_unknown_or_self_parent(tmp_path, capsys):
+    graph_dir = imported(tmp_path)
+    sha = sha_of(capsys, graph_dir, "mellow-quartz-0102")
+    for flags, message in ((["--root"], "already has a root"),
+                           (["--parent", "no-such-node-9999"], "is not a state node"),
+                           (["--parent", "mellow-quartz-0102"], "its own parent")):
+        assert run("update", "mellow-quartz-0102", "--graph-dir", graph_dir,
+                   "--reconcile", "--expect", sha, *flags) == 2
+        assert message in capsys.readouterr().err
+
+
+def test_update_refuses_to_reparent_without_reconcile(tmp_path, capsys):
+    graph_dir = imported(tmp_path)
+    assert run("update", "quiet-lantern-0103", "--graph-dir", graph_dir,
+               "--expect", sha_of(capsys, graph_dir, "quiet-lantern-0103"),
+               "--parent", "mellow-quartz-0102") == 2
+    assert "I3" in capsys.readouterr().err
+
+
 # ------------------------------------------------------------- mirror planning
 
 def test_push_plan_on_a_never_pushed_graph_creates_parents_first():
@@ -323,11 +376,7 @@ def test_push_plan_is_empty_after_results_are_recorded_and_reopens_on_edit(tmp_p
             (target / src.name).write_text(src.read_text())
 
     plan = hg.push_plan(graph_dir)
-    results = {"results": [{"slug": op["slug"],
-                            "flywheel": {"node_id": f"fw-{op['slug']}",
-                                         "slug_name": f"wild-river-{op['slug'][-4:]}",
-                                         "revision": 1},
-                            "content_sha256": op["content_sha256"]} for op in plan["ops"]]}
+    results = {"results": [create_result(op) for op in plan["ops"]]}
     (tmp_path / "results.json").write_text(json.dumps(results))
     assert run("push", "--graph-dir", graph_dir,
                "--record-result", tmp_path / "results.json") == 0
@@ -625,10 +674,8 @@ def pushed_fork(tmp_path):
     graph_dir = forked(tmp_path)
     plan = hg.push_plan(graph_dir)
     hg.apply_push_results(graph_dir, {"results": [
-        {"slug": op["slug"],
-         "flywheel": {"node_id": f"ours-{op['slug']}",
-                      "slug_name": f"lively-feather-{op['slug'][-4:]}", "revision": 1},
-         "content_sha256": op["content_sha256"]} for op in plan["ops"]]})
+        create_result(op, prefix="ours-", slug_prefix="lively-feather-")
+        for op in plan["ops"]]})
     return graph_dir
 
 
