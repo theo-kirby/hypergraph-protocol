@@ -9,9 +9,9 @@ summary: '`hypergraph heal`: a registry of typed graph repairs that carry a capa
 flywheel:
   node_id: e6fbea9b-ac04-5b61-9545-315b8f02da43
   slug: lingering-credit-5743
-  revision: 0
-  pushed_at: '2026-08-11T12:29:46+00:00'
-  content_sha256: 75044b513db5d0a55a00c8d1d2193b28a67ea50d95e93e2489b558ee854383f2
+  revision: 1
+  pushed_at: '2026-08-14T11:21:56+00:00'
+  content_sha256: bc09a7d03086e3072d20b260d9f3ea6b6d61d12f925469ba14566e37156bfd86
 ---
 Status: working
 
@@ -66,15 +66,31 @@ framework itself did not change to accommodate any of them. Every fix landed in 
 transport or in `push_tags`, which is better evidence for the framework's shape than a
 second healer would have been, because it was not designed for.
 
-**The extensibility claim is not yet evidence either.** The framing is that healer #2
-costs one registry entry and one comparator. `HEALERS` has one member, and
-`FIELD_COMPARATORS` carries an `artifacts` entry with no healer behind it. The registry
-test constrains the shape — unique names, acyclic `after:` ordering, `blocked_by`
-returning a reason rather than a bool, an archive reader never declaring an archive
-write — but shape is not cost. Artifacts are the natural second healer and the thing
-that would settle it [rec: clear-moss-4527]. The live run is partial evidence for it:
-three defects moved nothing in the registry, the drift types or `detect`/`apply`
-[rec: early-mesa-8507].
+**The extensibility claim is now evidence, and it came in under budget**
+[rec: shady-bay-7654]. The framing was that healer #2 costs one registry entry and one
+comparator; the speculative `artifacts` entry in `FIELD_COMPARATORS` even carried a
+comment admitting *"a claim with no second instance is not evidence"*. `HEAL_ARTIFACTS`
+cost **zero** new comparator entries and **one** registry entry — the existing entry
+served, and the only real work was teaching `side_from_local` which frontmatter block to
+read the ids out of. That is cheaper than the claim, not merely equal to it. Partial
+evidence had already arrived from the live tag run, where three host defects moved
+nothing in the registry, the drift types or `detect`/`apply` [rec: early-mesa-8507].
+
+**Healer #2 is `artifacts`, and what it does *not* do is the finding**
+[rec: shady-bay-7654]. It inventories what the frozen archive still holds, per node,
+under `origin.artifacts` — frontmatter only, offline-capable, no mirror phase at all, so
+it never needs `heal_write_targets` and is fully `git checkout`-reversible. It
+deliberately does **not** repatriate the archive's bytes: those are not in the repo, so
+re-uploading them would leave the mirror holding evidence the repo cannot regenerate.
+
+**The normal case needs no healer at all, and that difference from tags is the point.**
+An adoption that predated tags *lost the names* — they were on the archive and nothing
+local held them, which is what made a backward path necessary [rec: fresh-spire-9002].
+An adoption that predated artifacts lost **nothing**, because there was nothing local to
+lose. A repo adding paths to old record nodes today is served by `push` alone, since the
+plan fires on the absent stamp. So the registry's second member is narrower than its
+first, and the reason is a real asymmetry between the two capabilities rather than an
+oversight [rec: shady-bay-7654].
 
 ## Negative knowledge
 
@@ -87,3 +103,4 @@ three defects moved nothing in the registry, the drift types or `detect`/`apply`
 - clear-moss-4527 — built and trialled offline end to end; the mirror half and healer #2 are what remain
 - fresh-spire-9002 — the field loss that made a backward path necessary rather than nice
 - early-mesa-8507 — the live run: 188 nodes recovered on neural-whoop's mirror, and the three host behaviours that took
+- shady-bay-7654 — healer #2 (artifacts), and the extensibility claim settled at zero comparators and one registry entry

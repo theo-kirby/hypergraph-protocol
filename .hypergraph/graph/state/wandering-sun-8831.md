@@ -5,13 +5,13 @@ title: Checker tooling
 created_at: '2026-08-06T21:41:18.171074+00:00'
 parents:
 - cool-king-8586
-summary: 'check/render/viz + local backend + epoch support + push --verify/--legend/--lineage + import --fork; 72 tests green; known blind spots: unrecorded work, stale cache exports, frontmatter summary drift, archive-spliced verify exports.'
+summary: 'check/render/viz + local backend + epoch support + push --verify/--legend/--lineage + import --fork + artifacts; 324 tests green; known blind spots: unrecorded work, stale cache exports, frontmatter summary drift, archive-spliced verify exports.'
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 15
-  pushed_at: '2026-08-11T12:29:46+00:00'
-  content_sha256: 43819e644819454fe328207c3c5b7de5ef37e49303ea735d5396d0c25db8fdd5
+  revision: 16
+  pushed_at: '2026-08-14T11:21:56+00:00'
+  content_sha256: 2805dbcbf98dc63325eef5b63a82ae71d0d57d7f0f2693317cdb31df4cb0d80f
 ---
 Status: working
 
@@ -36,6 +36,12 @@ Status: working
 **The I1 citation checker had a silent hole, and it is fixed** [rec: clever-ledge-6588]. Claim units were `bullets or paragraphs` — either, never both — so a `## Current` section containing any bullet had its prose paragraphs excluded from the citation check **entirely**, and most state nodes mix the two. Units were also single lines, so a citation that wrapped onto a continuation read as missing; that produced 27 false warnings on one adopted repo and taught its agent to reflow correct prose. A unit is now a bullet with its continuation lines, or a paragraph, with headings, fenced code blocks and colon lead-ins to a bullet list excluded as structure rather than claims. The fix earned itself immediately: it found 3 uncited claims in cadex and 8 in neural-whoop that both repos' passing `check` had never looked at.
 
 **`check` gains exactly one thing to say about tags, and it is a warning** [rec: clear-moss-4527]. Where `.hypergraph/tags.yml` exists, a tag name on a node that the vocabulary does not declare is reported; where it does not exist, `check` says nothing about tags at all. Never a violation: no invariant reads a tag, so failing a build over one would invent an obligation the spec does not carry. It is also the *only* brake on a taxonomy nothing enforces, now that the record skill teaches tagging — which makes whether this project's own vocabulary stays coherent a thing to watch rather than a thing that is settled [rec: simple-ocean-1716].
+
+**`hypergraph artifacts {ls,add,rm,mv}` is the sixth local-backend verb, and `check` gained two rules for it** [rec: shady-bay-7654]. `artifacts:` on a state node is a **violation**; a path that is wrong about the world — moved, listed twice, resolving outside the repo, spelled in a case that only survives on macOS — is a **warning**, and untracked-by-git is one collapsed info line. `check` still **exits 0** on all of them, deliberately: an artifact is often a gitignored dataset a fresh clone was never going to have, and failing CI over its absence would make the feature useless for exactly the evidence it exists to hold. A project that declares no artifacts hears nothing at all, the same bargain the tag-vocabulary warning makes.
+
+The command exists for the same reason `tags` does — a path hand-typed into YAML is normalized against nothing and wrong only on somebody else's machine — and it is the tool's first legal writer of frontmatter on a *committed record node*. That is sound because the append-only hash covers the **body**: `LocalNode.sha256` hashes content alone, and this command cannot reach the title, the summary or the body. `hypergraph update` still refuses record nodes outright, and a test asserts it was not weakened to make room [rec: shady-bay-7654].
+
+Three smaller pieces landed with it [rec: shady-bay-7654]: `new --artifact` warns rather than refuses on a missing path (a whole node has been composed and validated by then, and `artifacts rm` fixes a typo a second later — `artifacts add` refuses instead, because there the typo is all there is to lose); `import` carries an existing `artifacts:` list forward, since no export can supply one and `--force` is exactly what a re-import after an upgrade needs; and `plan_op_counts` became a **4-tuple counted by op**, because adding a third op kind to a function that computed updates *by subtraction* would have reintroduced the exact bug its own docstring documents. Suite at **324 tests**, up from 280.
 
 ## Negative knowledge
 
@@ -73,3 +79,4 @@ Status: working
 - placid-ridge-4035 — ancestry enumeration, conflict-marker detection, hwm and check --since; suite to 282
 - long-peak-1620 — sdist packaging defect from the dogfooding symlinks; build-and-inspect test added
 - clear-moss-4527 — the one tag rule check gained: an undeclared name is a warning, only where a vocabulary is declared
+- shady-bay-7654 — `hypergraph artifacts`, the two artifact check rules, and plan_op_counts as a 4-tuple; suite to 324

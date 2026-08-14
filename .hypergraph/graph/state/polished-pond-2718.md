@@ -9,9 +9,9 @@ summary: 'Five job-named views with Everything as the boot default; excaligraph'
 flywheel:
   node_id: f4d676d8-a180-55fc-ae3f-54c1e4d3bcab
   slug: polished-pond-2718
-  revision: 6
-  pushed_at: '2026-08-11T12:29:46+00:00'
-  content_sha256: 20122d4081b83d138ac43261f98c31c73759ab9a78eb44f6687e268a465b80c5
+  revision: 7
+  pushed_at: '2026-08-14T11:21:56+00:00'
+  content_sha256: 8ae7b632c8c2edbcf75dcb2ffcb4460928620c497b0ae0aed3b468d2fc87a2f4
 ---
 Status: working
 
@@ -29,6 +29,8 @@ Status: working
 - The benchmark dataset now exists and is the first real external subject for this work: 9 runs x (fidelity by section, cold-start timings, per-turn token/tool traces) in `research/runs/main/analysis.json`, with the raw session transcripts harvested alongside [rec: ancient-dew-4488]. It is first-run data from a harness later found to be uncontrolled (protocol-benchmark-4417), so it is a rendering subject, not a source of claims [rec: staid-field-2723]. Rendering it is the open work: every view so far has been measured on the project's own graph [rec: southern-ridge-1802].
 
 - The page gains a **tag chip row**: one chip per tag in the graph, coloured from `.hypergraph/tags.yml` or from the name's own digest where the vocabulary is silent, with a usage count. Chips are OR within the selection (a second chip widens) and the search box ANDs on top. The row hides itself entirely on a graph that carries no tags. It filters and **changes no geometry and no colour** — a tag has no standing in the protocol, so letting one restyle a node would give it standing in the picture that it has nowhere else; a browser test renders the same graph with and without tags and compares every shape [rec: clear-moss-4527].
+
+- The record-node panel gains an **Evidence** section listing that node's `artifacts:` paths [rec: shady-bay-7654]. Rendered as plain `<code>`, never as links: the page is emailed and committed, so a `file://` that resolves on one machine and 404s on every other reads worse than the path itself. No existence flag is baked in either — a "missing" computed at render time becomes a stale claim about somebody else's filesystem, and `hypergraph check` answers that question at the moment it is asked. The section is guarded on non-empty, so an artifact-less graph's panel is byte-identical to before. The **state**-node payload has no `artifacts` key at all, and that absence is the documentation for "evidence lives on record nodes".
 
 ## Negative knowledge
 
@@ -60,3 +62,4 @@ Status: working
 - wise-river-3571 — phase 7: legend, keyboard, dark theme, export across all four views
 - tiny-stone-3934 — Everything as the boot default, drag-stable blobs over the posEpoch cache fix, eleven tuning sliders behind a `viz: blob:` config block, the Arrange row
 - clear-moss-4527 — tag chips: a filter that changes nothing about how a node is drawn
+- shady-bay-7654 — the Evidence section on record-node panels, and the state payload's deliberate silence

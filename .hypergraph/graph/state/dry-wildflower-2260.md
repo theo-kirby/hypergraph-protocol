@@ -9,9 +9,9 @@ summary: Five single-path skills (zero flywheel/lease/MCP/429/409 hits), dogfood
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 12
-  pushed_at: '2026-08-11T12:29:46+00:00'
-  content_sha256: a0fd20bd9498f3db118f907d4beace776c07f6a03601fbd25025fb6978adada6
+  revision: 13
+  pushed_at: '2026-08-14T11:21:56+00:00'
+  content_sha256: 8bddc6cd3ffbd76e30380c774887d56354f0e0e7374fdb33fa99dc4b545c3c01
 ---
 Status: working
 
@@ -33,6 +33,8 @@ Status: working
 - reconcile gained the maintainer-on-main rule in its When-To-Use, frontier guidance in the HWM step (usually one slug, several after a merge, and what to do when `check` names `hwm --suggest`), and a guardrail to start from `sync` rather than a bare `check` after a merge. Its publish step now names all three stand-down cases in one sentence instead of one [rec: placid-ridge-4035].
 - record gained the converse, which is what a contributor needs: recording is safe on any branch, fork or machine, because record nodes are one file each and merge without conflict — and it is the *whole* obligation, because the maintainer reconciles after the merge [rec: placid-ridge-4035].
 - **record now teaches tagging, and the guidance is mostly about restraint** [rec: clear-moss-4527]: read `.hypergraph/tags.yml`, use declared names only, add one with `hypergraph tags add` and never by hand, and in a repo with no `tags.yml` **tag nothing**. The load-bearing sentence is that a tag is a way to *find* nodes and not a way to assert things about them — no invariant reads one, so a claim living only as a tag is invisible to `check` and to reconcile. adopt's step 5 gains what travels and what does not, and its step 6 gains the pointer-tag routing; two of its prose references to "tags" meaning *git* tags were renamed to stop the collision.
+
+- **record's step 7 stopped being one line, because it is the step that decides whether the artifact feature reaches the field at all** [rec: shady-bay-7654]. It used to say "commit the files and reference them by path"; it now says three things, and names the third as the one that is easy to skip: commit them *or don't* (gitignoring a 40 GB dataset is a legitimate call, but an uncommitted file that gets published is one the mirror alone holds), **explain** them in `## Method`/`## Result` because prose is the claim, and **enumerate** them with `hypergraph artifacts add` or `--artifact` because the list is the claim's index and no tool reads prose. Never attach to a state node. The guardrail beside it names `artifacts:` as the one frontmatter key that may be edited on a committed record node — the append-only hash covers the *body* — while the body still may not be, and `hypergraph update` still refuses record nodes outright.
 
 ## Negative knowledge
 
@@ -58,3 +60,4 @@ Status: working
 - vast-rain-4873 — parallel-work investigation: reconcile needs a publish-branch gate and the contributors-record rule
 - placid-ridge-4035 — reconcile gains the maintainer-on-main rule and frontier guidance; record covers contributors
 - clear-moss-4527 — record gains a tagging step built around restraint; adopt gains what travels and the pointer-tag routing
+- shady-bay-7654 — record's step 7 rewritten around enumerating evidence, and the one editable-frontmatter guardrail

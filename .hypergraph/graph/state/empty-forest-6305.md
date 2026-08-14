@@ -9,9 +9,9 @@ summary: Node files are the only storage; hypergraph push/sync/mirror now execut
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 12
-  pushed_at: '2026-08-11T12:29:46+00:00'
-  content_sha256: 13b48a86e5dcb73991a9003d0edad940a9e91a7b55f279a183716159fe19fff2
+  revision: 13
+  pushed_at: '2026-08-14T11:21:56+00:00'
+  content_sha256: 94aeea2092e746ab2bf3100b82035eae89e537df77e9285d1c931c7a767c7811
 ---
 Status: working
 
@@ -41,6 +41,16 @@ Status: working
 **Two storage-path defects, both found by the first mode A adoption run without its author, both fixed** [rec: clever-ledge-6588]. `adopt --init` derived the config's root `node_id` from the slug unconditionally — but a mode A root arrives through `import --fork`, which preserves the archive's id verbatim, so on neural-whoop the config claimed `8e92751d…` while the node file said `51aabea1…`. `check` does not compare the two and `push` reads the config, so the project would have published under an id nothing else in the repo used; it now reads the node's own id. Separately, `mirror pull` and `export` both defaulted to `.hypergraph/cache/record.json`, so the first export destroyed the legacy pull — which step 7 still needs and which is the only record of what stayed on the archive. The pull now writes `legacy-record.json` / `legacy-state.json`.
 - **Three live-host tag behaviours, all found by running against a real mirror and none by reading** [rec: early-mesa-8507]. `tags:create` returns the updated *graph root node* rather than the tag, so a new tag's id comes from re-reading the root and resolving **by name** — the same read that supplies the bumped root revision. A `cluster:*` tag must cover a **connected** set of nodes and it is checked on *every* assignment, so a tag whose final set is connected is still rejected part-way through; assignments are ordered to grow each such tag outward from one node, seeded by what the mirror already holds. And **creating a tag bumps the committed revision of every node in the graph** — 22 creations moved all 196 — so `push` converges stale stamps from the export `--verify` already fetches, revision only, then re-verifies.
 
+**The mirror carries artifacts, and the rules are the tag rules with one inversion removed** [rec: shady-bay-7654]. `push` uploads each file a record node's `artifacts:` names as a real Flywheel artifact. Identity is the **title** — `<repo-relative path>@<sha256[:12]>` — so *"this title is attached"* means exactly *"these bytes, for this path, are attached"*, and the `artifacts:list` that supplies `expected_revision` is the same read that supplies the dedupe set. A journal covers the crash window; a partially-present batch **raises** rather than guessing, because re-uploading would duplicate the half that landed.
+
+**Retry is safe for an atomic replace and unsafe for an append** — that is the general rule, and the tag exception was always an instance of it [rec: shady-bay-7654]. `tags:assign` may be re-read and re-issued because the worst case is writing the same set twice; an `artifacts:upload` may not, because the worst case is a duplicate nothing can retract. Batches run with a single attempt: even a 429 is ambiguous there, since the upload is one process doing prepare + PUT + finalize and "rate limited" is indistinguishable from "finalize landed then timed out". Ordering is **after tags, before the legend**: `tags:create` moves every node's revision while a finalize moves one, so the phase whose lock comes from a listing taken microseconds earlier — the immune one — runs last, and no third resync sweep has to exist.
+
+**Nothing is ever un-attached**, and that is not an inconsistency with tags [rec: shady-bay-7654]. Tag *clearing* is pushed because `tags:assign` is an atomic replace that cannot destroy a definition; artifacts have no atomic replace and the only un-attach destroys bytes. So changed bytes upload a new version and supersede the prior id, a path dropped from `artifacts:` leaves the mirror copy in place, and a missing or oversize or outside-the-repo file fails *that item* while every other item on the node still lands — with the node's stamp **withheld** so the next push retries.
+
+Two costs are recorded rather than left to be discovered [rec: shady-bay-7654]. **"The mirror is a regenerable, one-way projection" now has a bounded exception**: a node body is regenerable from the repo forever, but an artifact's bytes are regenerable only while that file exists at that path — and gitignored evidence is permitted by design, so "the mirror holds the only copy" is reachable on purpose. And `push_plan` **stopped being a pure function of `graph_dir`**: it stats and hashes files across the repo, so its cost is now proportional to evidence size (hence an explicit `repo` parameter and a `(size, mtime_ns)` stat cache). Its *network-free* guarantee survives untouched.
+
+Verified live on this repo's own mirror [rec: shady-bay-7654]: the title came back **byte-identical** and `metadata.hypergraph` round-tripped **intact**, which settles the design's one load-bearing assumption — the identity rule reads a field whose contract is only *"display label"*. One revision bump per batch, a second push uploading nothing, `push --verify --strict` clean. Two contract facts were also measured rather than guessed: `artifacts:list` exposes `--limit` and **no `--offset`**, and the server clamps `limit` to 200 — so the CLI transport cannot page and **raises** past that ceiling rather than treating a first page as the whole listing, which would re-upload everything after it.
+
 ## Negative knowledge
 
 - [scope: mirroring a local graph to a hosted store | confidence: high | evidence: old-dawn-8747, kind-valley-8040] the host mints its own slug on create, so nodes authored locally after the switch live there under a different slug while the markdown still cites the local one — `check` against a mirror export reported 25 dangling-pointer violations (I4/I5/I7) on a graph that checks 0/0 from the node files. The mirror is a readable projection, never the thing you check.
@@ -69,3 +79,4 @@ Status: working
 - long-peak-1620 — REST transport proven in CI; the mirror becomes a build artifact of main
 - clear-moss-4527 — the graph comparison layer, verify_mirror refactored onto it byte-identically, and the mirror's tag surface
 - early-mesa-8507 — the live tag push: three host behaviours FakeTransport had not modelled, now regressions
+- shady-bay-7654 — the mirror's artifact surface, the append-vs-atomic-replace rule, and the bounded exception to regenerability
