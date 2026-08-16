@@ -471,3 +471,73 @@ def test_heal_artifacts_does_not_apply_without_an_import(tmp_path, capsys):
     graph_dir = local_graph_copy(tmp_path)
     reason = hg.artifacts_blocked_by({"graph_dir": str(graph_dir)}, tmp_path)
     assert "artifacts add" in reason and "nothing to heal" in reason
+
+
+# --------------------------------------------------------------- the upgrade fold
+# At 0.9.0 `heal` folded into `upgrade --graph`: one verb, two polarities. The
+# copies half writes by default (git-checkout-reversible); everything behind
+# `--graph` is detect-only until `--apply`. `heal` survives as a hidden alias for
+# the 0.9.x series.
+
+def upgrade_graph(repo, config_path, *argv):
+    return run("upgrade", "--repo", repo, "--config", config_path, "--graph", *argv)
+
+
+def test_upgrade_graph_bare_lists_the_registry_exactly_like_bare_heal(
+        tmp_path, capsys):
+    repo, _graph_dir, config_path = project(tmp_path)
+    assert upgrade_graph(repo, config_path) == 0
+    via_upgrade = capsys.readouterr().out
+    assert run("heal", "--repo", repo, "--config", config_path) == 0
+    via_alias = capsys.readouterr().out
+    assert via_upgrade == via_alias
+    assert "tags" in via_upgrade and "applies" in via_upgrade
+
+
+def test_upgrade_graph_detects_the_same_drift_as_heal(tmp_path, capsys):
+    repo, _graph_dir, config_path = project(tmp_path)
+    assert upgrade_graph(repo, config_path, "tags", "--offline") == 0
+    via_upgrade = capsys.readouterr().out
+    assert heal(repo, config_path, "--offline") == 0
+    via_alias = capsys.readouterr().out
+    assert via_upgrade == via_alias
+    assert "would change" in via_upgrade
+
+
+def test_upgrade_graph_is_detect_only_until_apply(tmp_path, capsys):
+    repo, graph_dir, config_path = project(tmp_path)
+    before = {p: p.read_bytes() for p in Path(graph_dir).rglob("*.md")}
+    assert upgrade_graph(repo, config_path, "tags", "--offline") == 0
+    assert {p: p.read_bytes() for p in Path(graph_dir).rglob("*.md")} == before
+    assert not (repo / ".hypergraph" / "tags.yml").exists()
+    assert upgrade_graph(repo, config_path, "tags", "--offline", "--apply") == 0
+    assert tags_of(graph_dir, "brave-otter-1002") == ["kind:experiment",
+                                                      "outcome:GREEN"]
+    capsys.readouterr()
+
+
+def test_heal_alias_still_works_and_names_its_replacement(tmp_path, capsys):
+    repo, _graph_dir, config_path = project(tmp_path)
+    assert run("heal", "--repo", repo, "--config", config_path) == 0
+    err = capsys.readouterr().err
+    assert "deprecated" in err and "upgrade --graph" in err
+    # the real verb carries no such note
+    assert upgrade_graph(repo, config_path) == 0
+    assert "deprecated" not in capsys.readouterr().err
+
+
+def test_upgrade_graph_refuses_dry_run(tmp_path):
+    """--dry-run is the copies half; --graph is already detect-only."""
+    repo, _graph_dir, config_path = project(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        upgrade_graph(repo, config_path, "tags", "--dry-run")
+    assert excinfo.value.code == 2
+
+
+def test_help_no_longer_lists_a_heal_command(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        run("--help")
+    assert excinfo.value.code == 0
+    help_text = capsys.readouterr().out
+    table = help_text.split("positional arguments:", 1)[1]
+    assert not any(line.split()[:1] == ["heal"] for line in table.splitlines())

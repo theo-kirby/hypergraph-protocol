@@ -32,7 +32,7 @@ The local (git-native) backend keeps both graphs as committed markdown files und
     hypergraph.py update SLUG --body new.md --expect <sha256> --reconcile
     hypergraph.py tags list|add|rm [NAME]
     hypergraph.py skills install [--user | --link | --target DIR]
-    hypergraph.py heal [tags] [--apply] [--offline]
+    hypergraph.py upgrade --graph [tags] [--apply] [--offline]
 
 **These commands never touch the network.** No credential is resolved, no binary is
 looked for, no network module is imported — the graphs are files, and that is the
@@ -50,12 +50,14 @@ project owns, one-way, with the repo staying canonical:
 never have to test the config first. `push --plan` stays network-free and emits the
 ordered plan for anyone without the CLI binary.
 
-`heal` is the other half of `upgrade`: where `upgrade` refreshes this project's
-*copies* of shipped files (reversible with `git checkout`), `heal` repairs *graph
-content* — a registry of typed repairs that carry a capability backwards into a repo
-that adopted before it existed. It rewrites node files and may spend mirror writes
-that cannot be un-spent, so it is **detect-only until `--apply`**, which is the one
-inverted default in this file.
+`upgrade` has two halves with opposite polarities, and `--graph` names the boundary.
+Bare `upgrade` refreshes this project's *copies* of shipped files (skills, AGENTS.md
+block, workflows) and writes by default — every effect is `git checkout`-reversible.
+`upgrade --graph` repairs *graph content*: a registry of typed repairs that carry a
+capability backwards into a repo that adopted before it existed. It rewrites node
+files and may spend mirror writes that cannot be un-spent, so it is **detect-only
+until `--apply`** — the one inverted default in this file. `heal` survives as a
+deprecated alias for the 0.9.x series.
 """
 from __future__ import annotations
 
@@ -3888,7 +3890,14 @@ def upgrade_workflows(source: Path, repo: Path, changes: list, dry_run: bool,
 
 
 def cmd_upgrade(args: argparse.Namespace) -> int:
-    """Bring an adopted repo's *copies* up to the running CLI's release."""
+    """Bring an adopted repo's *copies* up to the running CLI's release.
+
+    With `--graph`, delegate to the graph-repair half instead (formerly `heal`):
+    detect-only until `--apply`, because it rewrites node files rather than
+    refreshing `git checkout`-reversible copies."""
+    if getattr(args, "graph", None) is not None:
+        args.healer = args.graph
+        return cmd_heal(args)
     repo = Path(args.repo or ".").resolve()
     root = skills_data_root()
     if is_source_checkout(repo, root):
@@ -3968,10 +3977,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     if applicable:
         print(f"\n{len(applicable)} retroactive graph repair(s) apply to this project.")
         for healer in applicable:
-            print(f"  heal {healer.name:<10} {healer.summary} (since {healer.since})")
-        print("\nThese rewrite graph content, not copies, so they are a separate "
-              "command\nand detect-only by default:\n"
-              f"  hypergraph heal {applicable[0].name}")
+            print(f"  --graph {healer.name:<10} {healer.summary} (since {healer.since})")
+        print("\nThese rewrite graph content, not copies, so they stay behind "
+              "--graph\nand detect-only until --apply:\n"
+              f"  hypergraph upgrade --graph {applicable[0].name}")
     return 0
 
 
@@ -4161,12 +4170,13 @@ def stamp_config_version(text: str, version: str) -> str:
 
 
 # ---------------------------------------------------------------------- healing
-# `upgrade` answers "are this repo's *copies* current". `heal` answers "is this
-# repo's *graph content* current" — and they are separate commands because the
-# answers cost different things. Every effect of `upgrade` is a file we shipped and
-# `git checkout` undoes it. `heal` rewrites the graph itself and spends an
-# irreversible mirror-write budget, so it cannot share `upgrade`'s "just run it"
-# posture.
+# Bare `upgrade` answers "are this repo's *copies* current". `upgrade --graph`
+# answers "is this repo's *graph content* current" — one verb, two polarities,
+# because the answers cost different things. Every effect of the copies half is a
+# file we shipped and `git checkout` undoes it. The graph half rewrites the graph
+# itself and spends an irreversible mirror-write budget, so it cannot share the
+# copies half's "just run it" posture: it stays detect-only until `--apply`.
+# (`heal` survives as a deprecated alias for the 0.9.x series.)
 #
 # The framework exists because tags will not be the last capability to land after
 # somebody's adoption. Healer number two must cost **one registry entry and one
@@ -4657,6 +4667,10 @@ def cmd_heal(args: argparse.Namespace) -> int:
     human-initiated, sits in no commit flow, rewrites the whole graph at once, and
     spends mirror writes that cannot be un-spent. `--apply` is the word that makes it
     act."""
+    if getattr(args, "_heal_alias", False):
+        print("note: `heal` is deprecated — it folded into `upgrade --graph` at "
+              "0.9.0, and the alias goes away after the 0.9.x series.",
+              file=sys.stderr)
     repo = Path(args.repo or ".").resolve()
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
@@ -4670,8 +4684,8 @@ def cmd_heal(args: argparse.Namespace) -> int:
         raise LocalGraphError(
             f"{repo} is the protocol's own checkout. Its graph was authored under this "
             "release, so there is nothing retroactive to repair — and a heal here would "
-            "rewrite the reference graph the tests read. Run `heal` in an adopted repo, "
-            "or pass --repo.")
+            "rewrite the reference graph the tests read. Run `upgrade --graph` in an "
+            "adopted repo, or pass --repo.")
 
     healers = healers_in_order(names)
     if args.apply and not args.allow_dirty:
@@ -4723,7 +4737,7 @@ def cmd_heal(args: argparse.Namespace) -> int:
                 _print_changes(changes, repo, dry_run=True)
                 if drifts:
                     print("\nThis was a dry run — nothing was written. "
-                          f"`hypergraph heal {healer.name} --apply` acts.")
+                          f"`hypergraph upgrade --graph {healer.name} --apply` acts.")
             entry["changes"] = []
             payload["healers"].append(entry)
             # Detected drift alone is **exit 0**. Unhealed drift is a capability that
@@ -4770,7 +4784,7 @@ def _print_changes(changes: list, repo: Path, *, dry_run: bool) -> None:
 
 
 def heal_list(config: dict, repo: Path, *, json_out: bool = False) -> int:
-    """`hypergraph heal` with no healer named: the registry and what applies here."""
+    """`upgrade --graph` with no healer named: the registry and what applies here."""
     rows = applicable_heals(config, repo)
     if json_out:
         print(json.dumps({"healers": [
@@ -4790,10 +4804,10 @@ def heal_list(config: dict, repo: Path, *, json_out: bool = False) -> int:
             print(f"  {'':<10}         → {reason}")
     applicable = [h for h, reason in rows if reason is None]
     if applicable:
-        print(f"\n  hypergraph heal {applicable[0].name}            # detect only "
-              "(the default)\n"
-              f"  hypergraph heal {applicable[0].name} --apply    # rewrite the graph "
-              "and publish")
+        print(f"\n  hypergraph upgrade --graph {applicable[0].name}            "
+              "# detect only (the default)\n"
+              f"  hypergraph upgrade --graph {applicable[0].name} --apply    "
+              "# rewrite the graph and publish")
     return 0
 
 
@@ -7960,7 +7974,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hypergraph.py", description=__doc__)
     parser.add_argument("--version", action="version",
                         version=f"hypergraph-protocol {__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    # metavar hides unlisted aliases (the deprecated `heal`) from the usage line's
+    # brace enumeration; parsers added without help= already stay out of the table.
+    sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     p_check = sub.add_parser("check", help="validate protocol invariants over graph exports")
     p_check.add_argument("--record", type=Path, required=True, help="record-graph export JSON")
@@ -8144,7 +8160,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p_upgrade = sub.add_parser(
         "upgrade", help="refresh an adopted repo's copies (skills, AGENTS.md block, "
-                        "workflows) to this CLI's release")
+                        "workflows) to this CLI's release; --graph repairs graph "
+                        "content instead (detect-only until --apply)")
     p_upgrade.add_argument("--repo", type=Path, help="repo root (default: cwd)")
     p_upgrade.add_argument("--config", type=Path, help=".hypergraph/config.yml")
     p_upgrade.add_argument("--user", action="store_true",
@@ -8287,7 +8304,6 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--source", type=Path, metavar="PATH",
                        help="the source graph export to repair against (default: the "
                             "cached mirror pull, else a live read-only export)")
-        p.add_argument("--repo", type=Path, help="repo root (default: cwd)")
         p.add_argument("--allow-dirty", action="store_true",
                        help="heal even with uncommitted changes under the graph dir")
         p.add_argument("--limit", type=int, metavar="N",
@@ -8301,9 +8317,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--yes", action="store_true",
                        help="proceed without confirming a large repair")
 
-    p_heal = sub.add_parser(
-        "heal", help="carry a capability backwards into a repo that adopted before it "
-                     "existed (detect-only unless --apply)")
+    # Deprecated alias for `upgrade --graph` (0.9.0). No help= → absent from the
+    # commands table; the subparsers metavar keeps it out of the usage brace list.
+    # Works through the 0.9.x series, then goes away.
+    p_heal = sub.add_parser("heal")
     p_heal.add_argument("healer", nargs="*",
                         help=f"which repair(s) to run (have: "
                              f"{', '.join(h.name for h in HEALERS)}). "
@@ -8311,7 +8328,22 @@ def main(argv: list[str] | None = None) -> int:
     graph_args(p_heal)
     mirror_args(p_heal)
     heal_args(p_heal)
-    p_heal.set_defaults(func=cmd_heal)
+    p_heal.add_argument("--repo", type=Path, help="repo root (default: cwd)")
+    p_heal.set_defaults(func=cmd_heal, _heal_alias=True)
+
+    # The graph-repair half of `upgrade` (formerly `heal`): bare `--graph` lists the
+    # registry, `--graph <healer>` detects, `--apply` makes it act. p_upgrade already
+    # declares --repo/--config, so the shared helpers that would re-add those
+    # (graph_args, a --repo of heal's own) are not applied wholesale.
+    p_upgrade.add_argument("--graph", nargs="*", metavar="HEALER", default=None,
+                           help="repair graph content instead of refreshing copies: "
+                                f"typed retroactive repairs (have: "
+                                f"{', '.join(h.name for h in HEALERS)}). Bare --graph "
+                                "lists the registry. Detect-only until --apply")
+    p_upgrade.add_argument("--graph-dir", type=Path,
+                           help=f"node-file root (default: {DEFAULT_GRAPH_DIR})")
+    mirror_args(p_upgrade)
+    heal_args(p_upgrade)
 
     # ---- adoption: compute the facts an adopting agent would otherwise gather by
     # hand. Never the claims — see the module comment above `cmd_adopt`.
@@ -8346,6 +8378,10 @@ def main(argv: list[str] | None = None) -> int:
     p_adopt.set_defaults(func=cmd_adopt)
 
     args = parser.parse_args(argv)
+    if getattr(args, "command", None) == "upgrade" and args.graph is not None \
+            and args.dry_run:
+        parser.error("--dry-run belongs to the copies half; --graph is already "
+                     "detect-only, and `--apply` is what makes it write")
     if getattr(args, "command", None) == "import" and not (args.record or args.state):
         parser.error("import needs --record and/or --state")
     if getattr(args, "command", None) == "tags" and args.action in ("add", "rm") \
