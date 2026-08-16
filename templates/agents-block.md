@@ -7,7 +7,9 @@ now, with every claim citing the evidence it rests on. Work that is not recorded
 not happen, and a dead end recorded is worth as much as a success:
 
 1. **Orient on arrival**: run the `hypergraph-orient` skill or read `STATE.md` —
-   the frontier (open/broken/blocked) is what matters now.
+   the frontier (open/broken/blocked) is what matters now. To work a frontier gap
+   deliberately (a target, a budget, a lane of your own), use the
+   `hypergraph-dispatch` skill.
 2. **Record every unit of work** (features, fixes, experiments, dead ends,
    decisions): the `hypergraph-record` skill — one causally-parented record node
    with a `## State Impact` section. Unrecorded work is invisible to the project.

@@ -4151,6 +4151,8 @@ SHIPPED_BLOCK_DIGESTS = frozenset({
     "c0698b961c95a5c98a1e3df40cba88e5917db5d02e427c6fa4c7727a57feafa0",
     # 0.0.8 — says what the two graphs are for, not just where they live
     "0e6bd61095cb87c87cb96d5c74c52e18ad0dc22f5f6a5ae2dd636f4d4961a7d3",
+    # 0.9.0 — non-negotiable 1 points at hypergraph-dispatch for deliberate work
+    "5f15fb60813ac4611d3d22a11034fa54812110bffca34249ce79504eddde8678",
 })
 
 
