@@ -247,6 +247,26 @@ across a batch produces one coherent claim where N passes produce N overlapping 
   means something else entirely: starting a *new* project from someone else's graph,
   which mints new identity and files the source under `archive:` (see below).
 
+### Dispatch and lanes
+
+Dispatch is the act of pointing an agent at a target — a frontier node, a stated
+goal, or a region of the state graph — and letting it work a bounded budget in an
+isolated **lane**. It adds no invariant: a dispatched agent is a contributor by
+definition, so contributors-record / maintainer-reconciles above covers it whole.
+
+- **Dispatch enters through the record graph.** Every dispatch begins as a decision
+  record node (`Dispatch: <target>`), causally parented on the target's provenance,
+  with the work nodes arriving as its children. The same flow as any Operator
+  directive (see Forward work) — intent is recorded before work exists.
+- **The dispatch decision node is an advisory lane claim.** An unreconciled
+  `Dispatch:` node with no closure line in a descendant marks the target as being
+  worked. Other dispatches read the claims and pick elsewhere. The claim is
+  advisory, never a lock: two agents that miss each other duplicate work — the
+  merge story absorbs that — and nothing can corrupt, because neither writes state.
+- **Lanes are a tool property, like the mirror.** Providers (git worktree today;
+  see [backend/lanes.md](backend/lanes.md)) are CLI mechanics the protocol never
+  reads. A project that never dispatches loses nothing.
+
 ## Adoption epochs
 
 Projects that adopt Hypergraph mid-life have history the protocol cannot retrofit:
@@ -327,6 +347,8 @@ The state graph carries intent as well as fact — but never as task lists.
 - **The arriving agent decides.** Decision records preserve why the last bet was
   made; they do not bind the next agent. Overriding a prior bet is done by writing a
   new decision record — disagreement is recorded, never silent.
+- **Dispatch is this flow, aimed.** Working a frontier gap in a lane starts with the
+  same decision-record shape — see Dispatch and lanes under Collaboration.
 
 ## Node templates
 
