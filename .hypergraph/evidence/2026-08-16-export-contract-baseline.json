@@ -1,0 +1,176 @@
+{
+  "probe": "2026-08-16-export-contract-probe.py",
+  "measured_at": "2026-08-16T20:17:31.038887+02:00",
+  "exports": [
+    {
+      "file": ".hypergraph/cache/record.json",
+      "kind": "record",
+      "findings": [],
+      "top_level_keys": [
+        "exported_at",
+        "nodes",
+        "version"
+      ],
+      "version": 1,
+      "exported_at": "2026-08-16T18:16:09+00:00",
+      "node_count": 89,
+      "key_census": {
+        "artifacts": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "list"
+          ]
+        },
+        "content": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "created_at": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "node_id": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "parent_ids": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "list"
+          ]
+        },
+        "slug_name": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "summary": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "tags": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "list"
+          ]
+        },
+        "title": {
+          "present": 89,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        }
+      },
+      "roots": [
+        "autumn-tooth-6046"
+      ],
+      "nodes_with_state_impact_section": 88,
+      "nodes_without_state_impact_section": []
+    },
+    {
+      "file": ".hypergraph/cache/state.json",
+      "kind": "state",
+      "findings": [],
+      "top_level_keys": [
+        "exported_at",
+        "nodes",
+        "version"
+      ],
+      "version": 1,
+      "exported_at": "2026-08-16T18:16:09+00:00",
+      "node_count": 25,
+      "key_census": {
+        "artifacts": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "list"
+          ]
+        },
+        "content": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "created_at": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "node_id": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "parent_ids": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "list"
+          ]
+        },
+        "slug_name": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "summary": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        },
+        "tags": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "list"
+          ]
+        },
+        "title": {
+          "present": 25,
+          "always": true,
+          "types": [
+            "str"
+          ]
+        }
+      },
+      "roots": [
+        "cool-king-8586"
+      ],
+      "status_histogram": {
+        "open": 5,
+        "superseded": 2,
+        "working": 17
+      }
+    }
+  ],
+  "total_findings": 0
+}
