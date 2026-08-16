@@ -1,8 +1,5 @@
 """Shared graph fixtures for the test suite.
 
-Not named conftest.py: tests/browser/ has one, and two same-named modules on the
-path shadow each other.
-
 `hg` is the tool loaded straight from `tools/hypergraph.py` — it runs as a `uv run`
 script, so there is no installed package to import in a dev checkout.
 """

@@ -119,10 +119,7 @@ files without recording anything, and a publish job refreshes the mirror on merg
 - **[tools/hypergraph.py](tools/hypergraph.py)** — single-file uv script: `check`
   validates the mechanical invariants over JSON graph exports (CI-ready, nonzero exit
   on violations); `render` generates `STATE.md` (frontier first, architecture tree
-  below); `viz` emits a self-contained interactive HTML visualization — five views
-  (Timeline, Frontier, Provenance, Clusters, Everything), each with a layout that fits its data
-  (zero JS dependencies, no network; opens straight from `file://`), or an
-  excaligraph spec for hand-editable excalidraw figures; `export`/`import`/`new`/
+  below); `export`/`import`/`new`/
   `update` are the storage layer, `hwm` reports the reconciliation frontier, and
   `push`/`sync`/`mirror` the optional mirror; `upgrade` refreshes an adopted repo's
   copies of the skills and the AGENTS.md block.
@@ -197,118 +194,33 @@ hypergraph check --record .hypergraph/cache/record.json \
 git add .hypergraph/graph                             # the memory travels with the repo
 ```
 
-Checker/renderer/visualizer, standalone:
+Checker and renderer, standalone:
 
 ```bash
 hypergraph check  --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json
 hypergraph render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
-hypergraph viz    --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json \
-                  --config .hypergraph/config.yml -o .hypergraph/viz.html
-open .hypergraph/viz.html          # interactive: pan/zoom, click nodes, search; SVG/PDF export
 ```
 
-The page has five views, each named after the question it answers, and each with a
-layout that fits the shape of its data:
+### Visualization
 
-- **Timeline** — the record graph as `git log --graph` lanes, time along x. A
-  record graph is a timeline with a few concurrent threads, not a DAG to be
-  ranked. Chips are compact; the x axis switches between even `rank` spacing and
-  real dates with idle gaps compressed. A rule marks the high-water mark and the
-  unreconciled tail behind it is tinted.
-- **Frontier** — the state graph as a status board: `broken | blocked | open |
-  working | superseded`, frontier first, newest work first inside a column. Empty
-  columns collapse to a labelled rail rather than vanishing, because "nothing is
-  broken" is an answer. A toggle switches to the architecture tree from `STATE.md`.
-- **Provenance** — record log and state projection side by side. Cross-graph links
-  default to **focus**: none are drawn until you select or hover a node, because
-  177 links over 51 nodes is a hairball however it is drawn. **All** bundles them
-  into one ribbon per claim through a shared spine.
-- **Clusters** — each state node's contributing record set drawn as a blob, using
-  a signed distance field (per-member outline, a corridor along a spanning tree,
-  smooth merging, and non-members pushing the boundary away) rather than a convex
-  hull, which would swallow whatever sat between three far-apart members.
-- **Everything** — the default. Both graphs, circles, blobs, and every cross-graph
-  ribbon at once. It is busy, deliberately: the page shows you what is in the graph
-  before it shows you a slice of it, and the four focused views above are one click
-  or one number key away.
+Visualization lives outside this package. The contract is the JSON exports: `export`
+writes `.hypergraph/cache/{record,state}.json`, and any renderer that reads those
+files can draw the graphs — no import across the package boundary, no coupling to
+this tool's internals.
 
-Underneath, a **Display** section mixes the pieces freely: graph visibility,
-node style, layout, cross-link mode and per-species edge toggles. Nothing fits
-below 0.45 zoom — a view that does not fit scrolls instead of shrinking to
-illegibility. The layout is deterministic: no randomness anywhere, so two renders
-of the same graph give identical output. **Arrange** moves the whole drawing without
-changing what is drawn — spread, tighten, relax from where things are now, shuffle
-to another arrangement (a seed, not a die roll, so it stays reproducible), or reset
-to the original. Drag a node and the blob around it keeps its real traced shape; it
-coarsens the sampling grid rather than falling back to a hull. The sidebar is
-resizable (drag the divider) and collapsible (click it); exports live in the
-header's download menu. Deep links: `viz.html#everything`, `#timeline`,
-`#frontier`, `#provenance`, `#clusters`, or `#<any-slug>` to jump to a node. The
-pre-rename hashes (`#record`, `#state`, `#combo`, `#hyper`) still resolve.
+The maintained renderer is **hypergraph-viz**, a thin translator built on
+[excaligraph](https://github.com/theo-kirby/excaligraph) (MIT): it reads the two
+exports and emits an Excalidraw scene — record graph, state graph, each state
+node's impact set as a hyperedge blob, statuses in a consistent palette, every
+node carrying a `link:` back to its markdown source. The output is a figure you
+can hand-edit and keep editing: open it at excalidraw.com, drag a node, the
+arrows follow.
 
-**Blob tuning** in the sidebar edits the outline geometry live — padding, corridor,
-smoothing, clearance, the tracing grid, and the fill/stroke/label style. The panel
-remembers your changes in the browser. To make a tuning travel with the repo, hit
-*Copy as YAML* and paste the block into `.hypergraph/config.yml`:
+An optional `viz:` block in `.hypergraph/config.yml` is display configuration for
+that external tooling; core never reads it and no invariant does either. `hypergraph
+viz` remains in the CLI as a signpost only — it prints where visualization went and
+exits 2.
 
-```yaml
-viz:
-  blob:
-    padding: 15       # stand-off from each node's outline
-    corridor: 10      # half-width of the band along the spanning tree
-    smoothing: 18     # how softly the parts merge (the fillet)
-    clearance: 11     # how far the outline stays off a non-member
-    resolution: 5     # grid step for tracing — smaller is truer and costs more
-    tolerance: 1.4    # how far a point may be dropped from the traced line
-    maxPoints: 220    # cap on points per outline
-    dragCoarsen: 2.5  # how much coarser the grid goes while dragging
-    fillOpacity: 14   # percent; dark mode adds 4
-    strokeWidth: 1.2
-    labelSize: 10.5
-```
-
-Every key is optional and any you leave out keeps its default. The precedence is
-defaults → this block → whatever you last moved in the browser; *Reset* drops the
-browser's copy and returns to the block.
-
-### Excalidraw figures
-
-For a figure you can hand-edit, `viz` also emits a graph spec for **excaligraph**
-(MIT), which turns it into an Excalidraw scene. It is deliberately a two-step:
-`hypergraph.py` never shells out, and node stays optional.
-
-```bash
-hypergraph viz --format excaligraph \
-    --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json \
-    --config .hypergraph/config.yml -o graph.yaml
-excaligraph build graph.yaml -o graph.excalidraw     # then open it in excalidraw.com
-excaligraph preview graph.excalidraw -o graph.svg    # …or render it headlessly
-```
-
-### Live mode
-
-`--live` writes `viz.html` *plus* a sibling `viz.data.json`, and the page polls
-that file, redrawing and pulsing whatever appeared since the last poll — a status
-board for a run in progress. It is the one output that is deliberately **not**
-self-contained, which is why it is a flag and not the default:
-
-```bash
-hypergraph viz --live --record .hypergraph/cache/record.json \
-    --state .hypergraph/cache/state.json --config .hypergraph/config.yml \
-    -o .hypergraph/viz.html
-python3 -m http.server -d .hypergraph      # browsers block fetch from file://
-```
-
-Re-run `export` and `viz --live` (from a watcher, a commit hook, or a loop) and
-the open page catches up on its own. If the data file cannot be reached, the
-indicator in the header says so and polling stops rather than failing silently.
-
-Nodes are coloured by the same status palette the page uses, so a figure and the
-page never disagree, and each one carries a `link:` back to its markdown source.
-Each state node's impact set becomes a hyperedge blob. Cross-graph edges are off
-by default (`--links none|provenance|impact|all`) for the same reason the page
-defaults to focus — and because the impact relation *is* the blob membership, so
-drawing it again as edges says nothing new.
 
 ## Repo map
 
@@ -321,12 +233,9 @@ backend/flywheel.md         the host's payload/lease contract, for the mirror co
 skills/hypergraph-*/        the five skills (.claude/skills/ symlinks these)
 templates/                  record-node / state-node / config shapes
 templates/github-actions/   PR check + publish-on-merge workflows
-tools/hypergraph.py         checker + renderer + visualizer + storage + mirror (uv script)
-tools/bundle_viz.py         dev tool: bundles tools/viz/* into the page constant
-tools/viz/                  the viz page's sources (html + css + js parts)
+tools/hypergraph.py         checker + renderer + storage + mirror (uv script)
 tools/fixtures/             test fixtures (clean, violations, local-graph, self)
-tests/                      pytest suites (checker, viz, storage, mirror, collaboration, adoption, upgrade)
-tests/browser/              playwright layout baselines (dev group; self-skipping)
+tests/                      pytest suites (checker, storage, mirror, collaboration, adoption, upgrade)
 ```
 
 This repo dogfoods itself: see [.hypergraph/config.yml](.hypergraph/config.yml) and
@@ -341,6 +250,6 @@ the CLI is `uv run tools/hypergraph.py …` (`[tool.uv] package = false`, so the
 
 ```bash
 ./install.sh                       # symlink the skills into ~/.claude/skills
-uv run pytest tests/               # checker + viz + storage + mirror suites
+uv run pytest tests/               # checker + storage + mirror suites
 uv run tools/hypergraph.py sync --config .hypergraph/config.yml
 ```

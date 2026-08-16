@@ -3,8 +3,8 @@
 # ships it as the module `hypergraph_protocol` with a `hypergraph` entry point.
 [project]
 name = "hypergraph-protocol"
-version = "0.0.8"
-description = "Hypergraph: a substrate for autonomous research and engineering. Two graphs per project — an append-only record graph of what happened, and a single-writer state graph of what is true now, each claim citing the evidence it rests on. Checker, STATE.md renderer, and interactive visualizer."
+version = "0.0.9"
+description = "Hypergraph: a substrate for autonomous research and engineering. Two graphs per project — an append-only record graph of what happened, and a single-writer state graph of what is true now, each claim citing the evidence it rests on. Checker, STATE.md renderer, local git-native backend."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -22,15 +22,10 @@ hypergraph = "hypergraph_protocol:main"
 # member, so it never reaches the distribution — the wheel and sdist ship from
 # the explicit allow-lists below, and tests/test_packaging.py enforces that.
 # Without it here, `uv run pytest tests/` would silently skip those tests.
-#
-# playwright is the same shape: it drives the viz page in a real browser
-# (tests/browser/), it must never reach the distribution, and those tests skip
-# themselves when it — or its chromium build — is absent.
 dev = [
     "pytest>=8",
     "pyyaml>=6",
     "numpy>=1.24",
-    "playwright>=1.62.0",
 ]
 
 # `live` marks tests that write to a real hosted mirror. They are double
@@ -50,10 +45,8 @@ build-backend = "hatchling.build"
 "skills" = "hypergraph_protocol_data/skills"
 "templates" = "hypergraph_protocol_data/templates"
 
-# The wheel needs only the bundled module; the sdist also carries the viz sources
-# and their bundler, so `tools/bundle_viz.py` can be re-run from a source release.
 [tool.hatch.build.targets.sdist]
-include = ["tools/hypergraph.py", "tools/bundle_viz.py", "tools/viz",
+include = ["tools/hypergraph.py",
            "README.md", "SPEC.md", "LICENSE", "pyproject.toml",
            "skills", "templates", "backend"]
 # `.claude/skills/hypergraph-*` are committed symlinks into `skills/` — the dogfooding

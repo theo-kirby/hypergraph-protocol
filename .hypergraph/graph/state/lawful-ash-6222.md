@@ -5,31 +5,28 @@ title: Views
 created_at: '2026-08-14T13:27:26+00:00'
 parents:
 - polished-pond-2718
-summary: Five job-named views with Everything as the boot default; the rename measured at both ends by fit zoom; tag chips that change no geometry; open on rendering any graph but this project's own.
+summary: 'Superseded at 0.0.9: the five views left with the page; body kept as the record of the job-named views and the legibility lessons that transfer to hypergraph-viz.'
 flywheel:
   node_id: 8bcba412-85bd-5a89-a05a-a31d843acee9
   slug: yellow-hill-6987
-  revision: 0
-  pushed_at: '2026-08-14T13:37:08+00:00'
-  content_sha256: b254f6feabd5212d930e7f30c6a52e860aadb9d3ff44507009834cb7c75c2409
+  revision: 1
+  pushed_at: '2026-08-16T16:38:33+00:00'
+  content_sha256: 2a8c96e5c1ef85d72a421cdc0a6773b0ae342cf201a849b64c07920097d204d3
   parents_sha256: 8a5cac8569ae19b59da07c94ee132cf2455491411282f4f5f89fb128ce53eabb
   parents:
   - f4d676d8-a180-55fc-ae3f-54c1e4d3bcab
 ---
-Status: working
+Status: superseded
 
 ## Current
 
-Five views named after the job each does, with **Everything** as the boot default — both graphs, circles, force layout, all link kinds and all four edge toggles on. The four focused views are each a deliberate slice, one click or one number key away; opening on the narrowest of them asked a first-time reader to pick a slice of something they had not seen [rec: tiny-stone-3934].
+**Superseded**: the page these views lived on was removed from the repo at 0.0.9 with the viz cut; the seam that replaces it is described by the parent node, **Visualization** (`polished-pond-2718`), and the job the views did passes to hypergraph-viz when it exists [rec: loyal-tide-3608]. What follows is the record of what the views were and what designing them taught.
 
-- **Timeline** — the record graph as `git log --graph` lanes, x by rank or by real dates with clamped gaps, a lane ruler and date gutter, the high-water mark drawn as a rule with the unreconciled tail tinted [rec: rough-moss-4912].
-- **Frontier** — the state graph as a status board (broken | blocked | open | working | superseded), frontier columns first, empty columns kept as labelled rails, with an architecture-tree toggle mirroring STATE.md [rec: rough-moss-4912].
-- **Provenance** — both graphs in columns, with the state column ordered by the mean `chrono` of the record work each claim cites. Cross-graph links carry a mode — focus (default) | all | none — orthogonal to the per-kind checkboxes: the checkboxes say which kinds may draw, the mode says how many. Focus draws only the selected or hovered node's links, so it opens with zero of 177; `all` routes each claim's links through a staggered vertical spine as bundled ribbons without arrowheads [rec: vast-sage-0617].
-- **Clusters** — each claim's record set as a distance-field blob, laid out by a two-level force sim that settles the hyperedges as bodies first and then the nodes toward their cluster centre [rec: smooth-wolf-8655].
-- **The rename was measured at both ends.** Fit zoom went 0.183 → 1.0 (Timeline), 0.283 → 1.0 (Frontier), 0.208 with 234 edges drawn → 1.057 with zero cross-links until asked (Provenance), and 0.877 with 12 unlabelled convex hulls → 0.918 with 12 blobs and 39 labels (Clusters), on a frozen 39-record/12-state snapshot of this repo's own graph [rec: gilded-pebble-5687] [rec: southern-ivy-0706] [rec: wise-river-3571]. This supersedes the earlier toggle-driven single view with Record/State/Columns/Force presets [rec: long-tree-4179] [rec: still-forest-9161]; the pre-rename hashes still deep-link, and `#<slug>` still jumps to a node [rec: southern-ivy-0706].
-- **A tag chip row filters and changes no geometry and no colour** — one chip per tag, OR within the selection, ANDed with the search box, hidden entirely on a graph with no tags. A tag has no standing in the protocol, so letting one restyle a node would give it standing in the picture that it has nowhere else; a browser test renders the same graph with and without tags and compares every shape [rec: clear-moss-4527].
-- **The record-node panel has an Evidence section** listing that node's `artifacts:` paths as plain `<code>`, never as links: the page is emailed and committed, so a `file://` that resolves on one machine and 404s on every other reads worse than the path itself. No existence flag is baked in either — a "missing" computed at render time is a stale claim about somebody else's filesystem. The **state**-node payload has no `artifacts` key at all, and that absence is the documentation for "evidence lives on record nodes" [rec: shady-bay-7654].
-- **Open: every view so far has been measured on this project's own graph.** The nine-run benchmark dataset is the first real external subject and it is renderable, but it came from a harness later found to be uncontrolled, so it is a rendering subject and not a source of claims [rec: ancient-dew-4488] [rec: staid-field-2723] [rec: southern-ridge-1802].
+- **Five views named after the job each did**, with **Everything** as the boot default — both graphs, circles, force layout, all link kinds on. Opening on the narrowest view asked a first-time reader to pick a slice of something they had not seen [rec: tiny-stone-3934].
+- **Timeline** — the record graph as `git log --graph` lanes, the high-water mark drawn as a rule with the unreconciled tail tinted; **Frontier** — the state graph as a status board, frontier columns first, empty columns kept as labelled rails [rec: rough-moss-4912]. **Provenance** — both graphs in columns, cross-graph links defaulting to focus so it opened with zero of 177 drawn [rec: vast-sage-0617]. **Clusters** — each claim's record set as a distance-field blob [rec: smooth-wolf-8655].
+- **The view rename was measured at both ends** — fit zoom improved on every view on a frozen snapshot of this repo's own graph [rec: gilded-pebble-5687] [rec: southern-ivy-0706] [rec: wise-river-3571]. It superseded the earlier toggle-driven single view [rec: long-tree-4179] [rec: still-forest-9161].
+- **A tag chip row filtered and changed no geometry and no colour** — a tag has no standing in the protocol, so letting one restyle a node would give it standing in the picture that it has nowhere else [rec: clear-moss-4527].
+- **The record-node panel had an Evidence section** listing `artifacts:` paths as plain `<code>`, never as links, with no baked-in existence flag — a "missing" computed at render time is a stale claim about somebody else's filesystem. The state-node payload had no `artifacts` key at all [rec: shady-bay-7654].
 
 ## Negative knowledge
 
@@ -41,7 +38,7 @@ Five views named after the job each does, with **Everything** as the boot defaul
 ## Provenance
 
 - long-tree-4179 — the original three-view viz
-- still-forest-9161 — tabs collapsed into the toggle-driven unified view this supersedes
+- still-forest-9161 — tabs collapsed into the toggle-driven unified view this superseded
 - gilded-pebble-5687 — the seven-phase overhaul, its measured motivation, and the source split
 - southern-ivy-0706 — views renamed; browser baselines captured; deep links preserved
 - rough-moss-4912 — git-log lanes, the status board, axis-aware fitting
@@ -51,6 +48,5 @@ Five views named after the job each does, with **Everything** as the boot defaul
 - tiny-stone-3934 — Everything as the boot default, and why the narrowest view was the wrong one
 - clear-moss-4527 — tag chips: a filter that changes nothing about how a node is drawn
 - shady-bay-7654 — the Evidence section, and the state payload's deliberate silence
-- ancient-dew-4488 — the nine-run dataset lands as the first external subject
-- staid-field-2723 — that dataset qualified: renderable, but not a source of claims
-- southern-ridge-1802 — every view so far measured on this project's own graph
+- hollow-path-2087 — the excaligraph-figure legibility lesson
+- loyal-tide-3608 — the viz cut removed the page these views lived on

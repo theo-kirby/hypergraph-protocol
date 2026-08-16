@@ -5,13 +5,13 @@ title: PyPI releases
 created_at: '2026-08-14T13:25:06+00:00'
 parents:
 - damp-basin-8974
-summary: 0.0.2 through 0.0.8 live and each verified from the public index, not from dist/; the published package is now a plain dependency of a repo with no access to this checkout.
+summary: 0.0.2 through 0.0.8 live and each verified from the public index, not from dist/; the published package is a plain dependency of a repo with no access to this checkout; 0.0.9 staged by the viz cut, not yet published.
 flywheel:
   node_id: fc3ca91a-1b5d-5543-921b-b82d222f75ec
   slug: polished-sky-8897
-  revision: 0
-  pushed_at: '2026-08-14T13:37:04+00:00'
-  content_sha256: ead262eb277cd14e36080b51ce3174b3633ad09da41c9f3658822c643f1e2026
+  revision: 1
+  pushed_at: '2026-08-16T16:38:33+00:00'
+  content_sha256: d9828c46e139acdbf083123dc61090c2e2914ae2730ea11691688b58681e048f
   parents_sha256: 9c8039d8ccc995d9c15665648d7d82c9399050ef076f05102c409e2d18ebabfb
   parents:
   - e6697aa9-2f7c-5b23-8ef4-abc687d15567
@@ -28,6 +28,7 @@ Five releases are live on PyPI, and every one was verified **from the public ind
 - **0.0.7** carried `hypergraph upgrade` and the `hypergraph_version:` stamp. It had to ship rather than wait, because an upgrade path only functions once a release contains it; leaving it unreleased was the same defect restating itself [rec: humble-rain-0304].
 - **0.0.8** was verified with published artifacts only: `uv tool install --force --refresh` moves 0.0.7 → 0.0.8, the released package's skills carry the mode A walkthrough, and `upgrade --dry-run` run from the published binary against cadex's customized AGENTS.md block reports it and steps back where 0.0.7 deleted it [rec: patient-ridge-8464].
 - **The published package is now consumed by a repo with no path to this source tree.** `hypergraph-labs` declares `hypergraph-protocol==0.0.8` as an ordinary dependency and bakes the pin into the container image its experiments run in, so every run of it is also a test of what was actually published [rec: lean-field-0101].
+- **0.0.9 is staged and not published**: the viz cut bumped all five version stamps (the packaging suite's parity tests caught all three doc stamps) and the sdist allow-list no longer ships viz sources; the release to PyPI is its own step and has not run [rec: loyal-tide-3608].
 - **Version parity is guarded in three places and the third has fired**: `test_spec_header_matches_pyproject` failed with `SPEC.md says v0.0.5, pyproject says 0.0.6` on a release where SPEC.md itself did not change [rec: sleepy-vine-2805]. The version lives in five places with two parity tests holding them in step [rec: humble-rain-0304], and the benchmark's boxes pin an exact version and assert it on the box, because `uv tool install` reuses a cached tool and would otherwise leave a box silently running an older build [rec: staid-field-2723].
 
 ## Negative knowledge
@@ -44,3 +45,4 @@ Five releases are live on PyPI, and every one was verified **from the public ind
 - patient-ridge-8464 — 0.0.8 published and verified against the index rather than the build directory
 - lean-field-0101 — the published 0.0.8 consumed as a plain dependency by a repo with no access to this checkout
 - staid-field-2723 — the version pin the benchmark boxes assert, because uv tool install reuses a cached tool
+- loyal-tide-3608 — 0.0.9 staged by the viz cut; not yet published

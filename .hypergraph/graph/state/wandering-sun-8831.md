@@ -5,13 +5,13 @@ title: Protocol mechanics
 created_at: '2026-08-06T21:41:18.171074+00:00'
 parents:
 - cool-king-8586
-summary: 'tools/hypergraph.py: check/render/viz plus seven local-backend verbs, invariants enforced at authoring time as well as check time, both concurrency defects closed, 337 tests. Storage and retroactive repair are its children.'
+summary: 'tools/hypergraph.py: check/render plus seven local-backend verbs, invariants enforced at authoring time as well as check time, both concurrency defects closed; 8,376 lines after the 0.0.9 viz cut, 283 tests. Storage and retroactive repair are its children.'
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 19
-  pushed_at: '2026-08-14T13:37:04+00:00'
-  content_sha256: f6df1c0a5418bb6077f630b77863f9e76cf76b80a9e7fc9e2947b11b65c1a395
+  revision: 20
+  pushed_at: '2026-08-16T16:38:33+00:00'
+  content_sha256: d67451c3e979e4fee02b7c69973cf7a24473d7fa1503457d5db6bc37da329958
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -22,7 +22,7 @@ Status: working
 
 `tools/hypergraph.py` — a single-file uv script depending only on pyyaml — is the whole implementation. It is the mechanism half of the protocol: what enforces the invariants, what an agent actually runs, and what the two graphs are read and written by [rec: flat-pine-9555].
 
-- **`check` validates I2, I4, I5, I6 and I7 mechanically** over offline JSON exports, exits nonzero on violations, and proxies I1 as warnings; `render` emits STATE.md with the frontier first (broken → blocked → open) above an architecture tree [rec: flat-pine-9555]. `viz` reuses the same parsers [rec: long-tree-4179].
+- **`check` validates I2, I4, I5, I6 and I7 mechanically** over offline JSON exports, exits nonzero on violations, and proxies I1 as warnings; `render` emits STATE.md with the frontier first (broken → blocked → open) above an architecture tree [rec: flat-pine-9555].
 - **Invariants are enforced at authoring time, not only at check time.** `new` runs the real checker over a candidate node before writing it, so a bad impact target exits 2 with nothing written; `--reconcile` is the mechanical I3 gate; `update` refuses record nodes outright; and `new state` rejects a pre-scaffolded body that would duplicate the CLI-generated template [rec: old-dawn-8747] [rec: careful-harbor-3902].
 - **Seven local-backend verbs**: `export`, `import`, `new`, `update`, `push`, `tags` and `artifacts`. The round-trip is the strongest guarantee — importing the clean fixture into node files and exporting back yields node-for-node identical graphs that still check clean [rec: old-dawn-8747].
 - **Both concurrency defects are fixed and each was found by construction rather than by review** [rec: vast-rain-4873] [rec: placid-ridge-4035]. Unreconciled enumeration is set subtraction against `ancestors_of()` over the record DAG, and `check_hwm` names *every* unresolvable tip rather than the first. `check_conflict_markers()` rejects `<<<<<<<`, `>>>>>>>` and diff3's `|||||||` at line start in both graphs and in `validate_node_content`, so the machine that would have committed a merge refuses before the one that would have checked it. A bare `=======` is deliberately not sufficient evidence — it is also a setext H1 underline — and is reported only inside a node already showing an unambiguous marker.
@@ -32,7 +32,8 @@ Status: working
 - **Two artifact rules, and `check` still exits 0 on all of them** [rec: shady-bay-7654]: `artifacts:` on a state node is a violation; a path that is wrong about the world — moved, listed twice, resolving outside the repo, or spelled in a case that only survives on macOS — is a warning, with untracked-by-git collapsed to one info line. Exiting 0 is deliberate: an artifact is often a gitignored dataset a fresh clone was never going to have, and failing CI over its absence would make the feature useless for exactly the evidence it exists to hold.
 - **Two real `check` defects were found by watching agents fail against it, not by review** [rec: staid-field-2723]. `check --config <missing>` raised an unhandled `FileNotFoundError` naming the plumbing instead of the problem, and two of three agents read that as "contents are wrong", wrote a one-line stub, and got "0 violations" because root inference had silently fallen back to guessing. Both are fixed, and an inferred root now warns — a warning rather than a violation, because a freshly initialised graph has exactly one parentless node.
 - **A packaging defect made the sdist unbuildable while every declaration in `pyproject.toml` was correct** [rec: long-peak-1620]. hatchling walks with `followlinks=True` and skips any directory whose `(st_dev, st_ino)` it has seen; the committed dogfooding symlinks sort first, so it materialized the skills under `.claude/` and dropped the real tree as a duplicate. `skip-excluded-dirs = true` plus `exclude` fixes it — `exclude` alone made it worse.
-- **The suite is at 337 tests**, over committed fixtures, and covers the checker, viz, the local backend, collaboration and the mirror [rec: autumn-glade-5802] [rec: shady-bay-7654].
+- **The viz cut (0.0.9)**: the tool drops from 12,599 to 8,376 lines (−34%) with no HTML, no JS and no browser dependency left anywhere — the embedded page template, the viz section, the sources, the bundler and the playwright dev-group dependency all removed, with the JSON exports as the contract an external renderer consumes. `viz` survives as a signpost stub that exits 2, and the offline-transport guarantee now covers it as a stub [rec: loyal-tide-3608].
+- **The suite is at 283 tests**, over committed fixtures, covering the checker, the local backend, collaboration and the mirror — every test removed by the viz cut was a test of removed code [rec: autumn-glade-5802] [rec: shady-bay-7654] [rec: loyal-tide-3608].
 
 ## Negative knowledge
 
@@ -63,3 +64,4 @@ Status: working
 - shady-bay-7654 — hypergraph artifacts and the two artifact check rules
 - autumn-glade-5802 — update --parent/--root, cycle detection in local_graph, suite to 337
 - late-sage-5549 — renamed to Protocol mechanics, with storage and retroactive repair as children
+- loyal-tide-3608 — the viz cut: −34% of the file, the suite to 283, playwright out

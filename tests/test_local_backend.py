@@ -1105,15 +1105,3 @@ def test_new_state_refuses_an_artifact(tmp_path, capsys, monkeypatch):
                "--status", "working", "--prov", "brave-otter-1002 — why",
                "--artifact", "runs/train.log") == 2
     assert "record-only" in capsys.readouterr().err
-
-
-def test_the_viz_payload_carries_record_artifacts_and_no_state_key(tmp_path):
-    """The state-node dict's *absence* of the key documents decision 3."""
-    repo, graph_dir = artifact_project(tmp_path)
-    node = hg.load_local_nodes(graph_dir, "record")["brave-otter-1002"]
-    hg.write_node_artifacts(node, ["runs/train.log"])
-    data = hg.build_viz_data(hg.load_local_graph(graph_dir, "record"),
-                             hg.load_local_graph(graph_dir, "state"))
-    entry = next(n for n in data["record"]["nodes"] if n["slug"] == "brave-otter-1002")
-    assert entry["artifacts"] == ["runs/train.log"]
-    assert all("artifacts" not in n for n in data["state"]["nodes"])

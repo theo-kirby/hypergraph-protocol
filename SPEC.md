@@ -1,4 +1,4 @@
-# Hypergraph Protocol — v0.0.8
+# Hypergraph Protocol — v0.0.9
 
 Hypergraph is a **substrate for autonomous research and engineering**: the memory
 layer an agent needs to carry real work across months and across contexts without a
@@ -355,7 +355,7 @@ Created by the `hypergraph-init` skill (day zero) or the `hypergraph-adopt` skil
   protocol — **`origin:`**, where an imported node came from (immutable provenance,
   written once by `import --fork`). An optional **`tags:`** list of names may also
   appear: annotation, and **no invariant reads it** — the same standing as the
-  config's `viz: blob:` block. A claim that exists only as a tag is invisible to the
+  config's `viz:` block. A claim that exists only as a tag is invisible to the
   protocol, so a claim belongs in a node body. `check` is tag-blind, with one
   exception: where `tags.yml` exists, an undeclared name is a *warning*. A
   **`flywheel:`** block may also appear: mirror bookkeeping that `push` writes and
@@ -382,18 +382,19 @@ network, deterministic, CI-ready:
 ```
 uv run tools/hypergraph.py check  --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json
 uv run tools/hypergraph.py render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
-uv run tools/hypergraph.py viz    --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o .hypergraph/viz.html
 ```
 
-`check` exits nonzero on any I2/I4/I5/I6/I7 violation. `viz` emits a self-contained
-interactive HTML visualization (no network, no JS dependencies): a single
-toggleable view over both graphs — with presets reproducing the classic record,
-state, columns, and force arrangements, plus an everything-on default — where
-`## Provenance` citations and `## State Impact` declarations are drawn as
-cross-graph links — the markdown pointers made visible, still never graph edges.
-An optional `viz: blob:` block in `.hypergraph/config.yml` presets the page's blob
-geometry, so a tuning travels with the repo; it is display configuration only and
-no invariant reads it.
+`check` exits nonzero on any I2/I4/I5/I6/I7 violation.
+
+**Visualization is not part of this tool.** The JSON exports are the contract:
+external tooling (hypergraph-viz, built on excaligraph) reads
+`.hypergraph/cache/{record,state}.json` and draws both graphs, with
+`## Provenance` citations and `## State Impact` declarations drawn as
+cross-graph links — the markdown pointers made visible, still never graph
+edges. An optional `viz:` block in `.hypergraph/config.yml` is display
+configuration for that tooling, so a tuning travels with the repo; core never
+reads it and no invariant does either. `hypergraph viz` remains as a signpost
+that prints where visualization went and exits nonzero.
 
 Two commands exist for keeping an already-adopted project current, and they are
 separate because their effects cost different things. **`upgrade`** refreshes this

@@ -1196,8 +1196,7 @@ def test_no_offline_command_resolves_a_transport(tmp_path, monkeypatch, capsys):
     assert run("check", "--record", cache / "record.json",
                "--state", cache / "state.json") == 0
     assert run("render", "--state", cache / "state.json", "-o", tmp_path / "S.md") == 0
-    assert run("viz", "--record", cache / "record.json", "--state", cache / "state.json",
-               "-o", tmp_path / "v.html") == 0
+    assert run("viz") == 2   # signpost stub: refuses without reaching for anything
     assert run("new", "record", "--graph-dir", graph_dir, "--title", "T", "--body", body,
                "--parent", "calm-fern-1003", "--none", "no state change") == 0
     assert run("import", "--graph-dir", tmp_path / "g2",

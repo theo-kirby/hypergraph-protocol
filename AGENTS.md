@@ -13,7 +13,7 @@ distilled **state graph** (what is true now, including the frontier of open/brok
 The node files are the source of truth: the graphs travel with the repo, offline.
 
 **The graphs are the project's memory, not app data.** The `.hypergraph/` exports
-and STATE.md may look like inputs to the viz/checker tooling — they are also the
+and STATE.md may look like inputs to the checker tooling — they are also the
 record of this project itself, and your work must land in it.
 
 ## Non-negotiables

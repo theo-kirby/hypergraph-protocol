@@ -137,7 +137,8 @@ hypergraph export --config .hypergraph/config.yml       # → .hypergraph/cache/
 Emits the canonical export shape (`node_id`, `slug_name`, `title`, `content`, `summary`,
 `tags`, `artifacts`, `parent_ids`, `created_at`), nodes ordered by `created_at` then `node_id` per
 INTERFACE's determinism note. This is the *whole* integration surface: `check`,
-`render`, and `viz` consume these files without knowing which backend produced them.
+`render`, and any external renderer (hypergraph-viz) consume these files without
+knowing which backend produced them.
 The cache stays gitignored — it is regenerable from the node files at any time.
 
 ### 9. `attach_artifact` — repo-relative paths in frontmatter
@@ -169,7 +170,7 @@ goes stale the moment the checkout moves and takes every artifact path with it.
 plot shows what it shows, what you concluded. `artifacts:` is where it is *enumerated*,
 so a tool can find it without parsing prose. The prose is the claim; the list is its
 index. Dropping the prose leaves a file nobody can interpret; dropping the list leaves
-evidence no `check`, `push` or `viz` can see. Keep both.
+evidence no `check` or `push` can see. Keep both.
 
 **Record nodes only.** `artifacts:` on a state node is a `check` violation: a state
 node is rewritten on every reconcile, so a pointer hung there has no stable owner. The
