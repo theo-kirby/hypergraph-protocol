@@ -45,7 +45,7 @@ record of this project itself, and your work must land in it.
 ## Map
 
 - `SPEC.md` — the protocol (invariants I1–I8 + conventions).
-- `skills/hypergraph-{init,record,reconcile,orient,adopt}/` — the workflows.
+- `skills/hypergraph-{init,record,reconcile,orient,adopt,dispatch}/` — the workflows.
   **This repo dogfoods them.** `.claude/skills/hypergraph-*` are committed relative
   symlinks into `skills/`, so `/hypergraph-record` resolves in a fresh clone and
   editing `skills/<name>/SKILL.md` edits the live skill. Two consequences: **skills
@@ -53,10 +53,12 @@ record of this project itself, and your work must land in it.
   session; and under a harness that does not read `.claude/skills` at all (pi, for
   one), read `skills/<name>/SKILL.md` directly and follow it — the workflow is the
   file, not the installation.
-- `tools/hypergraph.py` — the whole CLI; tests in `tests/`.
+- `tools/hypergraph.py` — the CLI's offline core; `tools/hypergraph_mirror.py` —
+  the mirror's networked half, lazily loaded; tests in `tests/`.
 - `backend/` — `INTERFACE.md` (the ~10 operations that make the protocol portable),
-  `local-adapter.md` (the shipped implementation: node files), `mirror.md` and
-  `flywheel.md` (optional one-way mirroring — CLI internals, not agent-facing).
+  `local-adapter.md` (the shipped implementation: node files), `lanes.md` (the
+  dispatch lane-provider seam), `mirror.md` and `flywheel.md` (optional one-way
+  mirroring — CLI internals, not agent-facing).
 
 ## The CLI
 

@@ -5,6 +5,13 @@ right not to: the repo is the graph of record, and a mirror is a projection the 
 writes. Read this if you are changing `hypergraph push`, debugging a mirror, or
 migrating a project that used to be hosted.
 
+The implementation is split at the network boundary: everything that needs a
+transport lives in `tools/hypergraph_mirror.py` (installed as
+`hypergraph_protocol_mirror.py`), loaded lazily by the core's `_mirror()`; the
+offline bookkeeping — `push --plan`, `--verify --against`, `--record-result`,
+legend/lineage — stays in `tools/hypergraph.py`, so offline commands never import
+this module at all.
+
 The whole feature is optional. A project with no `mirror:` key in
 `.hypergraph/config.yml` never enters this path — `hypergraph push` exits 0 as a no-op,
 and no credential is resolved, no `PATH` consulted, no network module imported.
@@ -476,7 +483,7 @@ Shelling out to the `flywheel` CLI is the default, with REST over `urllib` as an
 explicit fallback (`--transport {auto,cli,rest}`). The CLI is preferred because it owns
 auth — **including OS-keychain keys, which a REST client cannot read at all** — it
 resolves the `/v1` path segment that is absent from the configured `baseUrl`, and it
-handles the undocumented `Idempotency-Key`. This keeps `tools/hypergraph.py`
+handles the undocumented `Idempotency-Key`. This keeps `tools/hypergraph_mirror.py`
 stdlib-only.
 
 Two rules for handling its output:

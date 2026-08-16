@@ -7,8 +7,9 @@
 
 Hypergraph is a substrate for autonomous research and engineering — two graphs per
 project, an append-only record of what happened and a single-writer projection of what
-is true now, with every claim citing the evidence it rests on. This file is the whole
-CLI for it (SPEC.md is the protocol).
+is true now, with every claim citing the evidence it rests on. This file is the CLI's
+offline core (SPEC.md is the protocol); the optional mirror's networked half lives in
+hypergraph_mirror.py beside it, loaded lazily via `_mirror()`.
 
 Consumes JSON graph exports (backend `export_graph`, e.g. flywheel_export_subgraph
 saved to .hypergraph/cache/{record,state}.json). No network, no auth, deterministic.
@@ -34,9 +35,10 @@ The local (git-native) backend keeps both graphs as committed markdown files und
     hypergraph.py skills install [--user | --link | --target DIR]
     hypergraph.py upgrade --graph [tags] [--apply] [--offline]
 
-**These commands never touch the network.** No credential is resolved, no binary is
-looked for, no network module is imported — the graphs are files, and that is the
-whole storage story (SPEC: Storage).
+**These commands never touch the network — structurally.** No credential is
+resolved, no binary is looked for, and the mirror module is never even imported
+(tests/test_mirror_split.py holds this by subprocess) — the graphs are files, and
+that is the whole storage story (SPEC: Storage).
 
 One optional feature does reach out, and only when the config declares a `mirror:`
 (backend/mirror.md). It publishes the committed node files to a hosted graph the

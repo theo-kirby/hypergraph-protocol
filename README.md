@@ -109,20 +109,41 @@ Two workflows in [templates/github-actions/](templates/github-actions/) make it
 enforceable: `hypergraph check --since origin/<base>` fails a pull request that changes
 files without recording anything, and a publish job refreshes the mirror on merge.
 
+## Dispatch
+
+Parallel work can also be *aimed*: the `hypergraph-dispatch` skill points an agent at
+a target — a frontier node, a stated goal, or a region of the state graph — with a
+bounded budget of work units. The dispatch begins as a decision record node
+(`Dispatch: <target>`), which doubles as an advisory lane claim other dispatches read
+to avoid double work; the work arrives as its children; a closure line ends the
+lineage. Nothing new to reconcile against — a dispatched agent is a contributor, so
+the workflow above already covers it (SPEC: Dispatch and lanes).
+
+The lane itself — an isolated worktree on a `lane/<slug>` branch — is managed by
+`hypergraph dispatch open|ls|harvest|close`, the local implementation of a small
+provider seam ([backend/lanes.md](backend/lanes.md)): provision, inject, run,
+harvest, teardown. Harvest is a git merge; teardown refuses while unharvested. With
+no agent command configured, `dispatch open` provisions the lane and prints the
+manual steps, exit 0 — the same stand-down posture as `push` with no mirror.
+
 ## What ships
 
 - **[SPEC.md](SPEC.md)** — the protocol: invariants I1–I8 + conventions.
 - **[skills/](skills/)** — the Claude skills: `hypergraph-init`, `hypergraph-adopt`
   (bring a project with a past under the protocol: legacy-graph import or authored
   prehistory, adoption epoch, AGENTS.md onboarding), `hypergraph-record`,
-  `hypergraph-reconcile`, `hypergraph-orient`.
-- **[tools/hypergraph.py](tools/hypergraph.py)** — single-file uv script: `check`
-  validates the mechanical invariants over JSON graph exports (CI-ready, nonzero exit
-  on violations); `render` generates `STATE.md` (frontier first, architecture tree
-  below); `export`/`import`/`new`/
-  `update` are the storage layer, `hwm` reports the reconciliation frontier, and
-  `push`/`sync`/`mirror` the optional mirror; `upgrade` refreshes an adopted repo's
-  copies of the skills and the AGENTS.md block.
+  `hypergraph-reconcile`, `hypergraph-orient`, `hypergraph-dispatch`.
+- **[tools/hypergraph.py](tools/hypergraph.py)** — uv script, and the offline core of
+  a two-file CLI: `check` validates the mechanical invariants over JSON graph exports
+  (CI-ready, nonzero exit on violations); `render` generates `STATE.md` (frontier
+  first, architecture tree below); `export`/`import`/`new`/
+  `update` are the storage layer, `hwm` reports the reconciliation frontier,
+  `dispatch` manages local lanes, and `upgrade` refreshes an adopted repo's copies of
+  the skills and the AGENTS.md block (`--graph` runs the retroactive graph repairs,
+  detect-only until `--apply`; the old `heal` name is a deprecated alias). The
+  optional mirror's networked half (`push`'s executing tail, `sync`'s publish,
+  `mirror`) lives in **tools/hypergraph_mirror.py**, loaded lazily — offline
+  commands never import it.
 - **[templates/](templates/)** — the exact markdown shapes the checker parses.
 
 ## Install
@@ -142,6 +163,10 @@ nothing to fork.
 uv tool upgrade hypergraph-protocol   # the CLI — lives outside your repo
 hypergraph upgrade                    # the copies — skills, AGENTS.md block, workflows
 ```
+
+(`hypergraph upgrade --graph` is the third, rarer thing: retroactive *graph* repairs
+for a repo that adopted before a capability existed — detect-only until `--apply`,
+because those rewrite node files. The former `heal` command is a deprecated alias.)
 
 `skills install` writes real files into your repo, so `uv tool upgrade` cannot see
 them and they go stale silently. `hypergraph upgrade` refreshes what is already
@@ -230,12 +255,14 @@ backend/INTERFACE.md        ~10 abstract operations — the portability contract
 backend/local-adapter.md    op → node files + hypergraph CLI (git-native; the one impl)
 backend/mirror.md           optional one-way mirroring — CLI internals, not agent-facing
 backend/flywheel.md         the host's payload/lease contract, for the mirror code only
+backend/lanes.md            the lane-provider seam for dispatch (local ships; box is future)
 skills/hypergraph-*/        the skills (.claude/skills/ symlinks these)
 templates/                  record-node / state-node / config shapes
 templates/github-actions/   PR check + publish-on-merge workflows
-tools/hypergraph.py         checker + renderer + storage + mirror (uv script)
+tools/hypergraph.py         the offline core: checker + renderer + storage + dispatch (uv script)
+tools/hypergraph_mirror.py  the mirror's networked half, lazily loaded by the core
 tools/fixtures/             test fixtures (clean, violations, local-graph, self)
-tests/                      pytest suites (checker, storage, mirror, collaboration, adoption, upgrade)
+tests/                      pytest suites (checker, storage, mirror, split, dispatch, collaboration, adoption, upgrade)
 ```
 
 This repo dogfoods itself: see [.hypergraph/config.yml](.hypergraph/config.yml) and

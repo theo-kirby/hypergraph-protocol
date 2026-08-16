@@ -398,8 +398,10 @@ Created by the `hypergraph-init` skill (day zero) or the `hypergraph-adopt` skil
 
 ## Tooling
 
-`tools/hypergraph.py` (single-file uv script) consumes JSON exports — no auth, no
-network, deterministic, CI-ready:
+`tools/hypergraph.py` (uv script) consumes JSON exports — no auth, no network,
+deterministic, CI-ready. The tooling is two files: the core, offline; and
+`tools/hypergraph_mirror.py`, the optional mirror's networked half, which offline
+commands never import at all:
 
 ```
 uv run tools/hypergraph.py check  --record .hypergraph/cache/record.json --state .hypergraph/cache/state.json
@@ -418,15 +420,17 @@ configuration for that tooling, so a tuning travels with the repo; core never
 reads it and no invariant does either. `hypergraph viz` remains as a signpost
 that prints where visualization went and exits nonzero.
 
-Two commands exist for keeping an already-adopted project current, and they are
-separate because their effects cost different things. **`upgrade`** refreshes this
-project's *copies* of what the tooling ships — the skills, the AGENTS.md block, the
-workflows — and every effect of it is `git checkout`-reversible. **`heal`** repairs
-*graph content*: a registry of typed repairs that carry a capability backwards into a
-repo that adopted before the capability existed. Because it rewrites the graph and may
-spend writes that cannot be un-spent, `heal` is **detect-only until `--apply`** — the
-one place in this tooling where a dry run is the default — and plain detected drift
-exits 0, since a capability that landed after your adoption is not a broken invariant.
+One command keeps an already-adopted project current, with two halves whose effects
+cost different things — the `--graph` flag names the boundary. Bare **`upgrade`**
+refreshes this project's *copies* of what the tooling ships — the skills, the
+AGENTS.md block, the workflows — and every effect of it is `git checkout`-reversible.
+**`upgrade --graph`** repairs *graph content*: a registry of typed repairs that carry
+a capability backwards into a repo that adopted before the capability existed.
+Because it rewrites the graph and may spend writes that cannot be un-spent, the graph
+half is **detect-only until `--apply`** — the one place in this tooling where a dry
+run is the default — and plain detected drift exits 0, since a capability that landed
+after your adoption is not a broken invariant. (`heal`, the former name of the graph
+half, survives as a deprecated alias through the 0.9.x series.)
 
 ## Storage
 

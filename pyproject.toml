@@ -1,10 +1,13 @@
-# Package definition for the hypergraph-protocol distribution. The tool stays a
-# single file (tools/hypergraph.py, also runnable directly via uv); the wheel
-# ships it as the module `hypergraph_protocol` with a `hypergraph` entry point.
+# Package definition for the hypergraph-protocol distribution. The tool is two
+# files: the offline core (tools/hypergraph.py, also runnable directly via uv,
+# shipped as the module `hypergraph_protocol` with a `hypergraph` entry point)
+# and the optional mirror's networked half (tools/hypergraph_mirror.py, shipped
+# beside it as `hypergraph_protocol_mirror`), which the core loads lazily and
+# offline commands never import.
 [project]
 name = "hypergraph-protocol"
 version = "0.0.9"
-description = "Hypergraph: a substrate for autonomous research and engineering. Two graphs per project — an append-only record graph of what happened, and a single-writer state graph of what is true now, each claim citing the evidence it rests on. Checker, STATE.md renderer, local git-native backend."
+description = "Hypergraph: a substrate for autonomous research and engineering. Two graphs per project — an append-only record graph of what happened, and a single-writer state graph of what is true now, each claim citing the evidence it rests on. Checker, STATE.md renderer, local git-native backend, dispatch lanes; optional mirror in a separate lazily-loaded module."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
