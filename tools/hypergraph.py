@@ -5084,6 +5084,245 @@ def cmd_mirror(args: argparse.Namespace) -> int:
     return _mirror().run_mirror(args)
 
 
+# ------------------------------------------------------- dispatch: local lanes
+# The local lane provider (backend/lanes.md): a git worktree on a `lane/<slug>`
+# branch, minted here — the agent never names its own lane. Config, all optional,
+# read by this CLI only (the hypergraph-dispatch skill may name these verbs but
+# never a provider's internals — the mirror's isolation pattern):
+#
+#   dispatch:
+#     lanes_dir: .hypergraph/lanes   # where worktrees are provisioned
+#     agent: "my-agent --cwd {lane_dir}"   # command template; {lane_dir} is the
+#                                          # ONLY placeholder. The dispatch brief
+#                                          # (target, budget, attribution) travels
+#                                          # on stdin, never argv — argv is
+#                                          # world-readable process state.
+#
+# With no `agent:` configured, `open` provisions the lane and stands down at
+# exit 0, printing the manual steps — the push/no-mirror posture.
+
+DEFAULT_LANES_DIR = ".hypergraph/lanes"
+LANE_BRANCH_PREFIX = "lane/"
+
+
+def _lane_git(repo: Path, *args: str) -> str:
+    """git that raises: lane bookkeeping must never mistake failure for empty."""
+    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                          text=True, timeout=60)
+    if proc.returncode != 0:
+        raise LocalGraphError(
+            f"git {' '.join(args)} failed: {(proc.stderr or proc.stdout).strip()}")
+    return proc.stdout
+
+
+def dispatch_repo(args: argparse.Namespace) -> Path:
+    repo = getattr(args, "repo", None)
+    if repo:
+        return Path(repo).resolve()
+    top = _git(Path.cwd(), "rev-parse", "--show-toplevel").strip()
+    if not top:
+        raise LocalGraphError("dispatch needs a git repository (lanes are worktrees)")
+    return Path(top)
+
+
+def dispatch_lanes(repo: Path) -> list[dict]:
+    """Every lane worktree: [{slug, path, branch, dirty, merged}]."""
+    lanes = []
+    entry: dict = {}
+    for line in (_git(repo, "worktree", "list", "--porcelain") + "\n").splitlines():
+        if line.startswith("worktree "):
+            entry = {"path": Path(line.split(" ", 1)[1])}
+        elif line.startswith("branch refs/heads/" + LANE_BRANCH_PREFIX):
+            branch = line.split("refs/heads/", 1)[1]
+            entry["branch"] = branch
+            entry["slug"] = branch[len(LANE_BRANCH_PREFIX):]
+        elif not line and entry.get("slug"):
+            entry["dirty"] = bool(_git(entry["path"], "status", "--porcelain").strip())
+            merged = _git(repo, "branch", "--merged", "HEAD",
+                          "--format=%(refname:short)")
+            entry["merged"] = entry["branch"] in merged.split()
+            lanes.append(entry)
+            entry = {}
+        elif not line:
+            entry = {}
+    return lanes
+
+
+def live_dispatch_claims(graph_dir: Path) -> list[dict]:
+    """Unreconciled `Dispatch:` record nodes with no `Dispatch closed:` descendant.
+
+    Advisory by design (SPEC: Dispatch and lanes): this is how a second dispatch
+    avoids a first one's target. It reads only the local node files, so a claim on
+    an unmerged lane branch is invisible until harvest — the merge story absorbs
+    that window, as it does every other concurrent-contributor race."""
+    nodes = load_local_nodes(graph_dir, "record", missing_ok=True)
+    state = load_local_nodes(graph_dir, "state", missing_ok=True)
+    reconciled: set[str] = set()
+    state_root = next((n for n in state.values() if not n.parents), None)
+    if state_root is not None:
+        frontier, _err = read_hwm(Node(node_id="", slug=state_root.slug,
+                                       title=state_root.title,
+                                       content=state_root.content,
+                                       parent_ids=[], created_at=""))
+        if frontier:
+            graph = local_graph(nodes, "record")
+            ids = ancestors_of(graph, [s for s in frontier if s in graph.by_slug])
+            reconciled = {graph.nodes[i].slug for i in ids if i in graph.nodes}
+
+    children: dict[str, list[str]] = {}
+    for slug, node in nodes.items():
+        for parent in node.parents:
+            children.setdefault(parent, []).append(slug)
+
+    claims = []
+    for slug, node in nodes.items():
+        if not str(node.title).startswith("Dispatch:") or slug in reconciled:
+            continue
+        closed, queue, seen = False, list(children.get(slug, [])), set()
+        while queue and not closed:
+            child = queue.pop()
+            if child in seen:
+                continue
+            seen.add(child)
+            if "Dispatch closed:" in nodes[child].content:
+                closed = True
+            queue.extend(children.get(child, []))
+        if not closed:
+            claims.append({"slug": slug, "title": node.title})
+    return claims
+
+
+def dispatch_open(args: argparse.Namespace, config: dict, repo: Path) -> int:
+    lanes_dir = Path((config.get("dispatch") or {}).get("lanes_dir")
+                     or DEFAULT_LANES_DIR)
+    if not lanes_dir.is_absolute():
+        lanes_dir = repo / lanes_dir
+    taken = {lane["slug"] for lane in dispatch_lanes(repo)}
+    taken |= {b[len(LANE_BRANCH_PREFIX):] for b in
+              _git(repo, "branch", "--format=%(refname:short)").split()
+              if b.startswith(LANE_BRANCH_PREFIX)}
+    slug = mint_slug(taken)
+    lane_dir = lanes_dir / slug
+    lane_dir.parent.mkdir(parents=True, exist_ok=True)
+    _lane_git(repo, "worktree", "add", "-b", LANE_BRANCH_PREFIX + slug,
+              str(lane_dir), "HEAD")
+    print(f"lane {slug}: {lane_dir} on {LANE_BRANCH_PREFIX}{slug}")
+
+    # The brief travels on stdin, never argv (backend/lanes.md op 2/3): argv is
+    # world-readable process state, and the channel must not fork on a judgment
+    # call about which parts of a brief are sensitive.
+    brief = {"lane": slug, "lane_dir": str(lane_dir),
+             "branch": LANE_BRANCH_PREFIX + slug,
+             "target": args.at, "budget": args.budget,
+             "skill": "hypergraph-dispatch",
+             "close": f"hypergraph dispatch harvest {slug} && "
+                      f"hypergraph dispatch close {slug}"}
+
+    agent = str((config.get("dispatch") or {}).get("agent") or "").strip()
+    if not agent:
+        # The push posture: exit 0, say why, name the manual path.
+        print(f"\ndispatch open: no `dispatch.agent` configured — standing down; "
+              "the lane is yours to drive:\n"
+              f"  1. cd {lane_dir}\n"
+              f"  2. follow the hypergraph-dispatch skill at the target "
+              f"({args.at or 'orient and choose'}), budget {args.budget} unit(s)\n"
+              f"  3. record + commit on {LANE_BRANCH_PREFIX}{slug}, then from "
+              f"{repo}:\n"
+              f"       hypergraph dispatch harvest {slug}\n"
+              f"       hypergraph dispatch close {slug}")
+        return 0
+
+    import shlex
+    argv = [part.replace("{lane_dir}", str(lane_dir))
+            for part in shlex.split(agent)]
+    proc = subprocess.run(argv, input=json.dumps(brief, ensure_ascii=False),
+                          text=True, cwd=lane_dir)
+    # Exit status attests the harness ran, never that the work succeeded
+    # (backend/lanes.md op 3): what the work found is in the arrived nodes.
+    print(f"dispatch open: agent exited {proc.returncode} in lane {slug} — "
+          f"harvest with `hypergraph dispatch harvest {slug}`")
+    return proc.returncode
+
+
+def dispatch_harvest(args: argparse.Namespace, config: dict, repo: Path,
+                     graph_dir: Path) -> int:
+    lane = next((l for l in dispatch_lanes(repo) if l["slug"] == args.lane), None)
+    if lane is None:
+        raise LocalGraphError(f"no lane named {args.lane!r} — `hypergraph dispatch ls`")
+    if lane["dirty"]:
+        raise LocalGraphError(
+            f"lane {args.lane} has uncommitted changes — commit them in the lane "
+            "first. Harvest brings home commits; it must never leave work behind.")
+    if _git(repo, "status", "--porcelain").strip():
+        raise LocalGraphError(
+            "this checkout has uncommitted changes — commit or stash before "
+            "merging a lane, so the harvest is one clean merge.")
+    record_dir = graph_dir if graph_dir.is_absolute() else repo / graph_dir
+    before = {p.name for p in (record_dir / "record").glob("*.md")}
+    _lane_git(repo, "merge", "--no-edit", lane["branch"])
+    arrived = sorted({p.stem for p in (record_dir / "record").glob("*.md")
+                      if p.name not in before})
+    print(f"harvest {args.lane}: merged {lane['branch']}"
+          + (f" — {len(arrived)} record node(s) arrived: {', '.join(arrived)}"
+             if arrived else " — no new record nodes"))
+    if arrived:
+        print("reconcile pending — the maintainer folds these on the default branch")
+    return 0
+
+
+def dispatch_close(args: argparse.Namespace, repo: Path) -> int:
+    lane = next((l for l in dispatch_lanes(repo) if l["slug"] == args.lane), None)
+    if lane is None:
+        raise LocalGraphError(f"no lane named {args.lane!r} — `hypergraph dispatch ls`")
+    # Teardown refuses while unharvested (backend/lanes.md op 5): destroying work
+    # that was never brought home is the one irreversible provider mistake.
+    if (lane["dirty"] or not lane["merged"]) and not args.force:
+        why = "uncommitted changes" if lane["dirty"] else "unmerged commits"
+        raise LocalGraphError(
+            f"lane {args.lane} has {why} — `hypergraph dispatch harvest "
+            f"{args.lane}` first, or --force to abandon the work.")
+    _lane_git(repo, "worktree", "remove", *( ["--force"] if args.force else []),
+              str(lane["path"]))
+    _lane_git(repo, "branch", "-D" if args.force else "-d", lane["branch"])
+    print(f"closed lane {args.lane}"
+          + (" (forced — its work is abandoned)" if args.force else ""))
+    return 0
+
+
+def cmd_dispatch(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    repo = dispatch_repo(args)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+
+    if args.action == "open":
+        return dispatch_open(args, config, repo)
+    if args.action == "ls":
+        lanes = dispatch_lanes(repo)
+        for lane in lanes:
+            state = ("dirty" if lane["dirty"]
+                     else "merged" if lane["merged"] else "unmerged")
+            print(f"  {lane['slug']:<20} {state:<9} {lane['path']}")
+        if not lanes:
+            print("  no lanes")
+        # claims are graph facts, not lane facts: a claim outlives its lane
+        claims = live_dispatch_claims(
+            graph_dir if graph_dir.is_absolute() else repo / graph_dir)
+        for claim in claims:
+            print(f"  claim  {claim['slug']:<20} {claim['title']}")
+        if not claims:
+            print("  no live dispatch claims")
+        return 0
+    if args.action == "harvest":
+        if not args.lane:
+            raise LocalGraphError("dispatch harvest needs a lane slug")
+        return dispatch_harvest(args, config, repo, graph_dir)
+    if args.action == "close":
+        if not args.lane:
+            raise LocalGraphError("dispatch close needs a lane slug")
+        return dispatch_close(args, repo)
+    raise LocalGraphError(f"unknown dispatch action: {args.action}")
+
+
 # ------------------------------------------------------------------- adoption
 # Affordances for hypergraph-adopt. These compute *facts* — git shape, doc
 # inventory, id-prefix resolution, a valid config — so the adopting agent spends
@@ -5957,6 +6196,30 @@ def main(argv: list[str] | None = None) -> int:
                            help=f"node-file root (default: {DEFAULT_GRAPH_DIR})")
     mirror_args(p_upgrade)
     heal_args(p_upgrade)
+
+    # ---- local lane provider: backend/lanes.md
+    p_dispatch = sub.add_parser(
+        "dispatch", help="local lanes: open/ls/harvest/close a git-worktree lane "
+                         "for a dispatched agent (backend/lanes.md)")
+    p_dispatch.add_argument("action", choices=["open", "ls", "harvest", "close"],
+                            help="open: mint a lane and launch (or print the manual "
+                                 "steps). ls: lanes + live dispatch claims. harvest: "
+                                 "merge a lane's commits home. close: tear the lane "
+                                 "down (refuses while unharvested)")
+    p_dispatch.add_argument("lane", nargs="?",
+                            help="lane slug (harvest/close)")
+    graph_args(p_dispatch)
+    p_dispatch.add_argument("--at", metavar="TARGET",
+                            help="open: the dispatch target — a frontier state "
+                                 "slug, a prose goal, or `within <state-slug>`")
+    p_dispatch.add_argument("--budget", type=int, default=1, metavar="N",
+                            help="open: units of work (default 1)")
+    p_dispatch.add_argument("--force", action="store_true",
+                            help="close: tear down even with unmerged or "
+                                 "uncommitted work (abandons it)")
+    p_dispatch.add_argument("--repo", type=Path, help="repo root (default: the "
+                                                      "enclosing git toplevel)")
+    p_dispatch.set_defaults(func=cmd_dispatch)
 
     # ---- adoption: compute the facts an adopting agent would otherwise gather by
     # hand. Never the claims — see the module comment above `cmd_adopt`.

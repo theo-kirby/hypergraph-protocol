@@ -228,6 +228,7 @@ __marimo__/
 # They carry their own .git file and a full checkout, so a `git add -A` from the
 # main working tree tries to commit an entire second copy of the repo.
 /.claude/worktrees/
+/.hypergraph/lanes/
 
 # NOT ignored, deliberately: /.claude/skills/. Its entries are relative
 # symlinks into skills/, committed so this repo dogfoods its own skills — clone the

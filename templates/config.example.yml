@@ -57,6 +57,18 @@ graph_dir: .hypergraph/graph
 # `hypergraph mirror doctor` checks it and prints the id to paste here.
 # mirror_account_id: 00000000-0000-0000-0000-000000000000
 
+# Optional: local lane provider for `hypergraph dispatch` (backend/lanes.md).
+# Read by the CLI only — the hypergraph-dispatch skill never sees it, the way the
+# skills never see `mirror:`. `lanes_dir` is where worktrees are provisioned
+# (gitignore it — a worktree inside the repo is a second checkout). `agent` is a
+# command template; `{lane_dir}` is the ONLY placeholder, and the dispatch brief
+# (target, budget, attribution) arrives on the agent's stdin, never in argv.
+# Absent `agent` → `dispatch open` provisions the lane, prints the manual steps,
+# and exits 0 — the same stand-down posture as `push` with no mirror.
+# dispatch:
+#   lanes_dir: .hypergraph/lanes
+#   agent: "my-agent --cwd {lane_dir}"
+
 # Optional: adoption epoch (SPEC: Adoption epochs). Record nodes created strictly
 # before the marker node are legacy history, exempt from I2/template compliance in
 # `check`. Written by hypergraph-adopt.
