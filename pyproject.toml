@@ -6,7 +6,7 @@
 # offline commands never import.
 [project]
 name = "hypergraph-protocol"
-version = "0.0.9"
+version = "0.9.0"
 description = "Hypergraph: a substrate for autonomous research and engineering. Two graphs per project — an append-only record graph of what happened, and a single-writer state graph of what is true now, each claim citing the evidence it rests on. Checker, STATE.md renderer, local git-native backend, dispatch lanes; optional mirror in a separate lazily-loaded module."
 readme = "README.md"
 license = "MIT"

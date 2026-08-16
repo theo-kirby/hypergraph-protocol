@@ -66,7 +66,7 @@ from __future__ import annotations
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.0.9"
+__version__ = "0.9.0"
 
 import argparse
 import hashlib
@@ -4559,7 +4559,7 @@ HEAL_TAGS = Healer(
     name="tags",
     summary="carry the original graph's tag names into node frontmatter, "
             ".hypergraph/tags.yml, and the mirror",
-    since="0.0.9",
+    since="0.9.0",
     reads="archive",
     writes=("frontmatter", "mirror"),
     detect=tags_detect,
@@ -4673,7 +4673,7 @@ HEAL_ARTIFACTS = Healer(
     name="artifacts",
     summary="record what the frozen archive still holds per node, under "
             "`origin.artifacts` (an inventory, never a repatriation)",
-    since="0.0.9",
+    since="0.9.0",
     reads="archive",
     writes=("frontmatter",),
     detect=artifacts_detect,
