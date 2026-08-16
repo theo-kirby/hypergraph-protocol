@@ -5,13 +5,13 @@ title: Flywheel mirror
 created_at: '2026-08-07T10:57:13.256136+00:00'
 parents:
 - cool-king-8586
-summary: 'The optional one-way projection: push executes it behind one command, carries bodies, tags, artifacts and parent edges, degrades to exit 0; networked half in its own lazily-loaded module since 0.9.0, verified live end to end.'
+summary: 'The optional one-way projection: push executes it behind one command, carries bodies, tags, artifacts and parent edges, degrades to exit 0; networked half in its own lazily-loaded module since 0.0.11, verified live end to end.'
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 15
-  pushed_at: '2026-08-16T18:24:57+00:00'
-  content_sha256: 75b48d4478e9ffb111863de065712a8a39a8002f8a89504222eccb4463649e1b
+  revision: 16
+  pushed_at: '2026-08-16T18:35:51+00:00'
+  content_sha256: 6cff105348580f105f9ae400b42c5cd30c1abcb22d15d84d67d91a9e205d649f
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -23,7 +23,7 @@ Status: working
 An optional, one-way projection of the committed node files onto a hosted graph. The repo stays canonical; nothing here is ever read back as truth [rec: old-dawn-8747] [rec: silver-ember-3035].
 
 - **`push` executes the mirror rather than describing it.** It was a plan an agent carried out call by call; it is now transport (the `flywheel` CLI, with REST over `urllib` as an explicit fallback), a crash journal, a pacer, legend, lineage and verify behind one command, with `--plan` staying network-free for machines without the binary [rec: silver-ember-3035]. `sync` (export → render → check → push) is the only new verb an agent learns, and it says nothing about any hosted service.
-- **The networked half is its own module since 0.9.0** [rec: blue-rain-3979]. Everything that resolves a credential, looks for a binary or opens a socket lives in `tools/hypergraph_mirror.py` (installed as `hypergraph_protocol_mirror.py`), loaded lazily through core's `_mirror()` with shared class identity, so `except LocalGraphError` still catches every `MirrorError`. The offline bookkeeping — `push --plan`, `--verify --against`, `--record-result`, legend and lineage — stays in core, and the old behavioral guarantee (no offline command resolves a transport) is now structural: a subprocess test proves offline commands never import the module at all.
+- **The networked half is its own module since 0.0.11** [rec: blue-rain-3979]. Everything that resolves a credential, looks for a binary or opens a socket lives in `tools/hypergraph_mirror.py` (installed as `hypergraph_protocol_mirror.py`), loaded lazily through core's `_mirror()` with shared class identity, so `except LocalGraphError` still catches every `MirrorError`. The offline bookkeeping — `push --plan`, `--verify --against`, `--record-result`, legend and lineage — stays in core, and the old behavioral guarantee (no offline command resolves a transport) is now structural: a subprocess test proves offline commands never import the module at all.
 - **A project with no mirror exits 0 as a no-op, never 2** — and that now covers *who* is running, not only whether a mirror is configured. A fork inherits the committed `mirror:` key and holds no credentials for it, so reconcile's unconditional publish step used to exit 2 on every outside contributor's machine. `publish_branch_block()` and `mirror_not_ours()` feed one `stand_down()`: print a line, exit 0, unless `--require-mirror`. Outside a git checkout the guard allows [rec: silver-ember-3035] [rec: placid-ridge-4035].
 - **The dirty-tree guard was deliberately not built** despite being scoped alongside the branch guard: reconcile publishes *before* it commits, on purpose, so `push`'s frontmatter writes land in the same `git add`, which makes a dirty graph the expected state at push time. `heal` does guard on one, and that is not a reversal — it sits in no commit flow [rec: placid-ridge-4035] [rec: clear-moss-4527].
 - **Behaviours that lived in prose became code, each closing its trap** [rec: silver-ember-3035]: null-parent substitution raises rather than guesses; a null `base_revision` is read live rather than defaulted; legend lookup pages past 500 children; verify mechanically refuses an archive id and treats truncation at `max_nodes` as a violation rather than as drift. **Degradation is tested, not assumed**: with no binary and no environment `push` exits 2 naming both remedies, while every offline command still exits 0 — and a test asserts none of them so much as calls `shutil.which`.
@@ -67,3 +67,4 @@ An optional, one-way projection of the committed node files onto a hosted graph.
 - autumn-glade-5802 — the mirror moves parent edges, and verify sees topology by default
 - late-sage-5549 — narrowed to the mirror once storage moved to Storage & node format
 - blue-rain-3979 — the split: the mirror's networked half becomes its own lazily-loaded module
+- vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0

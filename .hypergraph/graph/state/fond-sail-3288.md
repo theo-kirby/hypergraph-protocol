@@ -5,13 +5,13 @@ title: Upgrade path
 created_at: '2026-08-09T15:54:22+00:00'
 parents:
 - morning-crane-7863
-summary: 'How a release reaches a repo that already adopted: three things travel by three mechanisms; a customized AGENTS.md block is detected by digest rather than overwritten; graph repairs reached as upgrade --graph since 0.9.0.'
+summary: 'How a release reaches a repo that already adopted: three things travel by three mechanisms; a customized AGENTS.md block is detected by digest rather than overwritten; graph repairs reached as upgrade --graph since 0.0.11.'
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 9
-  pushed_at: '2026-08-16T18:25:04+00:00'
-  content_sha256: 2dbcf01383babb60c6b55f83ba49dddf33c16cc597fb6476769923b0876d6004
+  revision: 10
+  pushed_at: '2026-08-16T18:35:51+00:00'
+  content_sha256: 50c571d282fbe02983a6c863c67b86ab3f6683d9ae1db8d05d9de5b18534da45
   parents_sha256: 437819574dd587d939fe237b83326a9f0d60c63e5db173f7d30329bb8d01fc22
   parents:
   - 67d32718-3dcf-5321-978a-212599c531b4
@@ -34,9 +34,9 @@ Shipped in 0.0.7 and verified from PyPI with published artifacts only: a repo in
 
 **It shipped broken, and the first run against a repo that had used the feature it destroys is what found that** [rec: vast-valley-5745]. `upgrade` replaced the *whole* sentinel block with the shipped template, while the adopt skill's step 8 deliberately writes per-project content into that block; on cadex it deleted the ADR-log reconciliation clause and the epoch-marker note. The two skills disagreed about who owns the inside of the sentinels. **Fixed and shipped in 0.0.8** [rec: open-eagle-4603] [rec: clever-ledge-6588]: a block is replaced only while its content digest matches one this project has shipped (`SHIPPED_BLOCK_DIGESTS`, both templates recovered from git history as blobs); anything else is reported as `customized`, left untouched, and the shipped template named so the adopter merges by hand. `--agents-block` opts into overwriting, exactly as `--workflows` does. It needs no migration and no new config field, because the evidence is the block itself. A nested-marker design was tried first and rejected: on cadex the clause is woven into the middle of a numbered item, so no pair of markers separates it.
 
-**The path has two halves and the split is the point** [rec: clear-moss-4527]. The copies half is `git checkout`-reversible and writes by default; the graph half repairs *content*, spends a mirror-write budget that cannot be un-spent, and stays detect-only until `--apply`. Since 0.9.0 they are one verb with `--graph` naming the boundary — `upgrade --graph` replaced the standalone `heal`, which survives as a hidden deprecated alias — and bare `upgrade` still closes by listing the graph repairs that apply, computed offline from each healer's `blocked_by` [rec: violet-shade-9541]. Repairs are deliberately **not keyed off `hypergraph_version:`** — letting `upgrade` bump the stamp while a graph repair was outstanding would make it assert something it never checked.
+**The path has two halves and the split is the point** [rec: clear-moss-4527]. The copies half is `git checkout`-reversible and writes by default; the graph half repairs *content*, spends a mirror-write budget that cannot be un-spent, and stays detect-only until `--apply`. Since 0.0.11 they are one verb with `--graph` naming the boundary — `upgrade --graph` replaced the standalone `heal`, which survives as a hidden deprecated alias — and bare `upgrade` still closes by listing the graph repairs that apply, computed offline from each healer's `blocked_by` [rec: violet-shade-9541]. Repairs are deliberately **not keyed off `hypergraph_version:`** — letting `upgrade` bump the stamp while a graph repair was outstanding would make it assert something it never checked.
 
-The block itself now points an arriving agent at dispatch: non-negotiable 1 gained the clause at 0.9.0, and the new digest landed in `SHIPPED_BLOCK_DIGESTS` in the same commit — the registration that keeps a clean 0.9.0 block recognizable as ours to refresh rather than frozen as adopter prose [rec: simple-vale-9558].
+The block itself now points an arriving agent at dispatch: non-negotiable 1 gained the clause at 0.0.11, and the new digest landed in `SHIPPED_BLOCK_DIGESTS` in the same commit — the registration that keeps a clean 0.0.11 block recognizable as ours to refresh rather than frozen as adopter prose [rec: simple-vale-9558].
 
 A smaller gap remains: on a repo adopted before the stamp, `check` emits only the "predates the stamp" info, so the case where the **CLI** is the older half cannot be reported at all — cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so [rec: vast-valley-5745].
 
@@ -56,4 +56,5 @@ A smaller gap remains: on a repo adopted before the stamp, `check` emits only th
 - clear-moss-4527 — the path splits: upgrade for reversible copies, heal for graph content
 - late-sage-5549 — re-homed under Adoption, which is what it is a tail of
 - violet-shade-9541 — heal folds into upgrade --graph; one verb, two polarities
-- simple-vale-9558 — the block names dispatch; the 0.9.0 digest registered in the same commit
+- simple-vale-9558 — the block names dispatch; the 0.0.11 digest registered in the same commit
+- vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0

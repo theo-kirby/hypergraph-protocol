@@ -5,13 +5,13 @@ title: Protocol mechanics
 created_at: '2026-08-06T21:41:18.171074+00:00'
 parents:
 - cool-king-8586
-summary: 'Two files after the 0.9.0 split: an offline core (check/render, local-backend verbs incl. dispatch lanes, upgrade --graph repairs) and a lazily-loaded mirror module; invariants enforced at authoring time; 302 tests.'
+summary: 'Two files after the 0.0.11 split: an offline core (check/render, local-backend verbs incl. dispatch lanes, upgrade --graph repairs) and a lazily-loaded mirror module; invariants enforced at authoring time; 302 tests.'
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 21
-  pushed_at: '2026-08-16T18:24:57+00:00'
-  content_sha256: bb1bc73a0e16cc70869934cf156e9a0926e7a69ee0a428eec45c926bf9f70ac0
+  revision: 22
+  pushed_at: '2026-08-16T18:35:51+00:00'
+  content_sha256: 3749664fa4ddda265548ae8ac05a315a0789d2dd715c44dc74ea68cb6da3b8a4
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -33,8 +33,8 @@ The implementation is two files depending only on pyyaml: `tools/hypergraph.py`,
 - **Two real `check` defects were found by watching agents fail against it, not by review** [rec: staid-field-2723]. `check --config <missing>` raised an unhandled `FileNotFoundError` naming the plumbing instead of the problem, and two of three agents read that as "contents are wrong", wrote a one-line stub, and got "0 violations" because root inference had silently fallen back to guessing. Both are fixed, and an inferred root now warns — a warning rather than a violation, because a freshly initialised graph has exactly one parentless node.
 - **A packaging defect made the sdist unbuildable while every declaration in `pyproject.toml` was correct** [rec: long-peak-1620]. hatchling walks with `followlinks=True` and skips any directory whose `(st_dev, st_ino)` it has seen; the committed dogfooding symlinks sort first, so it materialized the skills under `.claude/` and dropped the real tree as a duplicate. `skip-excluded-dirs = true` plus `exclude` fixes it — `exclude` alone made it worse.
 - **The viz cut (0.0.9)**: the tool drops from 12,599 to 8,376 lines (−34%) with no HTML, no JS and no browser dependency left anywhere — the embedded page template, the viz section, the sources, the bundler and the playwright dev-group dependency all removed, with the JSON exports as the contract an external renderer consumes. `viz` survives as a signpost stub that exits 2, and the offline-transport guarantee now covers it as a stub [rec: loyal-tide-3608].
-- **`heal` folded into `upgrade --graph` at 0.9.0** — one verb for bringing an adopted repo current, with the polarity rule stated once: copies write by default because `git checkout` reverses them, and everything behind `--graph` is detect-only until `--apply`. Bare `--graph` lists the registry; `heal` survives as a hidden deprecated alias through the 0.9.x series, and `--graph --dry-run` is a parser error rather than a silent no-op [rec: violet-shade-9541].
-- **The mirror split (0.9.0): offline commands never import the network half — structurally.** Everything that resolves a credential, looks for a binary or opens a socket moved to `hypergraph_mirror.py` (2,487 lines; core 6,025), loaded through `_mirror()`, which registers the running core module as `hypergraph_core` before exec so class identities never fork across core's three module names. The offline mirror bookkeeping — `push --plan`, `--verify --against`, `--record-result`, legend and lineage — stays in core, and a subprocess test proves that export, check, `push --plan` and a mirror-less push load no mirror module at all [rec: blue-rain-3979].
+- **`heal` folded into `upgrade --graph` at 0.0.11** — one verb for bringing an adopted repo current, with the polarity rule stated once: copies write by default because `git checkout` reverses them, and everything behind `--graph` is detect-only until `--apply`. Bare `--graph` lists the registry; `heal` survives as a hidden deprecated alias through the 0.0.x series, and `--graph --dry-run` is a parser error rather than a silent no-op [rec: violet-shade-9541].
+- **The mirror split (0.0.11): offline commands never import the network half — structurally.** Everything that resolves a credential, looks for a binary or opens a socket moved to `hypergraph_mirror.py` (2,487 lines; core 6,025), loaded through `_mirror()`, which registers the running core module as `hypergraph_core` before exec so class identities never fork across core's three module names. The offline mirror bookkeeping — `push --plan`, `--verify --against`, `--record-result`, legend and lineage — stays in core, and a subprocess test proves that export, check, `push --plan` and a mirror-less push load no mirror module at all [rec: blue-rain-3979].
 - **`dispatch` joined the local-backend verbs**: the local lane provider (worktrees on `lane/<slug>` branches, slug minted never named; the dispatch brief on stdin never argv; harvest refuses dirty and reports arrived record nodes; teardown refuses while unharvested). With no agent configured, `open` provisions the lane and stands down at exit 0 with the manual steps — field-proven by the first acceptance dispatch [rec: dry-spark-3491] [rec: idle-crow-3832].
 - **The suite is at 302 tests** over committed fixtures — checker, local backend, collaboration, mirror, the split's structural guarantees, the upgrade fold and dispatch [rec: violet-shade-9541] [rec: blue-rain-3979] [rec: dry-spark-3491].
 
@@ -73,3 +73,4 @@ The implementation is two files depending only on pyyaml: `tools/hypergraph.py`,
 - blue-rain-3979 — the mirror split: two files, the no-network promise made structural
 - dry-spark-3491 — the dispatch verb: local lanes as worktrees
 - idle-crow-3832 — the lane-unclean suite finding from the first acceptance dispatch
+- vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0
