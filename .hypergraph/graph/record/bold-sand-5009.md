@@ -9,6 +9,25 @@ summary: 'First empirical baseline of the JSON-export contract (.hypergraph/cach
 artifacts:
 - .hypergraph/evidence/2026-08-16-export-contract-probe.py
 - .hypergraph/evidence/2026-08-16-export-contract-baseline.json
+flywheel:
+  node_id: 24c8a8ac-ef82-5527-9f1f-42f071863922
+  slug: summer-frost-3785
+  revision: 1
+  pushed_at: '2026-08-16T18:25:11+00:00'
+  content_sha256: bf12de0a5cafabc274c3013682f8f639043040e30fed47d23d5eacdcda219b8c
+  parents_sha256: 7e6443d1aa76c2c3fef74f05563b538681ae7a9d4a6f964d986bbc48d63139fe
+  parents:
+  - 90db657c-7c28-58f7-b039-042bf8baefc9
+  artifacts_sha256: 4361c3f4fff134250c638d03372fc594d44100e412a582a2d5f6aab752281ee9
+  artifacts:
+  - path: .hypergraph/evidence/2026-08-16-export-contract-probe.py
+    sha256: 9232583da1e6e6e1969927e1a74660069524cbe9048d8b6ffbec6bbf505e0946
+    artifact_id: 073aecc0-18b2-5fa5-a552-74e1cec20e53
+    uploaded_at: '2026-08-16T18:25:07.206219+00:00'
+  - path: .hypergraph/evidence/2026-08-16-export-contract-baseline.json
+    sha256: ad82c608e36758525633286e4a7dbe595972a074527e3f0782fa39f3bc50db05
+    artifact_id: a00b7ba0-8a84-58ea-9f4c-8b6f567e8297
+    uploaded_at: '2026-08-16T18:25:07.359588+00:00'
 ---
 ## What
 

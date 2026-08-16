@@ -5,13 +5,13 @@ title: Protocol mechanics
 created_at: '2026-08-06T21:41:18.171074+00:00'
 parents:
 - cool-king-8586
-summary: 'tools/hypergraph.py: check/render plus seven local-backend verbs, invariants enforced at authoring time as well as check time, both concurrency defects closed; 8,376 lines after the 0.0.9 viz cut, 283 tests. Storage and retroactive repair are its children.'
+summary: 'Two files after the 0.9.0 split: an offline core (check/render, local-backend verbs incl. dispatch lanes, upgrade --graph repairs) and a lazily-loaded mirror module; invariants enforced at authoring time; 302 tests.'
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 20
-  pushed_at: '2026-08-16T16:38:33+00:00'
-  content_sha256: d67451c3e979e4fee02b7c69973cf7a24473d7fa1503457d5db6bc37da329958
+  revision: 21
+  pushed_at: '2026-08-16T18:24:57+00:00'
+  content_sha256: bb1bc73a0e16cc70869934cf156e9a0926e7a69ee0a428eec45c926bf9f70ac0
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -20,7 +20,7 @@ Status: working
 
 ## Current
 
-`tools/hypergraph.py` — a single-file uv script depending only on pyyaml — is the whole implementation. It is the mechanism half of the protocol: what enforces the invariants, what an agent actually runs, and what the two graphs are read and written by [rec: flat-pine-9555].
+The implementation is two files depending only on pyyaml: `tools/hypergraph.py`, the offline core, and `tools/hypergraph_mirror.py`, the optional mirror's networked half, loaded lazily and never imported by offline commands [rec: blue-rain-3979]. It is the mechanism half of the protocol: what enforces the invariants, what an agent actually runs, and what the two graphs are read and written by [rec: flat-pine-9555].
 
 - **`check` validates I2, I4, I5, I6 and I7 mechanically** over offline JSON exports, exits nonzero on violations, and proxies I1 as warnings; `render` emits STATE.md with the frontier first (broken → blocked → open) above an architecture tree [rec: flat-pine-9555].
 - **Invariants are enforced at authoring time, not only at check time.** `new` runs the real checker over a candidate node before writing it, so a bad impact target exits 2 with nothing written; `--reconcile` is the mechanical I3 gate; `update` refuses record nodes outright; and `new state` rejects a pre-scaffolded body that would duplicate the CLI-generated template [rec: old-dawn-8747] [rec: careful-harbor-3902].
@@ -33,7 +33,10 @@ Status: working
 - **Two real `check` defects were found by watching agents fail against it, not by review** [rec: staid-field-2723]. `check --config <missing>` raised an unhandled `FileNotFoundError` naming the plumbing instead of the problem, and two of three agents read that as "contents are wrong", wrote a one-line stub, and got "0 violations" because root inference had silently fallen back to guessing. Both are fixed, and an inferred root now warns — a warning rather than a violation, because a freshly initialised graph has exactly one parentless node.
 - **A packaging defect made the sdist unbuildable while every declaration in `pyproject.toml` was correct** [rec: long-peak-1620]. hatchling walks with `followlinks=True` and skips any directory whose `(st_dev, st_ino)` it has seen; the committed dogfooding symlinks sort first, so it materialized the skills under `.claude/` and dropped the real tree as a duplicate. `skip-excluded-dirs = true` plus `exclude` fixes it — `exclude` alone made it worse.
 - **The viz cut (0.0.9)**: the tool drops from 12,599 to 8,376 lines (−34%) with no HTML, no JS and no browser dependency left anywhere — the embedded page template, the viz section, the sources, the bundler and the playwright dev-group dependency all removed, with the JSON exports as the contract an external renderer consumes. `viz` survives as a signpost stub that exits 2, and the offline-transport guarantee now covers it as a stub [rec: loyal-tide-3608].
-- **The suite is at 283 tests**, over committed fixtures, covering the checker, the local backend, collaboration and the mirror — every test removed by the viz cut was a test of removed code [rec: autumn-glade-5802] [rec: shady-bay-7654] [rec: loyal-tide-3608].
+- **`heal` folded into `upgrade --graph` at 0.9.0** — one verb for bringing an adopted repo current, with the polarity rule stated once: copies write by default because `git checkout` reverses them, and everything behind `--graph` is detect-only until `--apply`. Bare `--graph` lists the registry; `heal` survives as a hidden deprecated alias through the 0.9.x series, and `--graph --dry-run` is a parser error rather than a silent no-op [rec: violet-shade-9541].
+- **The mirror split (0.9.0): offline commands never import the network half — structurally.** Everything that resolves a credential, looks for a binary or opens a socket moved to `hypergraph_mirror.py` (2,487 lines; core 6,025), loaded through `_mirror()`, which registers the running core module as `hypergraph_core` before exec so class identities never fork across core's three module names. The offline mirror bookkeeping — `push --plan`, `--verify --against`, `--record-result`, legend and lineage — stays in core, and a subprocess test proves that export, check, `push --plan` and a mirror-less push load no mirror module at all [rec: blue-rain-3979].
+- **`dispatch` joined the local-backend verbs**: the local lane provider (worktrees on `lane/<slug>` branches, slug minted never named; the dispatch brief on stdin never argv; harvest refuses dirty and reports arrived record nodes; teardown refuses while unharvested). With no agent configured, `open` provisions the lane and stands down at exit 0 with the manual steps — field-proven by the first acceptance dispatch [rec: dry-spark-3491] [rec: idle-crow-3832].
+- **The suite is at 302 tests** over committed fixtures — checker, local backend, collaboration, mirror, the split's structural guarantees, the upgrade fold and dispatch [rec: violet-shade-9541] [rec: blue-rain-3979] [rec: dry-spark-3491].
 
 ## Negative knowledge
 
@@ -42,6 +45,7 @@ Status: working
 - [scope: state-node frontmatter summaries under reconcile | confidence: medium | evidence: green-field-8645] `check` parses only node bodies — a reconcile that rewrites a body but not the frontmatter `summary:` leaves drift no invariant can catch; surfaced summaries then contradict the body (worst case observed: an "Open gap" summary on a working node).
 - [scope: reporting tool errors to autonomous agents | confidence: high | evidence: staid-field-2723] an unhandled traceback is not an error message: it names the library that raised, not the thing the operator got wrong, and an agent will act on that misdirection. Two of three arm-C runs "fixed" a missing config by writing a stub that made the checker stop crashing and start guessing — the tool reported success throughout. Any failure an agent can cause needs an error that names the cause and the remedy.
 - [scope: guarding CLI-generated markdown sections | confidence: high | evidence: sleepy-branch-3744] a substring test for a heading rejects prose that merely mentions it — anchor heading guards to line starts.
+- [scope: running the test suite from a worktree | confidence: high | evidence: idle-crow-3832] `test_push_reports_actionably_when_no_transport_exists` asserts on the ambient checkout's branch, so the suite fails (1 test) in any worktree not on `main` — found by the first dispatch running the suite inside its lane. The test should pin its branch; until then, verify from the main checkout.
 
 ## Provenance
 
@@ -65,3 +69,7 @@ Status: working
 - autumn-glade-5802 — update --parent/--root, cycle detection in local_graph, suite to 337
 - late-sage-5549 — renamed to Protocol mechanics, with storage and retroactive repair as children
 - loyal-tide-3608 — the viz cut: −34% of the file, the suite to 283, playwright out
+- violet-shade-9541 — heal folds into upgrade --graph; the polarity rule stated once
+- blue-rain-3979 — the mirror split: two files, the no-network promise made structural
+- dry-spark-3491 — the dispatch verb: local lanes as worktrees
+- idle-crow-3832 — the lane-unclean suite finding from the first acceptance dispatch

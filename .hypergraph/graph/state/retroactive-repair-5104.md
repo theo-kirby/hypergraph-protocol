@@ -5,13 +5,13 @@ title: Retroactive repair
 created_at: '2026-08-09T23:22:20+00:00'
 parents:
 - wandering-sun-8831
-summary: 'hypergraph heal: typed graph repairs carrying a capability backwards into a repo that adopted before it existed. Detect-only until --apply; two healers, one proven live on 188 nodes.'
+summary: 'upgrade --graph (formerly heal): typed graph repairs carrying a capability backwards into a repo that adopted before it existed. Detect-only until --apply; two healers, one proven live on 188 nodes.'
 flywheel:
   node_id: e6fbea9b-ac04-5b61-9545-315b8f02da43
   slug: lingering-credit-5743
-  revision: 4
-  pushed_at: '2026-08-14T13:37:04+00:00'
-  content_sha256: 7bdd0b9b7ff10a51f1a3feca572fa81e7a52d34d13b9adef43a6daca5d04ff6c
+  revision: 5
+  pushed_at: '2026-08-16T18:25:04+00:00'
+  content_sha256: 06ebcc3205dacfc3247b83e2e9b8e530ff729d5cf9ac420f1677c0e9d8bbd443
   parents_sha256: 7581a2a3ab3e0f666772fb38ea612fbca98197235dbd11585614ad362efda1a1
   parents:
   - 2b993e9c-708e-5940-a67f-cf80aa0955e4
@@ -20,7 +20,7 @@ Status: working
 
 ## Current
 
-`hypergraph heal` carries a capability **backwards** into a repo that adopted before the capability existed. It is a registry of typed graph repairs, not a migration script, and it is a separate command from `upgrade` because the two cost different things: `upgrade` refreshes copies and `git checkout` undoes it, while `heal` rewrites graph content and spends a mirror-write budget that cannot be un-spent [rec: simple-ocean-1716] [rec: clear-moss-4527].
+`hypergraph upgrade --graph` carries a capability **backwards** into a repo that adopted before the capability existed. It is a registry of typed graph repairs, not a migration script. At 0.9.0 the standalone `heal` verb folded into `upgrade` as its graph half — one verb for bringing an adopted repo current, with `--graph` naming the cost boundary: bare `upgrade` refreshes copies and `git checkout` undoes it, while the graph half rewrites content and spends a mirror-write budget that cannot be un-spent. `heal` survives as a hidden deprecated alias through the 0.9.x series [rec: simple-ocean-1716] [rec: clear-moss-4527] [rec: violet-shade-9541].
 
 - **Dry run is the default**, the one inverted default in this tooling, and plain detected drift exits **0** — unhealed drift is a capability that landed after your adoption, not a broken invariant. `--fail-on-drift` opts into exit 1 [rec: clear-moss-4527].
 - **Nothing is persisted.** No "have I run?" flag: the written data is the state and `detect` re-derives it from the files, the property that already makes `push_plan` a safe resume primitive. A runtime check asserts every drift a healer *claimed* to heal is absent from the next `detect`, so a healer that reports more than it did fails loudly [rec: clear-moss-4527].
@@ -44,3 +44,4 @@ Status: working
 - early-mesa-8507 — the live run: 188 nodes recovered, and the three host behaviours that took
 - shady-bay-7654 — healer #2, and the extensibility claim settled at zero comparators and one registry entry
 - autumn-glade-5802 — the single-node canary that proved state re-parenting against the live mirror
+- violet-shade-9541 — the fold: heal becomes upgrade --graph, alias deprecated

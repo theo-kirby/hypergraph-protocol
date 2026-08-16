@@ -5,13 +5,13 @@ title: Collaboration
 created_at: '2026-08-09T12:05:09+00:00'
 parents:
 - cool-king-8586
-summary: Contributors record, the maintainer reconciles — a rule that falls out of the invariants. All three Operator bets shipped and CI is live; open on any run by two humans and a fork.
+summary: Contributors record, the maintainer reconciles — a rule that falls out of the invariants. Dispatch and lanes land under it at 0.9.0 as advisory record-graph claims; open on any run by two humans and a fork.
 flywheel:
   node_id: c70be6f8-ea12-5dd8-9a36-230e248fbb2a
   slug: restless-butterfly-5749
-  revision: 3
-  pushed_at: '2026-08-14T13:37:04+00:00'
-  content_sha256: 42e75ac046795c408fcd8d5531f0445b8acc9f628ffe375837d89aead18f6d00
+  revision: 4
+  pushed_at: '2026-08-16T18:24:57+00:00'
+  content_sha256: e9e1324f3235842a28f36316e7c958103f2e9ee276d7b40c66e90c9716e26baf
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -25,6 +25,7 @@ Status: working
 - **I5 is now an ancestry frontier**: `high_water_mark:` takes one or more record tips and reconciled means *ancestor of some tip*. This is the fix for the defect that mattered — the old timestamp comparison did not fail, it **forgot** [rec: placid-ridge-4035]. Verified on this repo's own two-tip DAG, where a merge had already left nine nodes that are not ancestors of the mark; under the new rule all nine surface, the migration hint fires, and `hwm --suggest` prints the exact frontier [rec: placid-ridge-4035].
 - **What git already provides, verified rather than assumed** [rec: vast-rain-4873]: record-node merges never conflict; a slug collision across branches surfaces as a loud git add/add conflict, which matters because `node_id = uuid5(slug)` makes a silent collision an identity collision; the merged record DAG shows the fork truthfully; `--repo-auto` stamps branch and commit into every node; and a record node arrives in the PR diff as a file, so the claim gets code review beside the code that justifies it.
 - **The CI half is live, not just designed** [rec: long-peak-1620]. Both workflows are installed here and were green on their first run, which makes the mirror a build artifact of the default branch written by CI rather than by a laptop.
+- **Dispatch and lanes landed under this framing at 0.9.0, spec-first** [rec: windy-eagle-6074]. Dispatch enters through the record graph — a `Dispatch: <target>` decision node written before work, causally parented on the target's provenance — and that node is an *advisory lane claim*: an unreconciled `Dispatch:` node with no closure descendant marks a target as being worked. Two agents that miss each other duplicate work, which the merge story absorbs; nothing can corrupt, because neither writes state. Lanes are a tool property like the mirror: backend/lanes.md states five provider ops (provision/inject/run/harvest/teardown) with the fleet rules baked in — provider-minted identity, briefs on stdin never argv, harvest strictly before teardown — and the shipped local provider implements them with git alone, harvest being an ordinary merge [rec: dry-spark-3491]. Two dispatch lineages have already coexisted unreconciled and merged cleanly through lanes on one machine [rec: bold-sand-5009].
 - **Still open, and narrower than the gap that opened this node** [rec: placid-ridge-4035] [rec: long-peak-1620]: no multi-machine workflow has been *run* end to end — the model is proven by construction, by tests and by this repo's own CI, but not by two humans and a fork; `check --since` has never rejected a real outside contribution, only a synthetic one; and `.gitattributes` for STATE.md was scoped and not built, since regeneration already resolves it and the CI freshness gate catches a stale one.
 
 ## Negative knowledge
@@ -40,3 +41,6 @@ Status: working
 - vast-rain-4873 — the investigation that opened this gap: three reproduced defects and three Operator bets
 - placid-ridge-4035 — v0.0.5 closes it: ancestry frontier, conflict markers, publish guards, doctrine and CI
 - long-peak-1620 — both workflows installed and green; the publish job reaches the mirror over REST
+- windy-eagle-6074 — SPEC gains Dispatch and lanes; the claim convention stated
+- dry-spark-3491 — the local lane provider ships
+- bold-sand-5009 — two unreconciled dispatch lineages coexisted and merged cleanly

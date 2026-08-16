@@ -9,6 +9,25 @@ summary: 'First post-reorganization measurement of this repo''s state graph: 25 
 artifacts:
 - .hypergraph/evidence/2026-08-16-state-shape-measure.py
 - .hypergraph/evidence/2026-08-16-state-shape-baseline.json
+flywheel:
+  node_id: e32ca69e-ad40-58f2-974b-07e518d64f26
+  slug: dry-fire-7143
+  revision: 1
+  pushed_at: '2026-08-16T18:25:11+00:00'
+  content_sha256: c31cf86f01c39e5e3a049c20d55101c72013c93ae147de36b8dbc9ef3c1c6fe5
+  parents_sha256: f0b486eafe23a8e2dc4101b0e742034c5d57457ed6887a6faf6da56db603c96f
+  parents:
+  - d4c4b808-a8e2-5b9b-a33f-4bf73e68275a
+  artifacts_sha256: c6f0b5d41c7c5ba2e88f3eb02193ed09e5f0e25261f3eaf037c9ebe18a9cb1bf
+  artifacts:
+  - path: .hypergraph/evidence/2026-08-16-state-shape-measure.py
+    sha256: 30d4fb12f2fa5e9df49b9221625e6c49d0485cf363305f2b2cea73e246342c1c
+    artifact_id: f6a9766d-cc2d-5f57-b5aa-5afa4016f98c
+    uploaded_at: '2026-08-16T18:25:10.629701+00:00'
+  - path: .hypergraph/evidence/2026-08-16-state-shape-baseline.json
+    sha256: dfc8164715c5af11474d73758cd7859dae8fd801d0e5cb90ef78b0d623d72c70
+    artifact_id: 03c37f89-a539-56d1-9d7c-80cb4d29e7fe
+    uploaded_at: '2026-08-16T18:25:10.777987+00:00'
 ---
 ## What
 

@@ -6,6 +6,15 @@ created_at: '2026-08-16T18:16:05+00:00'
 parents:
 - loyal-tide-3608
 summary: 'Lane claim for falling-glacier-9058: region dispatch at the state root chose polished-pond-2718 (Visualization), avoiding the unreconciled even-journey-4120 claim on soft-hill-6082; budget 1 unit.'
+flywheel:
+  node_id: 90db657c-7c28-58f7-b039-042bf8baefc9
+  slug: dawn-recipe-5338
+  revision: 0
+  pushed_at: '2026-08-16T18:24:57+00:00'
+  content_sha256: 8d1192450247f502568df961876d0cf83d867688f159f7ec46664df10a33c1b8
+  parents_sha256: ae0678ba9b759d273ba91c1da4dd07b6d96daccef9012e0dded67e67f8df4a67
+  parents:
+  - 8fd5c745-0ec9-5833-a0be-6a7ac4798a9d
 ---
 ## What
 

@@ -6,6 +6,15 @@ created_at: '2026-08-16T18:10:31+00:00'
 parents:
 - late-sage-5549
 summary: 'Lane claim for weathered-eagle-6214: region dispatch at the state root chose soft-hill-6082 (State graph); budget 1 unit.'
+flywheel:
+  node_id: d4c4b808-a8e2-5b9b-a33f-4bf73e68275a
+  slug: floral-boat-5113
+  revision: 0
+  pushed_at: '2026-08-16T18:24:57+00:00'
+  content_sha256: 4dd7120f91157a9b1b7281c781a7005e2a529f6ab948c73948865f3fd64c903d
+  parents_sha256: ff11761f7cd21b6308c04e8cf73f1ff30477307984c686958256939cef372012
+  parents:
+  - a0bc6040-7030-5f08-9b0d-6f7cd38fb8fe
 ---
 ## What
 

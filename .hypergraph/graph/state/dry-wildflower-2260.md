@@ -5,13 +5,13 @@ title: Skills
 created_at: '2026-08-06T21:41:21.141576+00:00'
 parents:
 - cool-king-8586
-summary: 'Five single-path skills, dogfooded through committed .claude/skills symlinks, with the collaboration rules split across record and reconcile. Open: nothing packages an unattended loop.'
+summary: Six single-path skills (init, adopt, record, reconcile, orient, dispatch), dogfooded through committed .claude/skills symlinks. Dispatch packages one aimed pass; the unattended series remains Autonomous operation's gap.
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 14
-  pushed_at: '2026-08-14T13:37:04+00:00'
-  content_sha256: 76d8a66312e4d131c5a4167bd1ffed9145bfbbc1d5a47c06729af550ef06b7dc
+  revision: 15
+  pushed_at: '2026-08-16T18:24:57+00:00'
+  content_sha256: 56e20d77b1b6e777c572be28657e0e6815c0c63a914c4a96efe00614a33c127a
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -20,15 +20,15 @@ Status: working
 
 ## Current
 
-- **Five skills**: `hypergraph-init` (roots, skeleton, config), `hypergraph-record` (causally-parented record nodes, always declaring State Impact, never writing state), `hypergraph-reconcile` (the single writer: folds impacts, advances the HWM, regenerates STATE.md, checks, publishes), `hypergraph-orient` (read-only frontier brief) and `hypergraph-adopt` (the conversion path for repos with a past) [rec: spring-fog-0600] [rec: late-isle-6483].
-- **They are single-path.** Every backend-dispatch preamble, every hosted-store workflow branch and all five adapter symlinks are gone; the acceptance test chosen in advance holds, with a grep of the five bodies for `flywheel|lease|MCP|429|409` returning **zero hits** and no dangling symlink under `skills/`. An agent reading them learns one system [rec: calm-sand-3399].
+- **The skills**: `hypergraph-init` (roots, skeleton, config), `hypergraph-record` (causally-parented record nodes, always declaring State Impact, never writing state), `hypergraph-reconcile` (the single writer: folds impacts, advances the HWM, regenerates STATE.md, checks, publishes), `hypergraph-orient` (read-only frontier brief), `hypergraph-adopt` (the conversion path for repos with a past) and, since 0.9.0, `hypergraph-dispatch` (an agent aimed at a target — frontier slug, prose goal, or region — under a bounded budget, claiming its work through a `Dispatch:` decision node) [rec: spring-fog-0600] [rec: late-isle-6483] [rec: young-sage-8406]. The count is deliberately written down nowhere anymore — it rotted the moment the sixth landed [rec: gentle-journey-8382].
+- **They are single-path.** Every backend-dispatch preamble, every hosted-store workflow branch and all five adapter symlinks are gone; the acceptance test chosen in advance holds, with a grep of the five bodies for `flywheel|lease|MCP|429|409` returning **zero hits** and no dangling symlink under `skills/`. An agent reading them learns one system [rec: calm-sand-3399]. The sixth keeps the same isolation: it may name the `hypergraph dispatch` verb, never a provider's internals, which stay behind backend/lanes.md exactly as the mirror stays behind the CLI [rec: young-sage-8406].
 - **What each cut bought** [rec: calm-sand-3399]: orient lost two workflows plus a no-store fallback and got *no* fallback, because there is no degraded mode — the repo **is** the graph; record lost the rate limits, because pacing is the tool's job rather than something an agent recites; reconcile gained a single unconditional `hypergraph push` step with the two nonzero-exit meanings named, because an append-only breach and drift are genuinely different failures; init stopped asking a storage question that no longer exists. Reconcile's step 8 went from 23 lines of choreography to 9, and its steps were reordered so **publish precedes commit**, which puts `push`'s frontmatter writes inside the same `git add`.
-- **This repo dogfoods them.** `.claude/skills/hypergraph-*` are five committed relative symlinks into `skills/`, so a fresh clone resolves `/hypergraph-record` and editing `skills/<name>/SKILL.md` edits the live skill — the only arrangement that cannot go stale. Project scope, not `--user`: a global install would put these into every session the user has, everywhere [rec: jolly-arbor-9572]. Every skill carries a two-line `## The CLI` preamble, because `[tool.uv] package = false` means the bare `hypergraph` form never resolves here, so every skill line was previously unexecutable *in the repo that ships it*.
+- **This repo dogfoods them.** `.claude/skills/hypergraph-*` are committed relative symlinks into `skills/`, so a fresh clone resolves `/hypergraph-record` and editing `skills/<name>/SKILL.md` edits the live skill — the only arrangement that cannot go stale. Project scope, not `--user`: a global install would put these into every session the user has, everywhere [rec: jolly-arbor-9572]. Every skill carries a two-line `## The CLI` preamble, because `[tool.uv] package = false` means the bare `hypergraph` form never resolves here, so every skill line was previously unexecutable *in the repo that ships it*.
 - **Onboarding outside the skills channel**: AGENTS.md states the record discipline as non-negotiable for arriving agents, with CLAUDE.md containing only `@AGENTS.md`. Added after blind test #1 and validated by blind test #2, a controlled retest with AGENTS.md as the only changed variable [rec: tiny-sunset-0847] [rec: little-bar-4131].
 - **The collaboration rules are split across two skills, which is the point** [rec: placid-ridge-4035]: reconcile carries the maintainer-on-main rule, frontier guidance in its HWM step, and a guardrail to start from `sync` rather than a bare `check` after a merge; record carries the converse a contributor needs — recording is safe on any branch, fork or machine, and it is the *whole* obligation.
 - **record teaches tagging, and the guidance is mostly about restraint** [rec: clear-moss-4527]: read `tags.yml`, use declared names only, add one with `hypergraph tags add` and never by hand, and in a repo with no `tags.yml` **tag nothing**. The load-bearing sentence is that a tag is a way to *find* nodes and not a way to assert things about them.
 - **record's step 7 stopped being one line, because it decides whether the artifact feature reaches the field at all** [rec: shady-bay-7654]. It said "commit the files and reference them by path"; it now says three things and names the third as the one that is easy to skip: commit them *or don't* (gitignoring a 40 GB dataset is a legitimate call, but an uncommitted file that gets published is one the mirror alone holds), **explain** them in `## Method`/`## Result` because prose is the claim, and **enumerate** them because the list is the claim's index and no tool reads prose.
-- **Open: nothing packages an unattended loop.** All five are session-initiated; there is no skill that resumes the frontier and keeps going, which is the gap Autonomous operation holds [rec: late-sage-5549].
+- **The unattended-loop gap narrowed at 0.9.0**: `hypergraph-dispatch` packages one aimed pass — orient, claim, work, record, close — proven by two acceptance runs whose second read the first's claim and steered around it [rec: young-sage-8406] [rec: idle-crow-3832] [rec: bold-sand-5009]. What no skill packages yet is the *series* — resume, again and again, across contexts — which Autonomous operation holds [rec: late-sage-5549].
 
 ## Negative knowledge
 
@@ -55,3 +55,5 @@ Status: working
 - clear-moss-4527 — record gains a tagging step built around restraint
 - shady-bay-7654 — record's step 7 rewritten around enumerating evidence
 - late-sage-5549 — the missing unattended-loop skill named as a gap rather than left unstated
+- young-sage-8406 — the sixth skill: hypergraph-dispatch
+- gentle-journey-8382 — skill-count phrasing goes count-free across the docs
