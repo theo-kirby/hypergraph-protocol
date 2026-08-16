@@ -17,6 +17,15 @@ hg = importlib.util.module_from_spec(_spec)
 sys.modules["hypergraph_local"] = hg
 _spec.loader.exec_module(hg)
 
+# The mirror sibling, loaded through the same `_mirror()` the CLI uses — so the
+# loader itself is under test on every run. Its public symbols are re-exported
+# onto `hg` for the many existing `hg.<symbol>` reads; tests that *patch* mirror
+# internals must patch `hgm` (the module the mirror code actually reads).
+hgm = hg._mirror()
+for _name in dir(hgm):
+    if not _name.startswith("__") and not hasattr(hg, _name):
+        setattr(hg, _name, getattr(hgm, _name))
+
 
 def local_graph_copy(tmp_path):
     """A writable copy of the local-graph fixture: 3 record + 2 state nodes."""

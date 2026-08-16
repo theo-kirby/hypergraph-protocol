@@ -42,11 +42,12 @@ build-backend = "hatchling.build"
 # references/ entries are materialized as real files at build time.
 [tool.hatch.build.targets.wheel.force-include]
 "tools/hypergraph.py" = "hypergraph_protocol.py"
+"tools/hypergraph_mirror.py" = "hypergraph_protocol_mirror.py"
 "skills" = "hypergraph_protocol_data/skills"
 "templates" = "hypergraph_protocol_data/templates"
 
 [tool.hatch.build.targets.sdist]
-include = ["tools/hypergraph.py",
+include = ["tools/hypergraph.py", "tools/hypergraph_mirror.py",
            "README.md", "SPEC.md", "LICENSE", "pyproject.toml",
            "skills", "templates", "backend"]
 # `.claude/skills/hypergraph-*` are committed symlinks into `skills/` — the dogfooding

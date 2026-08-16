@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from graph_fixtures import LOCAL, hg, local_graph_copy, mirror_export_of, pushed_graph
+from graph_fixtures import (LOCAL, hg, hgm, local_graph_copy, mirror_export_of,
+                            pushed_graph)
 
 
 def run_out(capsys, *argv):
@@ -393,7 +394,9 @@ def test_mirror_roots_refuse_to_be_an_archive_root(tmp_path):
     """Splicing the archive in makes `verify` pass while the mirror is nearly empty."""
     cfg = {"record_root": {"node_id": "r-1"}, "state_root": {"node_id": "s-1"},
            "archive": {"roots": [{"node_id": "r-1", "slug": "old-root-0001"}]}}
-    with pytest.raises(hg.MirrorError, match="also an `archive:` root"):
+    # LocalGraphError, not MirrorError: `mirror_root_ids` lives in core (the tags
+    # heal reads it offline), so it raises the core error the CLI handler catches.
+    with pytest.raises(hg.LocalGraphError, match="also an `archive:` root"):
         hg.mirror_root_ids(cfg)
 
 
@@ -601,9 +604,9 @@ def test_push_converges_a_revision_the_mirror_moved_without_writing_the_node(
     graph_dir = pushed_graph(tmp_path)
     fake = FakeTransport(graph_dir)
     config = config_for(graph_dir)
-    monkeypatch.setattr(hg, "make_transport", lambda *a, **kw: fake)
+    monkeypatch.setattr(hgm, "make_transport", lambda *a, **kw: fake)
     monkeypatch.setattr(hg, "publish_branch_block", lambda *a, **kw: None)
-    monkeypatch.setattr(hg, "mirror_doctor", lambda *a, **kw: hg.Report())
+    monkeypatch.setattr(hgm, "mirror_doctor", lambda *a, **kw: hg.Report())
     for kind, root in (("record", RECORD_ROOT), ("state", STATE_ROOT)):
         for slug, node in hg.load_local_nodes(graph_dir, kind).items():
             fake.nodes[f"fw-{slug}"] = {
@@ -984,7 +987,7 @@ def test_verify_export_never_includes_an_archive_id(tmp_path):
     config = config_for(graph_dir,
                         archive={"roots": [{"node_id": RECORD_ROOT, "slug": "a-0001"}]})
     fake = FakeTransport(graph_dir)
-    with pytest.raises(hg.MirrorError, match="archive"):
+    with pytest.raises(hg.LocalGraphError, match="archive"):
         hg.verify_against_mirror(graph_dir, config, fake,
                                  cache_dir=tmp_path / "c", out=lambda *_a: None)
     assert not [c for c in fake.calls if c[0] == "export"]     # refused before exporting
@@ -1155,7 +1158,7 @@ def test_push_plan_builds_no_transport_at_all(tmp_path, monkeypatch, capsys):
     def explode(*_a, **_k):
         raise AssertionError("push --plan resolved a transport")
 
-    monkeypatch.setattr(hg, "make_transport", explode)
+    monkeypatch.setattr(hgm, "make_transport", explode)
     assert run("push", "--plan", "--graph-dir", graph_dir, "-o", tmp_path / "p.json") == 0
     capsys.readouterr()
 
@@ -1170,7 +1173,7 @@ def test_push_without_a_configured_mirror_is_a_no_op_exit_zero(tmp_path, monkeyp
     def explode(*_a, **_k):
         raise AssertionError("a project with no mirror resolved a transport")
 
-    monkeypatch.setattr(hg, "make_transport", explode)
+    monkeypatch.setattr(hgm, "make_transport", explode)
     assert run("push", "--config", config, "--graph-dir", graph_dir) == 0
     assert "no mirror configured" in capsys.readouterr().out
 
@@ -1184,7 +1187,7 @@ def test_no_offline_command_resolves_a_transport(tmp_path, monkeypatch, capsys):
     def explode(*_a, **_k):
         raise AssertionError("an offline command reached for a transport")
 
-    monkeypatch.setattr(hg, "make_transport", explode)
+    monkeypatch.setattr(hgm, "make_transport", explode)
     monkeypatch.setattr(hg.shutil, "which", explode)
 
     graph_dir = local_graph_copy(tmp_path)

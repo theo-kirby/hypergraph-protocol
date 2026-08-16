@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from graph_fixtures import (ARCHIVE_TAGS, archive_export_of, create_result,
-                            forked_graph, hg, local_graph_copy)
+                            forked_graph, hg, hgm, local_graph_copy)
 from test_mirror import FakeTransport, RECORD_ROOT, STATE_ROOT
 
 
@@ -291,10 +291,10 @@ def test_heal_refuses_the_protocols_own_checkout(tmp_path, capsys):
 def mirror_project(tmp_path, monkeypatch):
     repo, graph_dir, config_path = project(tmp_path, pushed=True)
     fake = FakeTransport(graph_dir)
-    monkeypatch.setattr(hg, "make_transport", lambda *a, **kw: fake)
+    monkeypatch.setattr(hgm, "make_transport", lambda *a, **kw: fake)
     monkeypatch.setattr(hg, "publish_branch_block", lambda *a, **kw: None)
-    real_pacer = hg.Pacer
-    monkeypatch.setattr(hg, "Pacer", lambda *_a, **_kw: real_pacer(
+    real_pacer = hgm.Pacer
+    monkeypatch.setattr(hgm, "Pacer", lambda *_a, **_kw: real_pacer(
         0.0, sleep=lambda _s: None, clock=lambda: 0.0))
     # the mirror already holds the pushed nodes, hung under the mirror roots so a
     # verify export reaches them
