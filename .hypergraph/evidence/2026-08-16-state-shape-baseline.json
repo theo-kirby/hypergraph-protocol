@@ -1,0 +1,413 @@
+{
+  "state_root": ".hypergraph/graph/state",
+  "node_count": 25,
+  "total_body_kb": 128.4,
+  "total_file_kb": 146.0,
+  "total_words": 20204,
+  "reading_minutes_at_200wpm": 101.0,
+  "body_kb_mean": 5.14,
+  "body_kb_median": 4.56,
+  "body_kb_max": 11.9,
+  "bullets_max": 40,
+  "status_histogram": {
+    "working": 17,
+    "superseded": 2,
+    "null": 1,
+    "open": 5
+  },
+  "frontier_count": 5,
+  "frontier_share": 0.2,
+  "depth_histogram": {
+    "0": 1,
+    "1": 11,
+    "2": 13
+  },
+  "max_depth": 2,
+  "top_nodes_by_body_kb": [
+    {
+      "slug": "empty-forest-6305",
+      "body_kb": 11.9,
+      "bullets": 37,
+      "status": "working",
+      "depth": 1
+    },
+    {
+      "slug": "morning-crane-7863",
+      "body_kb": 11.05,
+      "bullets": 40,
+      "status": "working",
+      "depth": 1
+    },
+    {
+      "slug": "fair-field-3265",
+      "body_kb": 10.12,
+      "bullets": 28,
+      "status": "working",
+      "depth": 2
+    },
+    {
+      "slug": "protocol-benchmark-4417",
+      "body_kb": 9.67,
+      "bullets": 32,
+      "status": "open",
+      "depth": 1
+    },
+    {
+      "slug": "wandering-sun-8831",
+      "body_kb": 8.95,
+      "bullets": 37,
+      "status": "working",
+      "depth": 1
+    }
+  ],
+  "nodes": [
+    {
+      "slug": "empty-forest-6305",
+      "file_bytes": 12927,
+      "body_bytes": 12187,
+      "words": 1879,
+      "bullets": 37,
+      "status": "working",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 17,
+      "negative_knowledge_entries": 9,
+      "depth": 1
+    },
+    {
+      "slug": "morning-crane-7863",
+      "file_bytes": 12051,
+      "body_bytes": 11318,
+      "words": 1734,
+      "bullets": 40,
+      "status": "working",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 22,
+      "negative_knowledge_entries": 6,
+      "depth": 1
+    },
+    {
+      "slug": "fair-field-3265",
+      "file_bytes": 11069,
+      "body_bytes": 10363,
+      "words": 1624,
+      "bullets": 28,
+      "status": "working",
+      "parents": [
+        "hollow-rain-8997"
+      ],
+      "provenance_entries": 11,
+      "negative_knowledge_entries": 13,
+      "depth": 2
+    },
+    {
+      "slug": "protocol-benchmark-4417",
+      "file_bytes": 10691,
+      "body_bytes": 9906,
+      "words": 1507,
+      "bullets": 32,
+      "status": "open",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 11,
+      "negative_knowledge_entries": 4,
+      "depth": 1
+    },
+    {
+      "slug": "wandering-sun-8831",
+      "file_bytes": 9972,
+      "body_bytes": 9167,
+      "words": 1394,
+      "bullets": 37,
+      "status": "working",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 20,
+      "negative_knowledge_entries": 5,
+      "depth": 1
+    },
+    {
+      "slug": "blue-sun-8921",
+      "file_bytes": 9045,
+      "body_bytes": 8284,
+      "words": 1271,
+      "bullets": 30,
+      "status": "working",
+      "parents": [
+        "wandering-sun-8831"
+      ],
+      "provenance_entries": 16,
+      "negative_knowledge_entries": 2,
+      "depth": 2
+    },
+    {
+      "slug": "dry-wildflower-2260",
+      "file_bytes": 7985,
+      "body_bytes": 7262,
+      "words": 1078,
+      "bullets": 29,
+      "status": "working",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 16,
+      "negative_knowledge_entries": 4,
+      "depth": 1
+    },
+    {
+      "slug": "fond-sail-3288",
+      "file_bytes": 7025,
+      "body_bytes": 6273,
+      "words": 978,
+      "bullets": 13,
+      "status": "working",
+      "parents": [
+        "morning-crane-7863"
+      ],
+      "provenance_entries": 8,
+      "negative_knowledge_entries": 2,
+      "depth": 2
+    },
+    {
+      "slug": "gilded-vale-8087",
+      "file_bytes": 6366,
+      "body_bytes": 5648,
+      "words": 908,
+      "bullets": 14,
+      "status": "working",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 3,
+      "negative_knowledge_entries": 5,
+      "depth": 1
+    },
+    {
+      "slug": "retroactive-repair-5104",
+      "file_bytes": 6275,
+      "body_bytes": 5540,
+      "words": 871,
+      "bullets": 16,
+      "status": "working",
+      "parents": [
+        "wandering-sun-8831"
+      ],
+      "provenance_entries": 6,
+      "negative_knowledge_entries": 2,
+      "depth": 2
+    },
+    {
+      "slug": "bitter-sound-9744",
+      "file_bytes": 5858,
+      "body_bytes": 5126,
+      "words": 793,
+      "bullets": 22,
+      "status": "working",
+      "parents": [
+        "bold-field-1268"
+      ],
+      "provenance_entries": 14,
+      "negative_knowledge_entries": 1,
+      "depth": 2
+    },
+    {
+      "slug": "brave-bramble-9399",
+      "file_bytes": 5548,
+      "body_bytes": 4819,
+      "words": 752,
+      "bullets": 16,
+      "status": "superseded",
+      "parents": [
+        "polished-pond-2718"
+      ],
+      "provenance_entries": 8,
+      "negative_knowledge_entries": 4,
+      "depth": 2
+    },
+    {
+      "slug": "lawful-ash-6222",
+      "file_bytes": 5358,
+      "body_bytes": 4669,
+      "words": 733,
+      "bullets": 22,
+      "status": "superseded",
+      "parents": [
+        "polished-pond-2718"
+      ],
+      "provenance_entries": 13,
+      "negative_knowledge_entries": 4,
+      "depth": 2
+    },
+    {
+      "slug": "odd-birch-3808",
+      "file_bytes": 5201,
+      "body_bytes": 4455,
+      "words": 684,
+      "bullets": 18,
+      "status": "working",
+      "parents": [
+        "damp-basin-8974"
+      ],
+      "provenance_entries": 9,
+      "negative_knowledge_entries": 1,
+      "depth": 2
+    },
+    {
+      "slug": "young-wave-9364",
+      "file_bytes": 4332,
+      "body_bytes": 3622,
+      "words": 518,
+      "bullets": 15,
+      "status": "working",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 10,
+      "negative_knowledge_entries": 0,
+      "depth": 1
+    },
+    {
+      "slug": "soft-hill-6082",
+      "file_bytes": 3987,
+      "body_bytes": 3254,
+      "words": 517,
+      "bullets": 12,
+      "status": "open",
+      "parents": [
+        "young-wave-9364"
+      ],
+      "provenance_entries": 6,
+      "negative_knowledge_entries": 1,
+      "depth": 2
+    },
+    {
+      "slug": "sage-river-8211",
+      "file_bytes": 3937,
+      "body_bytes": 3183,
+      "words": 482,
+      "bullets": 12,
+      "status": "working",
+      "parents": [
+        "bold-field-1268"
+      ],
+      "provenance_entries": 6,
+      "negative_knowledge_entries": 1,
+      "depth": 2
+    },
+    {
+      "slug": "damp-basin-8974",
+      "file_bytes": 3767,
+      "body_bytes": 3057,
+      "words": 474,
+      "bullets": 11,
+      "status": "working",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 6,
+      "negative_knowledge_entries": 1,
+      "depth": 1
+    },
+    {
+      "slug": "hollow-rain-8997",
+      "file_bytes": 3467,
+      "body_bytes": 2785,
+      "words": 433,
+      "bullets": 13,
+      "status": "open",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 8,
+      "negative_knowledge_entries": 0,
+      "depth": 1
+    },
+    {
+      "slug": "wandering-crane-1698",
+      "file_bytes": 3341,
+      "body_bytes": 2603,
+      "words": 398,
+      "bullets": 13,
+      "status": "working",
+      "parents": [
+        "young-wave-9364"
+      ],
+      "provenance_entries": 7,
+      "negative_knowledge_entries": 0,
+      "depth": 2
+    },
+    {
+      "slug": "polished-pond-2718",
+      "file_bytes": 3126,
+      "body_bytes": 2396,
+      "words": 352,
+      "bullets": 10,
+      "status": "open",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 6,
+      "negative_knowledge_entries": 0,
+      "depth": 1
+    },
+    {
+      "slug": "still-tide-5192",
+      "file_bytes": 2502,
+      "body_bytes": 1807,
+      "words": 280,
+      "bullets": 8,
+      "status": "working",
+      "parents": [
+        "damp-basin-8974"
+      ],
+      "provenance_entries": 4,
+      "negative_knowledge_entries": 0,
+      "depth": 2
+    },
+    {
+      "slug": "weathered-union-7494",
+      "file_bytes": 2325,
+      "body_bytes": 1599,
+      "words": 245,
+      "bullets": 8,
+      "status": "open",
+      "parents": [
+        "damp-basin-8974"
+      ],
+      "provenance_entries": 4,
+      "negative_knowledge_entries": 0,
+      "depth": 2
+    },
+    {
+      "slug": "bold-field-1268",
+      "file_bytes": 2129,
+      "body_bytes": 1432,
+      "words": 223,
+      "bullets": 7,
+      "status": "working",
+      "parents": [
+        "cool-king-8586"
+      ],
+      "provenance_entries": 5,
+      "negative_knowledge_entries": 0,
+      "depth": 1
+    },
+    {
+      "slug": "cool-king-8586",
+      "file_bytes": 1184,
+      "body_bytes": 706,
+      "words": 76,
+      "bullets": 2,
+      "status": null,
+      "parents": [],
+      "provenance_entries": 0,
+      "negative_knowledge_entries": 0,
+      "depth": 0
+    }
+  ]
+}
