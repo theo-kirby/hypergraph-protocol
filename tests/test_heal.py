@@ -474,10 +474,10 @@ def test_heal_artifacts_does_not_apply_without_an_import(tmp_path, capsys):
 
 
 # --------------------------------------------------------------- the upgrade fold
-# At 0.9.0 `heal` folded into `upgrade --graph`: one verb, two polarities. The
+# At 0.0.11 `heal` folded into `upgrade --graph`: one verb, two polarities. The
 # copies half writes by default (git-checkout-reversible); everything behind
 # `--graph` is detect-only until `--apply`. `heal` survives as a hidden alias for
-# the 0.9.x series.
+# the 0.0.x series.
 
 def upgrade_graph(repo, config_path, *argv):
     return run("upgrade", "--repo", repo, "--config", config_path, "--graph", *argv)

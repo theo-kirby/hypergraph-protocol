@@ -59,14 +59,14 @@ block, workflows) and writes by default — every effect is `git checkout`-rever
 capability backwards into a repo that adopted before it existed. It rewrites node
 files and may spend mirror writes that cannot be un-spent, so it is **detect-only
 until `--apply`** — the one inverted default in this file. `heal` survives as a
-deprecated alias for the 0.9.x series.
+deprecated alias for the 0.0.x series.
 """
 from __future__ import annotations
 
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.9.0"
+__version__ = "0.0.11"
 
 import argparse
 import hashlib
@@ -4153,7 +4153,7 @@ SHIPPED_BLOCK_DIGESTS = frozenset({
     "c0698b961c95a5c98a1e3df40cba88e5917db5d02e427c6fa4c7727a57feafa0",
     # 0.0.8 — says what the two graphs are for, not just where they live
     "0e6bd61095cb87c87cb96d5c74c52e18ad0dc22f5f6a5ae2dd636f4d4961a7d3",
-    # 0.9.0 — non-negotiable 1 points at hypergraph-dispatch for deliberate work
+    # 0.0.11 — non-negotiable 1 points at hypergraph-dispatch for deliberate work
     "5f15fb60813ac4611d3d22a11034fa54812110bffca34249ce79504eddde8678",
 })
 
@@ -4266,7 +4266,7 @@ def stamp_config_version(text: str, version: str) -> str:
 # file we shipped and `git checkout` undoes it. The graph half rewrites the graph
 # itself and spends an irreversible mirror-write budget, so it cannot share the
 # copies half's "just run it" posture: it stays detect-only until `--apply`.
-# (`heal` survives as a deprecated alias for the 0.9.x series.)
+# (`heal` survives as a deprecated alias for the 0.0.x series.)
 #
 # The framework exists because tags will not be the last capability to land after
 # somebody's adoption. Healer number two must cost **one registry entry and one
@@ -4559,7 +4559,7 @@ HEAL_TAGS = Healer(
     name="tags",
     summary="carry the original graph's tag names into node frontmatter, "
             ".hypergraph/tags.yml, and the mirror",
-    since="0.9.0",
+    since="0.0.11",
     reads="archive",
     writes=("frontmatter", "mirror"),
     detect=tags_detect,
@@ -4673,7 +4673,7 @@ HEAL_ARTIFACTS = Healer(
     name="artifacts",
     summary="record what the frozen archive still holds per node, under "
             "`origin.artifacts` (an inventory, never a repatriation)",
-    since="0.9.0",
+    since="0.0.11",
     reads="archive",
     writes=("frontmatter",),
     detect=artifacts_detect,
@@ -4764,7 +4764,7 @@ def cmd_heal(args: argparse.Namespace) -> int:
     act."""
     if getattr(args, "_heal_alias", False):
         print("note: `heal` is deprecated — it folded into `upgrade --graph` at "
-              "0.9.0, and the alias goes away after the 0.9.x series.",
+              "0.0.11, and the alias goes away after the 0.0.x series.",
               file=sys.stderr)
     repo = Path(args.repo or ".").resolve()
     config = load_config(args.config)
@@ -6173,9 +6173,9 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--yes", action="store_true",
                        help="proceed without confirming a large repair")
 
-    # Deprecated alias for `upgrade --graph` (0.9.0). No help= → absent from the
+    # Deprecated alias for `upgrade --graph` (0.0.11). No help= → absent from the
     # commands table; the subparsers metavar keeps it out of the usage brace list.
-    # Works through the 0.9.x series, then goes away.
+    # Works through the 0.0.x series, then goes away.
     p_heal = sub.add_parser("heal")
     p_heal.add_argument("healer", nargs="*",
                         help=f"which repair(s) to run (have: "

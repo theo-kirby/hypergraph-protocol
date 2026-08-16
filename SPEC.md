@@ -1,4 +1,4 @@
-# Hypergraph Protocol — v0.9.0
+# Hypergraph Protocol — v0.0.11
 
 Hypergraph is a **substrate for autonomous research and engineering**: the memory
 layer an agent needs to carry real work across months and across contexts without a
@@ -430,7 +430,7 @@ Because it rewrites the graph and may spend writes that cannot be un-spent, the 
 half is **detect-only until `--apply`** — the one place in this tooling where a dry
 run is the default — and plain detected drift exits 0, since a capability that landed
 after your adoption is not a broken invariant. (`heal`, the former name of the graph
-half, survives as a deprecated alias through the 0.9.x series.)
+half, survives as a deprecated alias through the 0.0.x series.)
 
 ## Storage
 
