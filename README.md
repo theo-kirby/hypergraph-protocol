@@ -112,7 +112,7 @@ files without recording anything, and a publish job refreshes the mirror on merg
 ## What ships
 
 - **[SPEC.md](SPEC.md)** — the protocol: invariants I1–I8 + conventions.
-- **[skills/](skills/)** — five Claude skills: `hypergraph-init`, `hypergraph-adopt`
+- **[skills/](skills/)** — the Claude skills: `hypergraph-init`, `hypergraph-adopt`
   (bring a project with a past under the protocol: legacy-graph import or authored
   prehistory, adoption epoch, AGENTS.md onboarding), `hypergraph-record`,
   `hypergraph-reconcile`, `hypergraph-orient`.
@@ -132,7 +132,7 @@ uv tool install hypergraph-protocol
 hypergraph skills install          # → ./.claude/skills (project scope)
 ```
 
-That is the whole install: the CLI from PyPI, and the five skills into the repo you
+That is the whole install: the CLI from PyPI, and the skills into the repo you
 are working in (`--user` puts them in `~/.claude/skills` instead). Nothing to clone,
 nothing to fork.
 
@@ -230,7 +230,7 @@ backend/INTERFACE.md        ~10 abstract operations — the portability contract
 backend/local-adapter.md    op → node files + hypergraph CLI (git-native; the one impl)
 backend/mirror.md           optional one-way mirroring — CLI internals, not agent-facing
 backend/flywheel.md         the host's payload/lease contract, for the mirror code only
-skills/hypergraph-*/        the five skills (.claude/skills/ symlinks these)
+skills/hypergraph-*/        the skills (.claude/skills/ symlinks these)
 templates/                  record-node / state-node / config shapes
 templates/github-actions/   PR check + publish-on-merge workflows
 tools/hypergraph.py         checker + renderer + storage + mirror (uv script)

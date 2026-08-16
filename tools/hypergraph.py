@@ -3809,7 +3809,7 @@ def upgrade_skills(source: Path, target: Path, changes: list, dry_run: bool) -> 
 
 
 def _trees_match(src: Path, dst: Path) -> bool:
-    """Same relative paths, same bytes. Cheap enough for five small skill trees."""
+    """Same relative paths, same bytes. Cheap enough for the small skill trees."""
     def snapshot(root: Path) -> dict:
         return {str(p.relative_to(root)): p.read_bytes()
                 for p in sorted(root.rglob("*")) if p.is_file()}
@@ -4018,7 +4018,7 @@ def cmd_skills(args: argparse.Namespace) -> int:
 
 
 # ------------------------------------------------------------------- upgrading
-# An adopted repo carries *copies* of things this package ships: the five skills
+# An adopted repo carries *copies* of things this package ships: the skills
 # under `.claude/skills/`, the sentinel-delimited AGENTS.md block, and sometimes the
 # CI workflows. `uv tool upgrade` refreshes the CLI and cannot see any of them, so
 # before this command the only way a fix reached an adopter's skill was for someone
@@ -8131,7 +8131,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_skills = sub.add_parser("skills", help="manage the shipped Claude skills")
     p_skills.add_argument("action", choices=["install"],
-                          help="install: copy the five hypergraph-* skills")
+                          help="install: copy the hypergraph-* skills")
     p_skills.add_argument("--user", action="store_true",
                           help="install into ~/.claude/skills (default: ./.claude/skills)")
     p_skills.add_argument("--target", type=Path, metavar="DIR",

@@ -218,9 +218,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Hypergraph
-# Regenerable from the graph — `hypergraph export` / `hypergraph.py viz`.
+# Regenerable from the graph — `hypergraph export`.
 .hypergraph/cache/
-.hypergraph/viz.html
 # NOT ignored, deliberately: .hypergraph/config.yml and .hypergraph/graph/ (the local
 # backend's node files) are the project's memory and must travel with the repo.
 
@@ -228,14 +227,10 @@ __marimo__/
 # Git worktrees created inside the repo (EnterWorktree / `git worktree add`).
 # They carry their own .git file and a full checkout, so a `git add -A` from the
 # main working tree tries to commit an entire second copy of the repo.
-/hg-viz/
 /.claude/worktrees/
 
-# NOT ignored, deliberately: /.claude/skills/. Those five entries are relative
+# NOT ignored, deliberately: /.claude/skills/. Its entries are relative
 # symlinks into skills/, committed so this repo dogfoods its own skills — clone the
 # repo and `/hypergraph-record` resolves. Git stores symlinks natively, and editing
 # skills/<name>/SKILL.md edits the live skill, which is the only arrangement that
 # cannot go stale. Only the worktree scratch above is ignored under /.claude/.
-
-# Playwright screenshot output (baselines live in tests/browser/baseline/)
-tests/browser/shots/
