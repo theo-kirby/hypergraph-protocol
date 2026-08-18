@@ -290,3 +290,110 @@ def test_a_paragraph_that_merely_ends_in_a_colon_is_still_a_claim():
     """The exemption is for lead-ins, not for any sentence with a colon in it."""
     body = "The rule is explicit: nothing here cites anything.\n\nAnd nor does this.\n"
     assert len(hg.claim_units(body)) == 2
+
+
+# ---- parsing trust: fences, duplicates, tight slugs, comments (0.1.0 gate) ----
+
+import json as _json
+
+
+def _mutated(tmp_path, fixture, name, mutate):
+    """Copy a clean fixture graph JSON with one node's content rewritten."""
+    graph = _json.loads((FIXTURES / "clean" / fixture).read_text())
+    for node in graph["nodes"]:
+        if node["slug_name"] == name:
+            node["content"] = mutate(node["content"])
+    path = tmp_path / fixture
+    path.write_text(_json.dumps(graph))
+    return path
+
+
+def test_live_dogfood_graph_stays_green(tmp_path):
+    """This repo's own committed graph must stay green under every checker change.
+
+    93+ record and 25+ state nodes of real usage: the standing backward-compat net
+    for parsing changes — a stricter rule that flags the live graph is a defect in
+    the rule, not the graph."""
+    config = hg.load_config(ROOT / ".hypergraph" / "config.yml")
+    graph_dir = ROOT / (config.get("graph_dir") or ".hypergraph/graph")
+    for kind in ("record", "state"):
+        payload = hg.export_graph_json(graph_dir, kind)
+        (tmp_path / f"{kind}.json").write_text(_json.dumps(payload))
+    report = hg.run_check(tmp_path / "record.json", tmp_path / "state.json",
+                          config, repo_root=ROOT)
+    assert report.violations() == [], [str(f) for f in report.violations()]
+
+
+def test_split_sections_ignores_headings_inside_fences():
+    pre, sections = hg.split_sections(
+        "intro\n\n```md\n## State Impact\nnone: just an example\n```\n\n## Real\nbody\n")
+    assert "state impact" not in sections
+    assert sections["real"] == "body"
+    assert "## State Impact" in pre  # fenced example stays in the enclosing text
+
+
+def test_split_sections_first_body_wins_on_duplicate_heading():
+    _pre, sections = hg.split_sections("## Current\nfirst\n\n## Current\nsecond\n")
+    assert sections["current"] == "first"
+
+
+def test_fenced_state_impact_does_not_satisfy_i2(tmp_path):
+    record = _mutated(tmp_path, "record.json", "calm-heron-0003", lambda c:
+                      "## What\n\nwork\n\n```\n## State Impact\nnone: fenced example\n```\n")
+    report = hg.run_check(record, FIXTURES / "clean" / "state.json")
+    assert any(f.invariant == "I2" and "missing" in f.message and
+               f.node == "calm-heron-0003" for f in report.violations())
+
+
+def test_duplicate_load_bearing_heading_is_a_violation(tmp_path):
+    state = _mutated(tmp_path, "state.json", "quiet-lantern-0103", lambda c:
+                     c + "\n## Provenance\n\n- dim-walrus-0004 — a second section\n")
+    report = hg.run_check(FIXTURES / "clean" / "record.json", state)
+    assert any(f.invariant == "I4" and "duplicate" in f.message and
+               f.node == "quiet-lantern-0103" for f in report.violations())
+
+
+def test_duplicate_state_impact_heading_is_a_violation(tmp_path):
+    record = _mutated(tmp_path, "record.json", "calm-heron-0003", lambda c:
+                      c + "\n## State Impact\nnone: a second declaration\n")
+    report = hg.run_check(record, FIXTURES / "clean" / "state.json")
+    assert any(f.invariant == "I2" and "duplicate" in f.message and
+               f.node == "calm-heron-0003" for f in report.violations())
+
+
+def test_url_tail_in_provenance_is_not_read_as_a_slug(tmp_path):
+    """`- <slug> — see https://ci.example/fast-lane-1234` must not flag the URL."""
+    state = _mutated(tmp_path, "state.json", "quiet-lantern-0103", lambda c:
+                     c.rstrip() + " — see https://ci.example/build/fast-lane-1234\n")
+    report = hg.run_check(FIXTURES / "clean" / "record.json", state)
+    assert report.violations() == [], [str(f) for f in report.violations()]
+
+
+def test_provenance_accepts_rec_citation_as_fallback(tmp_path):
+    state = _mutated(tmp_path, "state.json", "quiet-lantern-0103", lambda c:
+                     c.rstrip() + "\n- see the schema decision [rec: brisk-otter-0002]\n")
+    report = hg.run_check(FIXTURES / "clean" / "record.json", state)
+    assert report.violations() == [], [str(f) for f in report.violations()]
+
+
+def test_provenance_bullet_without_any_slug_still_fails(tmp_path):
+    state = _mutated(tmp_path, "state.json", "quiet-lantern-0103", lambda c:
+                     c.rstrip() + "\n- a bullet with no citation at all\n")
+    report = hg.run_check(FIXTURES / "clean" / "record.json", state)
+    assert any(f.invariant == "I4" and "no record slug" in f.message
+               for f in report.violations())
+
+
+def test_url_tail_in_evidence_field_is_not_read_as_a_slug(tmp_path):
+    state = _mutated(tmp_path, "state.json", "mellow-quartz-0102", lambda c: c.replace(
+        "evidence: brisk-otter-0002]",
+        "evidence: brisk-otter-0002, https://ci.example/run/fast-lane-1234]"))
+    report = hg.run_check(FIXTURES / "clean" / "record.json", state)
+    assert report.violations() == [], [str(f) for f in report.violations()]
+
+
+def test_comment_above_status_line_passes_i6(tmp_path):
+    state = _mutated(tmp_path, "state.json", "quiet-lantern-0103", lambda c:
+                     "<!-- reviewed 2026-08-18 -->\n" + c)
+    report = hg.run_check(FIXTURES / "clean" / "record.json", state)
+    assert report.violations() == [], [str(f) for f in report.violations()]

@@ -228,22 +228,72 @@ def load_graph(path: Path) -> Graph:
     return Graph(nodes=nodes, by_slug=by_slug)
 
 
+def fence_mask(lines: list[str]) -> list[bool]:
+    """True for each line that is a code-fence delimiter or inside a fence.
+
+    The one fence tracker: split_sections, duplicate_headings and claim_units all
+    read structure through this, so a heading inside a fenced example can never be
+    structure to one of them and content to another."""
+    mask: list[bool] = []
+    fenced = False
+    for line in lines:
+        if line.strip().startswith("```"):
+            mask.append(True)
+            fenced = not fenced
+        else:
+            mask.append(fenced)
+    return mask
+
+
+HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
+
+
 def split_sections(content: str) -> tuple[str, dict[str, str]]:
-    """Split markdown on `## ` headings → (preamble, {lowercased heading: body})."""
+    """Split markdown on unfenced `## ` headings → (preamble, {lowercased heading: body}).
+
+    A heading inside a code fence is content, not structure. A repeated heading keeps
+    its **first** body — duplicate_headings() is how a checker reports the repetition
+    instead of silently merging bodies."""
     content = COMMENT_RE.sub("", content)
+    lines = content.splitlines()
     pre: list[str] = []
     sections: dict[str, list[str]] = {}
-    current: str | None = None
-    for line in content.splitlines():
-        m = re.match(r"^##\s+(.+?)\s*$", line)
+    current: list[str] | None = None
+    in_body = False
+    for line, fenced in zip(lines, fence_mask(lines)):
+        m = None if fenced else HEADING_RE.match(line)
         if m:
-            current = m.group(1).lower()
-            sections.setdefault(current, [])
-        elif current is None:
+            in_body = True
+            key = m.group(1).lower()
+            if key in sections:
+                current = None  # duplicate heading: first body wins, rest is dropped
+            else:
+                sections[key] = []
+                current = sections[key]
+        elif not in_body:
             pre.append(line)
-        else:
-            sections[current].append(line)
+        elif current is not None:
+            current.append(line)
     return "\n".join(pre), {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
+def duplicate_headings(content: str) -> list[str]:
+    """Lowercased unfenced `## ` headings that appear more than once."""
+    content = COMMENT_RE.sub("", content)
+    lines = content.splitlines()
+    seen: set[str] = set()
+    dups: list[str] = []
+    for line, fenced in zip(lines, fence_mask(lines)):
+        if fenced:
+            continue
+        m = HEADING_RE.match(line)
+        if not m:
+            continue
+        key = m.group(1).lower()
+        if key in seen and key not in dups:
+            dups.append(key)
+        seen.add(key)
+    return dups
 
 
 def find_root(graph: Graph, configured: dict | None, report: Report, label: str,
@@ -299,6 +349,10 @@ def check_impacts(record: Graph, state: Graph, record_root: Node | None, report:
             if created is not None and created < epoch_cutoff:
                 exempted += 1
                 continue
+        if "state impact" in duplicate_headings(node.content):
+            report.add("violation", "I2", node.ref,
+                       "duplicate `## State Impact` heading — only the first is read; "
+                       "merge them into one section")
         _, sections = split_sections(node.content)
         body = sections.get("state impact")
         if body is None:
@@ -355,8 +409,16 @@ def parse_impacts(body: str) -> tuple[list[tuple[str, str, bool]], str | None, l
 
 def check_state_nodes(record: Graph, state: Graph, state_root: Node | None, report: Report) -> None:
     """I4 provenance + citations, I6 status, I7 negative knowledge, I1 proxy."""
+    load_bearing = (("current", "I1"), ("provenance", "I4"),
+                    ("negative knowledge", "I7"), ("reconciliation", "I5"))
     for node in state.nodes.values():
         is_root = bool(state_root and node.node_id == state_root.node_id)
+        dups = duplicate_headings(node.content)
+        for heading, invariant in load_bearing:
+            if heading in dups:
+                report.add("violation", invariant, node.ref,
+                           f"duplicate `## {heading}` heading — only the first is "
+                           "read; merge them into one section")
         _pre, sections = split_sections(node.content)
 
         if not is_root:
@@ -372,21 +434,30 @@ def check_state_nodes(record: Graph, state: Graph, state_root: Node | None, repo
                            f"inline citation [rec: {slug}] does not resolve to a record node")
 
 
+def status_of(content: str) -> tuple[str, str | None]:
+    """→ (first non-blank comment-stripped line, its parsed status or None).
+
+    Comments are stripped first, so an HTML comment above the Status line — legal
+    markdown that renders to nothing — cannot fail I6 or hide a node's status."""
+    first = next((ln.strip() for ln in COMMENT_RE.sub("", content).splitlines()
+                  if ln.strip()), "")
+    m = STATUS_RE.match(first)
+    return first, m.group("status") if m else None
+
+
 def check_status_line(node: Node, report: Report) -> None:
-    first = next((ln for ln in node.content.splitlines() if ln.strip()), "")
-    m = STATUS_RE.match(first.strip())
-    if not m:
+    first, status = status_of(node.content)
+    if status is None:
         report.add("violation", "I6", node.ref,
-                   f"first line is not a Status line (got {first.strip()!r})")
-    elif m.group("status") not in STATUSES:
+                   f"first line is not a Status line (got {first!r})")
+    elif status not in STATUSES:
         report.add("violation", "I6", node.ref,
-                   f"invalid status {m.group('status')!r} (allowed: {', '.join(sorted(STATUSES))})")
+                   f"invalid status {status!r} (allowed: {', '.join(sorted(STATUSES))})")
 
 
 def node_status(node: Node) -> str | None:
-    first = next((ln for ln in node.content.splitlines() if ln.strip()), "")
-    m = STATUS_RE.match(first.strip())
-    return m.group("status") if m and m.group("status") in STATUSES else None
+    _first, status = status_of(node.content)
+    return status if status in STATUSES else None
 
 
 def check_provenance(node: Node, sections: dict[str, str], record: Graph, report: Report) -> None:
@@ -399,11 +470,17 @@ def check_provenance(node: Node, sections: dict[str, str], record: Graph, report
         line = line.strip()
         if not line.startswith("-"):
             continue
-        found = SLUG_RE.findall(line)
-        if not found:
+        # The slug is the bullet's leading token (`- <slug> — why`), with [rec: …]
+        # accepted anywhere as fallback. Never a bare substring scan: that read the
+        # tail of a URL ending in `-1234` as a citation and flagged it unresolvable.
+        lead = re.match(r"^-\s*(\S+)", line)
+        if lead and SLUG_RE.fullmatch(lead.group(1)):
+            slugs.append(lead.group(1))
+        elif cited := [c.group("slug") for c in CITE_RE.finditer(line)]:
+            slugs.extend(cited)
+        else:
             report.add("violation", "I4", node.ref,
                        f"provenance line has no record slug: {line!r}")
-        slugs.extend(found)
     if not slugs:
         report.add("violation", "I4", node.ref, "`## Provenance` lists no record slugs")
     for slug in slugs:
@@ -424,8 +501,8 @@ def claim_units(body: str) -> list[str]:
     one adopted repo and taught its agent to reformat correct prose."""
     units: list[str] = []
     current: list[str] | None = None
-    fenced = False
     lines = body.splitlines()
+    mask = fence_mask(lines)
 
     def flush(index: int | None = None):
         """`index` is the line that ended this unit, so a lead-in can see what follows."""
@@ -444,11 +521,9 @@ def claim_units(body: str) -> list[str]:
 
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith("```"):
-            flush(i)
-            fenced = not fenced
-            continue
-        if fenced:
+        if mask[i]:
+            if stripped.startswith("```"):
+                flush(i)
             continue                          # a code block asserts nothing
         if stripped.startswith("#"):
             flush(i)
@@ -495,7 +570,10 @@ def check_negative_knowledge(node: Node, sections: dict[str, str], record: Graph
         if m.group("conf") not in {"low", "medium", "high"}:
             report.add("violation", "I7", node.ref,
                        f"confidence must be low|medium|high, got {m.group('conf')!r}")
-        ev_slugs = SLUG_RE.findall(m.group("ev"))
+        # The evidence field is comma-separated slugs (SPEC I7). Whole tokens only —
+        # a substring scan would read the tail of a URL ending in `-1234` as a slug.
+        ev_slugs = [tok for tok in (t.strip() for t in m.group("ev").split(","))
+                    if SLUG_RE.fullmatch(tok)]
         if not ev_slugs:
             report.add("violation", "I7", node.ref,
                        f"negative-knowledge entry cites no evidence slugs: {line[:80]!r}")
