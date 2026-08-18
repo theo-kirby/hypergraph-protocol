@@ -5,13 +5,13 @@ title: PyPI releases
 created_at: '2026-08-14T13:25:06+00:00'
 parents:
 - damp-basin-8974
-summary: 0.0.2 through 0.0.8 and 0.0.11 live, each verified from the public index; the published package is a plain dependency of an external repo; 0.0.11 is the clean-slate release (dispatch, mirror split, upgrade --graph).
+summary: 0.0.2 through 0.0.8, 0.0.11 and 0.0.12 live, each verified from the public index; 0.0.12 carries the 0.1.0 gate (hardened checker, deduped skills payload, init onboarding, release surface).
 flywheel:
   node_id: fc3ca91a-1b5d-5543-921b-b82d222f75ec
   slug: polished-sky-8897
-  revision: 3
-  pushed_at: '2026-08-16T18:35:51+00:00'
-  content_sha256: 0da146d9c79b2bab0e5814a89a96afe3ed6050ae9fb1ce82a0ee2356eba80b3b
+  revision: 4
+  pushed_at: '2026-08-18T21:21:51+00:00'
+  content_sha256: a0f8bb39792f8577c8c14561959c00a249c494f3749b3c5900b03910f67d5c0a
   parents_sha256: 9c8039d8ccc995d9c15665648d7d82c9399050ef076f05102c409e2d18ebabfb
   parents:
   - e6697aa9-2f7c-5b23-8ef4-abc687d15567
@@ -20,7 +20,7 @@ Status: working
 
 ## Current
 
-Six releases are live on PyPI, and every one was verified **from the public index** rather than from `dist/` — the check that distinguishes "built" from "shipped" [rec: patient-ridge-8464] [rec: stormy-glade-0866].
+Seven releases are live on PyPI, and every one was verified **from the public index** rather than from `dist/` — the check that distinguishes "built" from "shipped" [rec: patient-ridge-8464] [rec: stormy-glade-0866] [rec: witty-summit-9656].
 
 - **0.0.2**, the first real one: `hypergraph skills install` lands all five skills (skills plus `templates/agents-block.md` as package data via hatchling force-include), and the published CLI's epoch-aware `check` reports 0 violations on both adopted repos. Both adopters were un-pinned from the dev checkout in the same pass, which is what made the distribution story end-to-end: an adopter needs only uvx and PyPI [rec: crisp-lake-4496] [rec: rough-reef-5869].
 - **0.0.5** cleared everything that had accumulated unreleased — the MIT/PEP 639 metadata absent from the published 0.0.2, fork-import, the `verify` mirror_roots exemption, the mode-B epoch marker fix, the two `check` fixes and `--version`, the mirror-opacity work, and the merge-safety work. It had a dependency running the other way: the shipped adopter CI template calls `check --since`, which did not exist before this release, so until it shipped anyone copying that workflow got one that could not run [rec: long-peak-1620].
@@ -29,6 +29,7 @@ Six releases are live on PyPI, and every one was verified **from the public inde
 - **0.0.8** was verified with published artifacts only: `uv tool install --force --refresh` moves 0.0.7 → 0.0.8, the released package's skills carry the mode A walkthrough, and `upgrade --dry-run` run from the published binary against cadex's customized AGENTS.md block reports it and steps back where 0.0.7 deleted it [rec: patient-ridge-8464].
 - **The published package is now consumed by a repo with no path to this source tree.** `hypergraph-labs` declares `hypergraph-protocol==0.0.8` as an ordinary dependency and bakes the pin into the container image its experiments run in, so every run of it is also a test of what was actually published [rec: lean-field-0101].
 - **0.0.11 is live and index-verified — the sixth release, and the first since 0.0.8** [rec: stormy-glade-0866]. The clean-slate release: substrate + skills + dispatch as one product, the mirror's networked half in its own module, `heal` folded into `upgrade --graph`. The Operator named the version [rec: vast-birch-5192] — 0.0.9 (staged by the viz cut [rec: loyal-tide-3608]) and 0.0.10 were never published, so the index goes 0.0.8 → 0.0.11. Verification ran entirely against the index via `uvx --isolated --from hypergraph-protocol==0.0.11`: the entry point reports 0.0.11, `skills install` lands six skills including `hypergraph-dispatch`, `upgrade --graph` lists the repair registry, and the JSON API lists exactly the wheel and the sdist.
+- **0.0.12 is live and index-verified — the seventh release, carrying the whole 0.1.0 gate** [rec: witty-summit-9656]. The Operator named the version — 0.0.12, not 0.1.0, with more work planned before that label — and directed both the staged bump [rec: smooth-nest-0450] and the publish. Verification ran entirely against the index via `uvx --isolated --from hypergraph-protocol==0.0.12`: the entry point reports 0.0.12, `skills install` lands six skills **plus the shared `hypergraph-references/` payload with every per-skill reference a resolving relative symlink** (the first index-side proof of the payload dedupe — one spec.md in the wheel, ~136 KB installed), `upgrade --graph` lists the repair registry, and the JSON API lists exactly the wheel and sdist. The synchronized version locations are six since the gate: CHANGELOG.md joined them, its heading dated only on index verification, per its own convention.
 - **Version parity is guarded in three places and the third has fired**: `test_spec_header_matches_pyproject` failed with `SPEC.md says v0.0.5, pyproject says 0.0.6` on a release where SPEC.md itself did not change [rec: sleepy-vine-2805]. The version lives in five places with two parity tests holding them in step [rec: humble-rain-0304], and the benchmark's boxes pin an exact version and assert it on the box, because `uv tool install` reuses a cached tool and would otherwise leave a box silently running an older build [rec: staid-field-2723].
 
 ## Negative knowledge
@@ -49,3 +50,5 @@ Six releases are live on PyPI, and every one was verified **from the public inde
 - shady-garden-2130 — 0.9.0 stamped in all five places and staged, deliberately unpublished
 - vast-birch-5192 — Operator directive: the release ships as 0.0.11
 - stormy-glade-0866 — 0.0.11 published and verified from the public index
+- smooth-nest-0450 — the 0.0.12 bump staged across all six version locations (Operator decision: not 0.1.0)
+- witty-summit-9656 — 0.0.12 published and verified from the public index
