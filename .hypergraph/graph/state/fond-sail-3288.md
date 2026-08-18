@@ -9,9 +9,9 @@ summary: 'How a release reaches a repo that already adopted: three things travel
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 11
-  pushed_at: '2026-08-18T11:54:36+00:00'
-  content_sha256: 830872ba0d06c008e879a75dd33b75c152b2108ec7179510c71d41563ac8df29
+  revision: 12
+  pushed_at: '2026-08-18T12:12:46+00:00'
+  content_sha256: b94c04098427ab6c338ac5406b24bf9e90115f4a6b3032e5b839599fea8bd7cf
   parents_sha256: 437819574dd587d939fe237b83326a9f0d60c63e5db173f7d30329bb8d01fc22
   parents:
   - 67d32718-3dcf-5321-978a-212599c531b4
@@ -38,7 +38,9 @@ Shipped in 0.0.7 and verified from PyPI with published artifacts only: a repo in
 
 The block itself now points an arriving agent at dispatch: non-negotiable 1 gained the clause at 0.0.11, and the new digest landed in `SHIPPED_BLOCK_DIGESTS` in the same commit — the registration that keeps a clean 0.0.11 block recognizable as ours to refresh rather than frozen as adopter prose [rec: simple-vale-9558].
 
-**The 0.1.0 audit found the delivery half broken in three ways** [rec: lively-spring-9646]: `upgrade` skips any skill not already present in the target, so no pre-0.0.11 adopter can ever receive `hypergraph-dispatch` through the documented two-command path; `install.sh` fails on its own second run because the link guard fires on its own output; and a repo stamped with the retracted 0.9.0 label gets permanently wrong "upgrade the CLI" advice from the skew check. The installed skills payload also measured 348 KB with 78% of it duplicated reference copies. Fixes are queued as the gate's U4 and U6.
+**The 0.1.0 audit found the delivery half broken in three ways, and the gate fixed all three** [rec: lively-spring-9646] [rec: rough-hill-4967]. `upgrade` skipped any skill not already present, so no pre-0.0.11 adopter could ever receive `hypergraph-dispatch` through the documented path — it now completes an opted-in repo's skill set, mode-matched (an all-symlink install gets symlinks, anything else copies), and the doctrine tightened from "never installs what is not already there" to "**never opts a repo in**": a repo with no hypergraph skills gets one line naming `hypergraph skills install` and nothing written. `install.sh` failed on its own second run (the link guard fired on its own output) — `skills install --link` is now idempotent, re-pointing when the source moved, while copy mode still refuses over a live source link. And a repo stamped with the retracted 0.9.0 label got permanently wrong "upgrade the CLI" advice — `RETRACTED_VERSIONS` now routes it to "run `hypergraph upgrade` to re-stamp", verified by test to never mention the CLI upgrade [rec: rough-hill-4967].
+
+**The installed payload no longer ships its references six times** [rec: old-jasper-8833]. The audit measured 348 KB with 78% duplicates (every skill's references/ symlinks materialized at wheel build). The wheel now carries each referenced file once under `hypergraph_protocol_data/references/`, `skills install` links each skill's `references/<name>` relatively into a shared `hypergraph-references/` payload (copy-fallback when `symlink()` raises), and `upgrade` refreshes/prunes the shared dir — converting fat pre-0.1.0 installs on their first run. Measured on a real venv install from the built wheel: 136 KB. En route: hatchling's `force-include` bypasses `exclude` *and* `skip-excluded-dirs` (both measured ineffective), so the skill payload is enumerated file by file with a test pinning the enumeration complete, and `skills/references.yml` stands in for the symlinks a wheel cannot carry, test-pinned equal to them [rec: old-jasper-8833].
 
 A smaller gap remains: on a repo adopted before the stamp, `check` emits only the "predates the stamp" info, so the case where the **CLI** is the older half cannot be reported at all — cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so [rec: vast-valley-5745].
 
@@ -61,3 +63,5 @@ A smaller gap remains: on a repo adopted before the stamp, `check` emits only th
 - simple-vale-9558 — the block names dispatch; the 0.0.11 digest registered in the same commit
 - vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0
 - lively-spring-9646 — the 0.1.0 audit: upgrade skips absent skills, install.sh not idempotent, the 0.9.0 skew loop
+- rough-hill-4967 — U4: upgrade completes the skill set, install.sh idempotent, the 0.9.0 loop broken
+- old-jasper-8833 — U6: the references payload ships once; installs link to it (348 KB to 136 KB)

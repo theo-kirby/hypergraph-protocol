@@ -9,9 +9,9 @@ summary: 'The optional one-way projection: push executes it behind one command, 
 flywheel:
   node_id: be944979-3508-5583-b6b8-bd96106ca7f5
   slug: empty-forest-6305
-  revision: 16
-  pushed_at: '2026-08-16T18:35:51+00:00'
-  content_sha256: 6cff105348580f105f9ae400b42c5cd30c1abcb22d15d84d67d91a9e205d649f
+  revision: 17
+  pushed_at: '2026-08-18T12:12:46+00:00'
+  content_sha256: 763d6fd31347b705c3b5bd866b0167becec144588468d28d89d965c4c9a6e58c
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -32,6 +32,7 @@ An optional, one-way projection of the committed node files onto a hosted graph.
 - **The mirror carries artifacts, and the rules are the tag rules with one inversion removed** [rec: shady-bay-7654]. Identity is the **title** — `<repo-relative path>@<sha256[:12]>` — so "this title is attached" means exactly "these bytes, for this path, are attached", and the `artifacts:list` that supplies `expected_revision` is the same read that supplies the dedupe set. **Retry is safe for an atomic replace and unsafe for an append**: `tags:assign` may be re-issued, an upload may not, and even a 429 is ambiguous there because the upload is one process doing prepare + PUT + finalize. **Nothing is ever un-attached**, since the only un-attach destroys bytes — so changed bytes upload a new version, a dropped path leaves the mirror copy in place, and a broken item fails alone with the node's stamp withheld.
 - **The mirror moves parent edges too, and that was a silent hole until this round** [rec: autumn-glade-5802]. An `update` op fires only when `content_sha256` moves and carries no parents, so a pure re-parent produced no mirror op at all and forked local topology from mirror topology forever, with `parents` sitting in the strict-only verify field set where nothing would notice. `push_parents` executes `nodes:add-parent` / `nodes:remove-parent` add-before-remove with all four optimistic locks, and `parents` is now a **default** verify field. What the mirror currently holds comes from an export and never from `nodes:get`, which reports `has_parents` and no parent ids at any projection — which is what made the first run a stamp rather than a write: 87 parent sets planned, 0 edges written.
 - **Two costs are recorded rather than left to be discovered** [rec: shady-bay-7654]. "The mirror is a regenerable, one-way projection" now has a bounded exception — a node body is regenerable from the repo forever, but an artifact's bytes only while that file exists at that path, and gitignored evidence is permitted by design. And `push_plan` stopped being a pure function of `graph_dir`: it stats and hashes files across the repo, so its cost is proportional to evidence size. Its network-free guarantee survives untouched.
+- **The internals documentation is off the agent-facing surface since the 0.1.0 gate** [rec: mellow-birch-2818]. mirror.md and flywheel.md — 802 lines, 34% of the conceptual layer, longer than SPEC.md — moved to `docs/internal/` with every pointer repointed and both files out of the sdist. The agent-facing doc set (SPEC, README, backend/) now contains no mirror-internals prose, which is what "the skills do not know it exists" always claimed.
 - **Verified live end to end throughout** [rec: silver-ember-3035] [rec: shady-bay-7654]: `mirror doctor` 0/0 with a write probe and an account match, a real push creating nodes parents-first and verifying 0 drift, a second run reporting `0 create(s), 0 update(s)` while making **zero calls** — the plan is a pure diff, so a synced graph asks the host nothing — an artifact title returning byte-identical with `metadata.hypergraph` intact, and `push --verify --strict` clean.
 - An earlier conclusion that the mirror had been deleted was wrong and is corrected: every probe behind it used a key belonging to an unrelated account. That account id is now `mirror_account_id:` in config, so the check is mechanical [rec: sweet-aspen-3667] [rec: solemn-dawn-6752] [rec: silver-ember-3035].
 
@@ -68,3 +69,4 @@ An optional, one-way projection of the committed node files onto a hosted graph.
 - late-sage-5549 — narrowed to the mirror once storage moved to Storage & node format
 - blue-rain-3979 — the split: the mirror's networked half becomes its own lazily-loaded module
 - vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0
+- mellow-birch-2818 — U7: mirror internals docs to docs/internal/, out of the sdist
