@@ -1145,6 +1145,16 @@ def cmd_hwm(args: argparse.Namespace) -> int:
     frontier, ts = read_hwm(state_root)
     frontier = frontier or []
 
+    if getattr(args, "tips", False):
+        # The maximal nodes of the whole record graph: what a reconcile pass that
+        # folds every outstanding impact writes as the new high-water mark.
+        # Reachability semantics, never a timestamp cutoff (SPEC I5).
+        has_child = {pid for n in record.nodes.values() for pid in n.parent_ids}
+        tips = sorted((n for n in record.nodes.values() if n.node_id not in has_child),
+                      key=lambda n: created_key(n.created_at, n.slug))
+        print(f"high_water_mark: {format_hwm([n.slug for n in tips])}")
+        return 0
+
     if args.suggest:
         suggested = suggest_frontier(record, frontier, record_root)
         if not suggested:
@@ -5939,7 +5949,9 @@ def adopt_marker(repo: Path, args: argparse.Namespace) -> int:
 
 # -------------------------------------------------------------------------- cli
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The full CLI surface, as data. Separate from main() so tests can pin the
+    parity between subparser options and the Namespaces cmd_sync hand-builds."""
     parser = argparse.ArgumentParser(prog="hypergraph.py", description=__doc__)
     parser.add_argument("--version", action="version",
                         version=f"hypergraph-protocol {__version__}")
@@ -5965,6 +5977,9 @@ def main(argv: list[str] | None = None) -> int:
     p_hwm.add_argument("--config", type=Path, help=".hypergraph/config.yml")
     p_hwm.add_argument("--suggest", action="store_true",
                        help="print the frontier a pre-0.0.5 graph needs after upgrading")
+    p_hwm.add_argument("--tips", action="store_true",
+                       help="print the record graph's childless tips — the frontier a "
+                            "reconcile that folds everything writes")
     p_hwm.set_defaults(func=cmd_hwm)
 
     p_render = sub.add_parser("render", help="render STATE.md from a state-graph export")
@@ -6369,7 +6384,11 @@ def main(argv: list[str] | None = None) -> int:
     p_adopt.add_argument("--record-node-id", action="append", metavar="ID")
     p_adopt.add_argument("--state-node-id", action="append", metavar="ID")
     p_adopt.set_defaults(func=cmd_adopt)
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
     if getattr(args, "command", None) == "upgrade" and args.graph is not None \
             and args.dry_run:
