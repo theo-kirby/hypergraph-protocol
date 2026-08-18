@@ -10,12 +10,10 @@ inline were internal or never published.
 
 Nothing yet.
 
-## [0.0.12]
+## [0.0.12] — 2026-08-18
 
 The 0.1.0 readiness gate, shipped as 0.0.12 by Operator decision — more work is
-planned before the 0.1.0 label is used. Staged in the repo on 2026-08-18; PyPI
-publication is its own step, and this heading gains its date when the release
-is verified from the public index.
+planned before the 0.1.0 label is used. The seventh published release.
 
 ### Added
 - `hwm --tips`: the record graph's childless tips — the frontier a
