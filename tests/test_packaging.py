@@ -166,3 +166,136 @@ def test_templates_config_stamp_matches_pyproject():
     assert found, "templates/config.example.yml carries no hypergraph_version:"
     assert found.group(1) == declared, (
         f"template says {found.group(1)}, pyproject says {declared}")
+
+
+# ---- the shared references payload (0.1.0 gate, U6) ---------------------------
+
+import yaml
+
+from graph_fixtures import hg
+
+
+def test_wheel_force_include_enumerates_every_skill_file():
+    """force-include bypasses every exclude filter, so the skill payload is
+    enumerated file by file. A new skill (or a second file in one) must land
+    here, loudly, or it silently never ships."""
+    sources = set(_pyproject()["tool"]["hatch"]["build"]["targets"]["wheel"]
+                  ["force-include"])
+    expected = {str(p.relative_to(ROOT))
+                for p in (ROOT / "skills").rglob("*")
+                if p.is_file() and not p.name.startswith(".")
+                and "references" not in p.relative_to(ROOT).parts}
+    missing = expected - sources
+    assert not missing, f"skill files the wheel would not ship: {sorted(missing)}"
+
+
+def test_manifest_matches_the_dogfooding_symlinks():
+    """skills/references.yml is the wheel's stand-in for the symlinks a wheel
+    cannot carry. Two representations of one fact — this pins them equal."""
+    from_symlinks = hg.skill_reference_sets(ROOT / "skills")
+    manifest = {str(k): sorted(str(n) for n in v) for k, v in
+                yaml.safe_load((ROOT / "skills" / "references.yml").read_text()).items()}
+    assert from_symlinks == manifest
+
+
+def test_every_manifest_reference_ships_in_the_shared_payload():
+    """Each name a skill links to must exist once under references/ in the wheel."""
+    force = _pyproject()["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+    shipped = {Path(dest).name for dest in force.values()
+               if dest.startswith("hypergraph_protocol_data/references/")}
+    for skill, names in hg.skill_reference_sets(ROOT / "skills").items():
+        missing = set(names) - shipped
+        assert not missing, f"{skill} references {sorted(missing)} — not in the wheel payload"
+
+
+def test_wheel_ships_each_reference_exactly_once(tmp_path):
+    """Build the wheel and look inside: one spec.md, no per-skill copies."""
+    import shutil
+    import subprocess
+    import zipfile
+
+    if shutil.which("uv") is None:
+        import pytest
+        pytest.skip("uv is not on PATH")
+    proc = subprocess.run(["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+                          cwd=ROOT, capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 0, f"wheel build failed:\n{proc.stderr}"
+    wheel = next(tmp_path.glob("*.whl"))
+    names = zipfile.ZipFile(wheel).namelist()
+    spec_copies = [n for n in names if n.endswith("spec.md")]
+    assert spec_copies == ["hypergraph_protocol_data/references/spec.md"]
+    assert not any("skills/hypergraph" in n and "/references/" in n for n in names)
+    assert "hypergraph_protocol_data/skills/references.yml" in names
+
+
+def _fake_wheel_root(tmp_path):
+    """The installed-wheel layout: skills without references, plus the payload."""
+    root = tmp_path / "wheel-data"
+    for skill, names in hg.skill_reference_sets(ROOT / "skills").items():
+        sdir = root / "skills" / skill
+        sdir.mkdir(parents=True)
+        (sdir / "SKILL.md").write_text((ROOT / "skills" / skill / "SKILL.md").read_text())
+    (root / "skills" / "references.yml").write_text(
+        (ROOT / "skills" / "references.yml").read_text())
+    refs = root / "references"
+    refs.mkdir()
+    all_names = {n for names in hg.skill_reference_sets(ROOT / "skills").values()
+                 for n in names}
+    for name in sorted(all_names):
+        source = {"spec.md": ROOT / "SPEC.md",
+                  "local-adapter.md": ROOT / "backend" / "local-adapter.md",
+                  "lanes.md": ROOT / "backend" / "lanes.md"}.get(
+                      name, ROOT / "templates" / name)
+        (refs / name).write_text(source.read_text())
+    (root / "templates").mkdir()
+    (root / "templates" / "agents-block.md").write_text(
+        (ROOT / "templates" / "agents-block.md").read_text())
+    return root
+
+
+def test_wheel_layout_install_links_references_that_resolve(tmp_path, monkeypatch):
+    root = _fake_wheel_root(tmp_path)
+    monkeypatch.setattr(hg, "skills_data_root", lambda: root)
+    target = tmp_path / "claude-skills"
+    assert hg.main(["skills", "install", "--target", str(target)]) == 0
+    assert (target / "hypergraph-references" / "spec.md").is_file()
+    for skill, names in hg.skill_reference_sets(ROOT / "skills").items():
+        for name in names:
+            link = target / skill / "references" / name
+            assert link.is_symlink(), f"{link} is not a symlink"
+            assert link.resolve() == (target / "hypergraph-references" / name).resolve()
+            assert link.read_text()  # and it resolves to real content
+    # each referenced file's bytes exist exactly once under the target
+    spec_files = [p for p in target.rglob("spec.md") if p.is_file() and not p.is_symlink()]
+    assert spec_files == [target / "hypergraph-references" / "spec.md"]
+
+
+def test_wheel_layout_refuses_link_mode(tmp_path, monkeypatch, capsys):
+    root = _fake_wheel_root(tmp_path)
+    monkeypatch.setattr(hg, "skills_data_root", lambda: root)
+    assert hg.main(["skills", "install", "--link",
+                    "--target", str(tmp_path / "t")]) == 2
+    assert "dev checkout" in capsys.readouterr().err
+
+
+def test_upgrade_converts_a_fat_install_to_shared_references(tmp_path, monkeypatch):
+    """A pre-0.1.0 install holds six full copies; its first upgrade prunes them
+    into links against the freshly written shared payload."""
+    import subprocess
+    root = _fake_wheel_root(tmp_path)
+    monkeypatch.setattr(hg, "skills_data_root", lambda: root)
+    repo = tmp_path / "adopted"
+    (repo / ".hypergraph").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    target = repo / ".claude" / "skills"
+    for skill, names in hg.skill_reference_sets(ROOT / "skills").items():
+        refs = target / skill / "references"
+        refs.mkdir(parents=True)
+        (target / skill / "SKILL.md").write_text("old\n")
+        for name in names:
+            (refs / name).write_text("stale fat copy\n")
+    assert hg.main(["upgrade", "--repo", str(repo)]) == 0
+    assert (target / "hypergraph-references" / "spec.md").is_file()
+    link = target / "hypergraph-record" / "references" / "spec.md"
+    assert link.is_symlink()
+    assert link.read_text() == (ROOT / "SPEC.md").read_text()

@@ -3953,6 +3953,62 @@ def skills_data_root() -> Path:
         "module and no skills/ in the parent directory)")
 
 
+def skill_reference_sets(source: Path) -> dict[str, list[str]]:
+    """Per-skill reference filenames: which files each skill's references/ holds.
+
+    Read from the skill dirs themselves when they carry a references/ (a dev
+    checkout's dogfooding symlinks — those stay authoritative), else from the
+    manifest the wheel ships in their place, because a wheel cannot hold
+    symlinks. test_manifest_matches_the_dogfooding_symlinks pins the two
+    representations equal."""
+    sets: dict[str, list[str]] = {}
+    for skill_dir in sorted(source.glob("hypergraph-*")):
+        refs = skill_dir / "references"
+        if refs.is_dir():
+            sets[skill_dir.name] = sorted(
+                p.name for p in refs.iterdir() if not p.name.startswith("."))
+    if sets:
+        return sets
+    manifest = source / "references.yml"
+    if not manifest.exists():
+        return {}
+    import yaml  # deferred: PEP 723 dep
+
+    loaded = yaml.safe_load(manifest.read_text()) or {}
+    return {str(k): sorted(str(n) for n in (v or [])) for k, v in loaded.items()}
+
+
+def install_shared_references(ref_source: Path, target: Path) -> Path:
+    """Write the shared references payload once, wholesale (so upgrades prune)."""
+    shared = target / "hypergraph-references"
+    if shared.is_dir() and not shared.is_symlink():
+        shutil.rmtree(shared)
+    elif shared.exists() or shared.is_symlink():
+        shared.unlink()
+    shutil.copytree(ref_source, shared)
+    return shared
+
+
+def link_skill_references(skill_dst: Path, names: list[str], target: Path) -> None:
+    """Rebuild one installed skill's references/ as links to the shared payload.
+
+    Relative links (`../../hypergraph-references/<name>`), so the install
+    survives the target directory moving; copy-fallback where symlink() is
+    unavailable (some Windows configurations)."""
+    refs = skill_dst / "references"
+    if refs.is_dir() and not refs.is_symlink():
+        shutil.rmtree(refs)          # prune whatever an older, fatter install left
+    elif refs.exists() or refs.is_symlink():
+        refs.unlink()
+    refs.mkdir()
+    for name in names:
+        link = refs / name
+        try:
+            link.symlink_to(Path("..") / ".." / "hypergraph-references" / name)
+        except OSError:
+            shutil.copy2(target / "hypergraph-references" / name, link)
+
+
 def _links_into(dst: Path, tree: Path) -> bool:
     """Is `dst` a symlink that resolves inside `tree`?
 
@@ -4019,13 +4075,45 @@ def upgrade_skills(source: Path, target: Path, changes: list, dry_run: bool) -> 
                 shutil.rmtree(dst)
             shutil.copytree(src, dst)
         changes.append(("refreshed", dst, ""))
+    _refresh_shared_references(source, target, changes, dry_run)
+
+
+def _refresh_shared_references(source: Path, target: Path, changes: list,
+                               dry_run: bool) -> None:
+    """Refresh/prune the shared references payload and every skill's links to it.
+
+    Only under a wheel layout (a `references/` dir beside `skills/`); a dev
+    checkout's dogfooding symlinks resolve in-tree and need nothing. Also the
+    conversion path: a fat pre-0.1.0 install has its per-skill copies replaced
+    by links the first time it upgrades."""
+    ref_source = source.parent / "references"
+    if not ref_source.is_dir():
+        return
+    ref_sets = skill_reference_sets(source)
+    real_dirs = [target / name for name in ref_sets
+                 if (target / name).is_dir() and not (target / name).is_symlink()]
+    if not real_dirs:
+        return
+    if not dry_run:
+        install_shared_references(ref_source, target)
+        for dst in real_dirs:
+            link_skill_references(dst, ref_sets[dst.name], target)
+    changes.append(("refreshed", target / "hypergraph-references",
+                    "shared references payload"))
 
 
 def _trees_match(src: Path, dst: Path) -> bool:
-    """Same relative paths, same bytes. Cheap enough for the small skill trees."""
+    """Same relative paths, same bytes. Cheap enough for the small skill trees.
+
+    Under a wheel layout the source skill carries no references/ — the installed
+    one holds links into the shared payload — so references/ is compared only
+    when the source has one to compare against."""
+    skip = () if (src / "references").is_dir() else ("references",)
+
     def snapshot(root: Path) -> dict:
         return {str(p.relative_to(root)): p.read_bytes()
-                for p in sorted(root.rglob("*")) if p.is_file()}
+                for p in sorted(root.rglob("*"))
+                if p.is_file() and p.relative_to(root).parts[0] not in skip}
     try:
         return snapshot(src) == snapshot(dst)
     except OSError:
@@ -4205,6 +4293,18 @@ def cmd_skills(args: argparse.Namespace) -> int:
     else:
         target = Path.cwd() / ".claude" / "skills"
     target.mkdir(parents=True, exist_ok=True)
+    ref_source = root / "references"
+    ref_sets: dict[str, list[str]] = {}
+    if ref_source.is_dir():
+        # Wheel layout: each referenced file ships once; skills link back to it.
+        if args.link:
+            raise LocalGraphError(
+                "--link needs a source tree whose skills carry their own "
+                "references (a dev checkout). This is an installed wheel, where "
+                "references ship once as a shared payload — use the default copy "
+                "install.")
+        ref_sets = skill_reference_sets(source)
+        install_shared_references(ref_source, target)
     installed, kept = [], []
     for src in sorted(source.glob("hypergraph-*")):
         if not src.is_dir():
@@ -4236,9 +4336,12 @@ def cmd_skills(args: argparse.Namespace) -> int:
                 shutil.rmtree(dst)
             dst.symlink_to(src.resolve(), target_is_directory=True)
         else:
-            # symlinked references/ entries are materialized as real files on copy,
-            # so the installed skill is self-contained
+            # dev checkout: symlinked references/ entries materialize as real files
+            # on copy. Wheel layout: the skill dir has no references/ — the shared
+            # payload installed above is linked in per skill instead.
             shutil.copytree(src, dst, dirs_exist_ok=True)
+            if names := ref_sets.get(src.name):
+                link_skill_references(dst, names, target)
         installed.append(src.name)
     if not installed and not kept:
         raise LocalGraphError(f"no hypergraph-* skills found under {source}")

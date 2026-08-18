@@ -38,11 +38,32 @@ build-backend = "hatchling.build"
 # The skills ship as package data next to the module; `hypergraph skills install`
 # copies them into ./.claude/skills (or ~/.claude/skills with --user). Symlinked
 # references/ entries are materialized as real files at build time.
+# The per-skill references/ are dogfooding symlinks into SPEC.md, backend/ and
+# templates/ — materializing them shipped six copies of spec.md (348 KB of
+# skills, 78% duplicates). The wheel carries each referenced file once, under
+# hypergraph_protocol_data/references/, and `skills install` links each skill's
+# references/ back to that shared copy (sets from skills/references.yml — a
+# wheel cannot hold symlinks, so it carries the manifest instead; force-include
+# bypasses every exclude filter, so the skill files are enumerated one by one
+# and test_packaging pins the enumeration complete).
 [tool.hatch.build.targets.wheel.force-include]
 "tools/hypergraph.py" = "hypergraph_protocol.py"
 "tools/hypergraph_mirror.py" = "hypergraph_protocol_mirror.py"
-"skills" = "hypergraph_protocol_data/skills"
+"skills/references.yml" = "hypergraph_protocol_data/skills/references.yml"
+"skills/hypergraph-adopt/SKILL.md" = "hypergraph_protocol_data/skills/hypergraph-adopt/SKILL.md"
+"skills/hypergraph-dispatch/SKILL.md" = "hypergraph_protocol_data/skills/hypergraph-dispatch/SKILL.md"
+"skills/hypergraph-init/SKILL.md" = "hypergraph_protocol_data/skills/hypergraph-init/SKILL.md"
+"skills/hypergraph-orient/SKILL.md" = "hypergraph_protocol_data/skills/hypergraph-orient/SKILL.md"
+"skills/hypergraph-reconcile/SKILL.md" = "hypergraph_protocol_data/skills/hypergraph-reconcile/SKILL.md"
+"skills/hypergraph-record/SKILL.md" = "hypergraph_protocol_data/skills/hypergraph-record/SKILL.md"
 "templates" = "hypergraph_protocol_data/templates"
+"SPEC.md" = "hypergraph_protocol_data/references/spec.md"
+"backend/local-adapter.md" = "hypergraph_protocol_data/references/local-adapter.md"
+"backend/lanes.md" = "hypergraph_protocol_data/references/lanes.md"
+"templates/record-node.md" = "hypergraph_protocol_data/references/record-node.md"
+"templates/state-node.md" = "hypergraph_protocol_data/references/state-node.md"
+"templates/config.example.yml" = "hypergraph_protocol_data/references/config.example.yml"
+"templates/agents-block.md" = "hypergraph_protocol_data/references/agents-block.md"
 
 [tool.hatch.build.targets.sdist]
 include = ["tools/hypergraph.py", "tools/hypergraph_mirror.py",
