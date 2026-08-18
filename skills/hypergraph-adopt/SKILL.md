@@ -183,7 +183,7 @@ day-zero project. Nothing to decide.
    - **Never break a CLAUDE.md→AGENTS.md symlink**: step 1's survey already reported
      whether either file is a link and where it points. Edit the *target*, never the
      link.
-   - Write `.hypergraph/AGENTS.md`: the full onboarding — the four non-negotiables
+   - Write `.hypergraph/AGENTS.md`: the full onboarding — the five non-negotiables
      expanded, this project's graph roots and epoch, where the archive lives (mode
      A), the skills to use, and the check command verbatim. Say how to get the CLI
      too — it is a package, not a file: `uv tool install hypergraph-protocol`.

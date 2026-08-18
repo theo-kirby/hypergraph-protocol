@@ -16,8 +16,14 @@ not happen, and a dead end recorded is worth as much as a success:
 3. **Never write state nodes**; declare impacts and let the
    `hypergraph-reconcile` skill fold them. `STATE.md` is generated — never
    hand-edit it.
-4. **Verify before finishing**: `hypergraph export` + `hypergraph check` must
-   exit 0. If it says this project's copies are behind the CLI, run
+4. **Verify before finishing**: `hypergraph sync` must exit 0 — it exports,
+   regenerates `STATE.md`, checks, and publishes when a mirror is configured.
+   If `check` says this project's copies are behind the CLI, run
    `hypergraph upgrade` — the skills and this block are copies, and `uv tool
    upgrade` cannot see them.
+5. **Record on any branch; reconcile only on the default branch.** Record nodes
+   are one file each and merge without conflict, so recording is always safe on
+   a branch, fork or parallel lane — and it is the whole obligation there. The
+   state graph has one writer: contributors record and open the pull request;
+   the maintainer reconciles once after the merge.
 <!-- hypergraph:end -->

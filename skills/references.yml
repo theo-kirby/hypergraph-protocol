@@ -8,7 +8,7 @@
 # equal, so editing one without the other fails the suite.
 hypergraph-adopt: [agents-block.md, config.example.yml, local-adapter.md, record-node.md, spec.md, state-node.md]
 hypergraph-dispatch: [lanes.md, local-adapter.md, spec.md]
-hypergraph-init: [config.example.yml, local-adapter.md, record-node.md, spec.md, state-node.md]
+hypergraph-init: [agents-block.md, config.example.yml, local-adapter.md, record-node.md, spec.md, state-node.md]
 hypergraph-orient: [local-adapter.md, spec.md]
 hypergraph-reconcile: [local-adapter.md, record-node.md, spec.md, state-node.md]
 hypergraph-record: [local-adapter.md, record-node.md, spec.md]

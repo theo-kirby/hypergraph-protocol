@@ -394,7 +394,7 @@ Created by the `hypergraph-init` skill (day zero) or the `hypergraph-adopt` skil
   hand-edited). Frontier at the top, architecture tree below.
 - `AGENTS.md` sentinel block (`<!-- hypergraph:begin/end -->`, from
   [templates/agents-block.md](templates/agents-block.md)) + `.hypergraph/AGENTS.md` —
-  the onboarding contract installed by adopt, kept idempotent by the markers.
+  the onboarding contract installed by init and adopt, kept idempotent by the markers.
 
 ## Tooling
 

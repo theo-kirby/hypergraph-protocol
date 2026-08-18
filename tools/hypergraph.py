@@ -4382,6 +4382,9 @@ SHIPPED_BLOCK_DIGESTS = frozenset({
     "0e6bd61095cb87c87cb96d5c74c52e18ad0dc22f5f6a5ae2dd636f4d4961a7d3",
     # 0.0.11 — non-negotiable 1 points at hypergraph-dispatch for deliberate work
     "5f15fb60813ac4611d3d22a11034fa54812110bffca34249ce79504eddde8678",
+    # 0.1.0 — the gate becomes `hypergraph sync`; non-negotiable 5 adds the branch
+    # discipline (record anywhere, reconcile only on the default branch)
+    "d9e9e1558fbec432dd56f2d9aef4ccd46c2543cae4bb5a751e478f51c96e2730",
 })
 
 
