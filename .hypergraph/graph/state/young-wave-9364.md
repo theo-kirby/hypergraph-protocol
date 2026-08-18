@@ -9,9 +9,9 @@ summary: 'SPEC.md and the two-graph structure: invariants I1-I8, the conventions
 flywheel:
   node_id: 3310b4b6-38dc-5091-b321-0a62ce235f80
   slug: young-wave-9364
-  revision: 7
-  pushed_at: '2026-08-14T13:37:04+00:00'
-  content_sha256: ad29cd7e2548fd18177c0911022e1c31f4d50928dc922a7a78a9d97b268b585d
+  revision: 8
+  pushed_at: '2026-08-18T11:54:36+00:00'
+  content_sha256: bcc679206c5b707c23ad28b5b8b90135e790f83ba2c99e6cb192aafc0a576037
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -28,6 +28,7 @@ SPEC.md is where the structure is written down: invariants I1–I8 — record-fi
 - **`## Backend` became `## Storage`**: the node files *are* the storage, and INTERFACE.md's ~10 operations are restated as a portability contract — what a replacement store would have to satisfy — rather than a menu chosen at init. Mirroring is named as optional, one-way, and explicitly something the skills do not know exists [rec: silver-ember-3035].
 - **I1–I8 were untouched by that change**, which is the evidence the storage/protocol boundary was drawn in the right place: they were already storage-neutral, and only the framing around them named a backend [rec: silver-ember-3035]. The fork/mirror doctrine split along the same line — fork semantics and "artifacts do not travel" are protocol and stayed; mirror mechanics moved out [rec: silver-ember-3035].
 - **I5 became an ancestry frontier in v0.0.5** [rec: placid-ridge-4035]. The old wording — "record nodes created after the HWM node are unreconciled" — was the concurrency defect written down, so fixing the code without fixing the sentence would have left the next implementer to rebuild it [rec: vast-rain-4873].
+- **The 0.1.0 audit found SPEC drift, queued for the gate's sweep** [rec: lively-spring-9646]: `check --since` — the one mechanism that reaches a contributor who never read AGENTS.md — appears nowhere in SPEC's Tooling section; the enforced-set sentences underdescribe what branch mode enforces (I1 is mechanical under `--since`); the heal-vs-`upgrade --graph` contradiction spans five files; and the last section is still headed v0.0.5.
 - The spec header is pinned to `pyproject.toml` by assertion, after the two drifted with SPEC saying v0.0.2 while the tool shipped 0.0.3 [rec: calm-sand-3399].
 
 ## Negative knowledge
@@ -46,3 +47,4 @@ None yet.
 - vast-rain-4873 — the reproduced concurrency defect: I5's timestamp cutoff is not merge-safe
 - placid-ridge-4035 — SPEC v0.0.5: I5 as an ancestry frontier and the Collaboration convention
 - late-sage-5549 — narrowed to the two-graph structure, with the record and state halves as children
+- lively-spring-9646 — the 0.1.0 audit: SPEC drift enumerated with line-level evidence

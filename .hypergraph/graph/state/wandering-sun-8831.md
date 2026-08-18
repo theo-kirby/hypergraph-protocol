@@ -5,13 +5,13 @@ title: Protocol mechanics
 created_at: '2026-08-06T21:41:18.171074+00:00'
 parents:
 - cool-king-8586
-summary: 'Two files after the 0.0.11 split: an offline core (check/render, local-backend verbs incl. dispatch lanes, upgrade --graph repairs) and a lazily-loaded mirror module; invariants enforced at authoring time; 302 tests.'
+summary: 'Two files after the 0.0.11 split: an offline core and a lazily-loaded mirror module. The 0.1.0 gate hardened checker parsing (fences, duplicates, whole-token slugs), guarded export loading, and put sync/hwm under end-to-end test; 327 tests.'
 flywheel:
   node_id: 2b993e9c-708e-5940-a67f-cf80aa0955e4
   slug: wandering-sun-8831
-  revision: 22
-  pushed_at: '2026-08-16T18:35:51+00:00'
-  content_sha256: 3749664fa4ddda265548ae8ac05a315a0789d2dd715c44dc74ea68cb6da3b8a4
+  revision: 23
+  pushed_at: '2026-08-18T11:54:36+00:00'
+  content_sha256: a8d3d7dc3a2b8e5eb2509981c7711e41b8a815fdba22d3569c3f2f5c18314621
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -36,7 +36,9 @@ The implementation is two files depending only on pyyaml: `tools/hypergraph.py`,
 - **`heal` folded into `upgrade --graph` at 0.0.11** — one verb for bringing an adopted repo current, with the polarity rule stated once: copies write by default because `git checkout` reverses them, and everything behind `--graph` is detect-only until `--apply`. Bare `--graph` lists the registry; `heal` survives as a hidden deprecated alias through the 0.0.x series, and `--graph --dry-run` is a parser error rather than a silent no-op [rec: violet-shade-9541].
 - **The mirror split (0.0.11): offline commands never import the network half — structurally.** Everything that resolves a credential, looks for a binary or opens a socket moved to `hypergraph_mirror.py` (2,487 lines; core 6,025), loaded through `_mirror()`, which registers the running core module as `hypergraph_core` before exec so class identities never fork across core's three module names. The offline mirror bookkeeping — `push --plan`, `--verify --against`, `--record-result`, legend and lineage — stays in core, and a subprocess test proves that export, check, `push --plan` and a mirror-less push load no mirror module at all [rec: blue-rain-3979].
 - **`dispatch` joined the local-backend verbs**: the local lane provider (worktrees on `lane/<slug>` branches, slug minted never named; the dispatch brief on stdin never argv; harvest refuses dirty and reports arrived record nodes; teardown refuses while unharvested). With no agent configured, `open` provisions the lane and stands down at exit 0 with the manual steps — field-proven by the first acceptance dispatch [rec: dry-spark-3491] [rec: idle-crow-3832].
-- **The suite is at 302 tests** over committed fixtures — checker, local backend, collaboration, mirror, the split's structural guarantees, the upgrade fold and dispatch [rec: violet-shade-9541] [rec: blue-rain-3979] [rec: dry-spark-3491].
+- **The 0.1.0 readiness audit found the checker could be lied to by legal markdown, and the gate's first three units closed the mechanics half** [rec: lively-spring-9646]. Reproduced live: fence-blind `split_sections` (a fenced example `## State Impact` counted as the section; duplicated headings merged silently), `SLUG_RE.findall` over whole lines reading URL tails ending in `-1234` as citations, inconsistent comment stripping on I6, a bare traceback on a missing export, and five sites sorting timestamps as strings. Fixed: one shared fence tracker; first-wins sections with duplicated load-bearing headings as violations; provenance slugs as the bullet's leading token with `[rec: …]` fallback and `evidence:` split on commas with fullmatch-only tokens; comment-stripped status; `load_export_json` exiting 2 with the regenerate instruction; `created_key` (chronological across `Z`/`+00:00`/offset spellings) at all five ordering sites [rec: humble-mist-8524] [rec: falling-snow-3475]. The repo's own committed graph is now a permanent regression net: `test_live_dogfood_graph_stays_green` exports it and asserts zero violations on every suite run [rec: humble-mist-8524].
+- **`sync` and `hwm` are test-held end to end** [rec: witty-chart-7035]: offline sync writes exports and STATE.md without importing the mirror module, a violation exits 1 before any transport is built, the publish path stamps frontmatter through a fake host, `--no-push` stops after check, and a parity test pins the push Namespace `cmd_sync` hand-builds against every `push` subparser option — a forgotten flag now fails loudly. `hwm --tips` prints the record graph's childless tips, the frontier a fold-everything reconcile writes, with reachability semantics rather than the timestamp cutoff `--suggest` deliberately keeps for migration only.
+- **The suite is at 327 tests** over committed fixtures — checker, local backend, collaboration, mirror, the split's structural guarantees, the upgrade fold, dispatch, and since the 0.1.0 gate the live-graph regression net and the sync/hwm end-to-end set [rec: violet-shade-9541] [rec: blue-rain-3979] [rec: dry-spark-3491] [rec: witty-chart-7035].
 
 ## Negative knowledge
 
@@ -74,3 +76,7 @@ The implementation is two files depending only on pyyaml: `tools/hypergraph.py`,
 - dry-spark-3491 — the dispatch verb: local lanes as worktrees
 - idle-crow-3832 — the lane-unclean suite finding from the first acceptance dispatch
 - vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0
+- lively-spring-9646 — the 0.1.0 readiness audit: checker trust defects reproduced live
+- humble-mist-8524 — U1: fence-aware sections, duplicate-heading violations, whole-token slugs, the dogfood regression net
+- falling-snow-3475 — U2: guarded export loading, chronological created_at ordering
+- witty-chart-7035 — U3: sync/hwm end-to-end tests, the push-Namespace parity pin, hwm --tips

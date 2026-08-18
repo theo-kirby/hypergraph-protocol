@@ -9,9 +9,9 @@ summary: Six single-path skills (init, adopt, record, reconcile, orient, dispatc
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 16
-  pushed_at: '2026-08-16T18:35:51+00:00'
-  content_sha256: 9b3df577bf8748959e6694b4a286d594e03ef520c70f743a5fcd433430a13f4b
+  revision: 17
+  pushed_at: '2026-08-18T11:54:36+00:00'
+  content_sha256: 3161a8f50080dd13def37014a7534f320e9268c23656c136cb60256007f673ab
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -28,6 +28,7 @@ Status: working
 - **The collaboration rules are split across two skills, which is the point** [rec: placid-ridge-4035]: reconcile carries the maintainer-on-main rule, frontier guidance in its HWM step, and a guardrail to start from `sync` rather than a bare `check` after a merge; record carries the converse a contributor needs — recording is safe on any branch, fork or machine, and it is the *whole* obligation.
 - **record teaches tagging, and the guidance is mostly about restraint** [rec: clear-moss-4527]: read `tags.yml`, use declared names only, add one with `hypergraph tags add` and never by hand, and in a repo with no `tags.yml` **tag nothing**. The load-bearing sentence is that a tag is a way to *find* nodes and not a way to assert things about them.
 - **record's step 7 stopped being one line, because it decides whether the artifact feature reaches the field at all** [rec: shady-bay-7654]. It said "commit the files and reference them by path"; it now says three things and names the third as the one that is easy to skip: commit them *or don't* (gitignoring a 40 GB dataset is a legitimate call, but an uncommitted file that gets published is one the mirror alone holds), **explain** them in `## Method`/`## Result` because prose is the claim, and **enumerate** them because the list is the claim's index and no tool reads prose.
+- **The 0.1.0 audit measured skill/spec drift, queued for the gate's later units** [rec: lively-spring-9646]: the reconcile skill still states unreconciled enumeration by wall clock — the pre-0.0.5 rule I5 exists to forbid — in the one skill that must get I5 right; the dispatch skill teaches open/ls/harvest but never `close`, while naming the abandoned-lane failure it remedies; three documents give three different counts of who passes `--reconcile` (the true answer is three: init and adopt once each at setup, reconcile ongoing); and adopt ships three representations of one procedure plus a factual `--slug` error at 43% of all skill bytes.
 - **The unattended-loop gap narrowed at 0.0.11**: `hypergraph-dispatch` packages one aimed pass — orient, claim, work, record, close — proven by two acceptance runs whose second read the first's claim and steered around it [rec: young-sage-8406] [rec: idle-crow-3832] [rec: bold-sand-5009]. What no skill packages yet is the *series* — resume, again and again, across contexts — which Autonomous operation holds [rec: late-sage-5549].
 
 ## Negative knowledge
@@ -58,3 +59,4 @@ Status: working
 - young-sage-8406 — the sixth skill: hypergraph-dispatch
 - gentle-journey-8382 — skill-count phrasing goes count-free across the docs
 - vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0
+- lively-spring-9646 — the 0.1.0 audit: skill drift measured against SPEC, fixes queued

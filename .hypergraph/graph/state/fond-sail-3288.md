@@ -9,9 +9,9 @@ summary: 'How a release reaches a repo that already adopted: three things travel
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 10
-  pushed_at: '2026-08-16T18:35:51+00:00'
-  content_sha256: 50c571d282fbe02983a6c863c67b86ab3f6683d9ae1db8d05d9de5b18534da45
+  revision: 11
+  pushed_at: '2026-08-18T11:54:36+00:00'
+  content_sha256: 830872ba0d06c008e879a75dd33b75c152b2108ec7179510c71d41563ac8df29
   parents_sha256: 437819574dd587d939fe237b83326a9f0d60c63e5db173f7d30329bb8d01fc22
   parents:
   - 67d32718-3dcf-5321-978a-212599c531b4
@@ -38,6 +38,8 @@ Shipped in 0.0.7 and verified from PyPI with published artifacts only: a repo in
 
 The block itself now points an arriving agent at dispatch: non-negotiable 1 gained the clause at 0.0.11, and the new digest landed in `SHIPPED_BLOCK_DIGESTS` in the same commit — the registration that keeps a clean 0.0.11 block recognizable as ours to refresh rather than frozen as adopter prose [rec: simple-vale-9558].
 
+**The 0.1.0 audit found the delivery half broken in three ways** [rec: lively-spring-9646]: `upgrade` skips any skill not already present in the target, so no pre-0.0.11 adopter can ever receive `hypergraph-dispatch` through the documented two-command path; `install.sh` fails on its own second run because the link guard fires on its own output; and a repo stamped with the retracted 0.9.0 label gets permanently wrong "upgrade the CLI" advice from the skew check. The installed skills payload also measured 348 KB with 78% of it duplicated reference copies. Fixes are queued as the gate's U4 and U6.
+
 A smaller gap remains: on a repo adopted before the stamp, `check` emits only the "predates the stamp" info, so the case where the **CLI** is the older half cannot be reported at all — cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so [rec: vast-valley-5745].
 
 ## Negative knowledge
@@ -58,3 +60,4 @@ A smaller gap remains: on a repo adopted before the stamp, `check` emits only th
 - violet-shade-9541 — heal folds into upgrade --graph; one verb, two polarities
 - simple-vale-9558 — the block names dispatch; the 0.0.11 digest registered in the same commit
 - vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0
+- lively-spring-9646 — the 0.1.0 audit: upgrade skips absent skills, install.sh not idempotent, the 0.9.0 skew loop
