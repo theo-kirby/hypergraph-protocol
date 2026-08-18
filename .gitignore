@@ -217,6 +217,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# macOS
+# Force-include ships skills/ wholesale into the wheel, so an untracked
+# .DS_Store would land in the next release artifact.
+.DS_Store
+
 # Hypergraph
 # Regenerable from the graph — `hypergraph export`.
 .hypergraph/cache/

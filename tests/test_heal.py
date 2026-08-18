@@ -1,6 +1,6 @@
-"""`hypergraph heal`: carrying a capability backwards into an already-adopted repo.
+"""`hypergraph upgrade --graph`: carrying a capability backwards into an already-adopted repo.
 
-The tests that carry the argument are the ones about what heal must **not** do —
+The tests that carry the argument are the ones about what a graph repair must **not** do —
 never write the archive, never change a body, never need a second run to converge,
 never act without `--apply`. A repair that can destroy work is not a repair.
 """
@@ -55,12 +55,12 @@ def project(tmp_path, *, pushed=False, git=True):
 
 
 def heal(repo, config_path, *argv):
-    return run("heal", "tags", "--repo", repo, "--config", config_path, *argv)
+    return run("upgrade", "--graph", "tags", "--repo", repo, "--config", config_path, *argv)
 
 
 def heal_named(repo, config_path, name, *argv):
     """`heal` for one named healer — `heal()` above is hard-wired to `tags`."""
-    return run("heal", name, "--repo", repo, "--config", config_path, *argv)
+    return run("upgrade", "--graph", name, "--repo", repo, "--config", config_path, *argv)
 
 
 def heal_named_out(capsys, repo, config_path, name, *argv):
@@ -105,7 +105,7 @@ def test_registry_names_unique_ordering_acyclic_archive_readers_never_write():
 
 def test_heal_with_no_healer_lists_the_registry_and_exits_zero(tmp_path, capsys):
     repo, _graph_dir, config_path = project(tmp_path)
-    assert run("heal", "--repo", repo, "--config", config_path) == 0
+    assert run("upgrade", "--graph", "--repo", repo, "--config", config_path) == 0
     out = capsys.readouterr().out
     assert "tags" in out and "applies" in out
 
@@ -282,7 +282,7 @@ def test_heal_refuses_an_uncommitted_graph_dir(tmp_path):
 
 def test_heal_refuses_the_protocols_own_checkout(tmp_path, capsys):
     root = hg.skills_data_root()
-    assert run("heal", "tags", "--repo", root) == 2
+    assert run("upgrade", "--graph", "tags", "--repo", root) == 2
     assert "protocol's own checkout" in capsys.readouterr().err
 
 
@@ -488,7 +488,7 @@ def test_upgrade_graph_bare_lists_the_registry_exactly_like_bare_heal(
     repo, _graph_dir, config_path = project(tmp_path)
     assert upgrade_graph(repo, config_path) == 0
     via_upgrade = capsys.readouterr().out
-    assert run("heal", "--repo", repo, "--config", config_path) == 0
+    assert run("upgrade", "--graph", "--repo", repo, "--config", config_path) == 0
     via_alias = capsys.readouterr().out
     assert via_upgrade == via_alias
     assert "tags" in via_upgrade and "applies" in via_upgrade
@@ -516,12 +516,8 @@ def test_upgrade_graph_is_detect_only_until_apply(tmp_path, capsys):
     capsys.readouterr()
 
 
-def test_heal_alias_still_works_and_names_its_replacement(tmp_path, capsys):
+def test_upgrade_graph_carries_no_deprecation_note(tmp_path, capsys):
     repo, _graph_dir, config_path = project(tmp_path)
-    assert run("heal", "--repo", repo, "--config", config_path) == 0
-    err = capsys.readouterr().err
-    assert "deprecated" in err and "upgrade --graph" in err
-    # the real verb carries no such note
     assert upgrade_graph(repo, config_path) == 0
     assert "deprecated" not in capsys.readouterr().err
 
@@ -541,3 +537,11 @@ def test_help_no_longer_lists_a_heal_command(capsys):
     help_text = capsys.readouterr().out
     table = help_text.split("positional arguments:", 1)[1]
     assert not any(line.split()[:1] == ["heal"] for line in table.splitlines())
+
+
+def test_heal_is_no_longer_a_command(capsys):
+    """The deprecated alias was removed at the 0.1.0 gate — argparse rejects it."""
+    with pytest.raises(SystemExit) as exc:
+        run("heal", "tags")
+    assert exc.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err

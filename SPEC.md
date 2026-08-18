@@ -376,8 +376,8 @@ Created by the `hypergraph-init` skill (day zero) or the `hypergraph-adopt` skil
   identity and parent slugs, body carrying the content verbatim. One optional block is
   protocol — **`origin:`**, where an imported node came from (immutable provenance,
   written once by `import --fork`). An optional **`tags:`** list of names may also
-  appear: annotation, and **no invariant reads it** — the same standing as the
-  config's `viz:` block. A claim that exists only as a tag is invisible to the
+  appear: annotation, and **no invariant reads it**. A claim that exists only
+  as a tag is invisible to the
   protocol, so a claim belongs in a node body. `check` is tag-blind, with one
   exception: where `tags.yml` exists, an undeclared name is a *warning*. A
   **`flywheel:`** block may also appear: mirror bookkeeping that `push` writes and
@@ -410,15 +410,10 @@ uv run tools/hypergraph.py render --state .hypergraph/cache/state.json --config 
 
 `check` exits nonzero on any I2/I4/I5/I6/I7 violation.
 
-**Visualization is not part of this tool.** The JSON exports are the contract:
-external tooling (hypergraph-viz, built on excaligraph) reads
-`.hypergraph/cache/{record,state}.json` and draws both graphs, with
-`## Provenance` citations and `## State Impact` declarations drawn as
-cross-graph links — the markdown pointers made visible, still never graph
-edges. An optional `viz:` block in `.hypergraph/config.yml` is display
-configuration for that tooling, so a tuning travels with the repo; core never
-reads it and no invariant does either. `hypergraph viz` remains as a signpost
-that prints where visualization went and exits nonzero.
+**Visualization is not part of this tool.** The JSON exports
+(`.hypergraph/cache/{record,state}.json`) are the contract: any external
+renderer reads them and draws both graphs, with the markdown pointers made
+visible — still never graph edges.
 
 One command keeps an already-adopted project current, with two halves whose effects
 cost different things — the `--graph` flag names the boundary. Bare **`upgrade`**

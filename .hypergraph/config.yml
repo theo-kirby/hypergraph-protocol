@@ -25,14 +25,6 @@ state_md: STATE.md
 # mirror: Flywheel stays a regenerable projection, refreshed after each reconcile.
 graph_dir: .hypergraph/graph
 
-# Optional viz settings — display configuration for external visualization tooling
-# (hypergraph-viz); core never reads it and no invariant does either.
-#
-# viz:
-#   blob:
-#     padding: 15
-#     smoothing: 18
-
 # Optional one-way mirror (backend/mirror.md). Absent → `push` is a no-op, exit 0.
 # `mirror_account_id` is the account that owns the mirror roots: without it, a run
 # with a key from a different account reports "the graph is missing" instead of

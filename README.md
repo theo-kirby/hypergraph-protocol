@@ -235,16 +235,8 @@ this tool's internals.
 
 The maintained renderer is **hypergraph-viz**, a thin translator built on
 [excaligraph](https://github.com/theo-kirby/excaligraph) (MIT): it reads the two
-exports and emits an Excalidraw scene — record graph, state graph, each state
-node's impact set as a hyperedge blob, statuses in a consistent palette, every
-node carrying a `link:` back to its markdown source. The output is a figure you
-can hand-edit and keep editing: open it at excalidraw.com, drag a node, the
-arrows follow.
-
-An optional `viz:` block in `.hypergraph/config.yml` is display configuration for
-that external tooling; core never reads it and no invariant does either. `hypergraph
-viz` remains in the CLI as a signpost only — it prints where visualization went and
-exits 2.
+exports and emits an editable Excalidraw scene, every node carrying a `link:`
+back to its markdown source.
 
 
 ## Repo map

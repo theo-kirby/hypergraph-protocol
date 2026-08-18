@@ -20,8 +20,8 @@ saved to .hypergraph/cache/{record,state}.json). No network, no auth, determinis
 check exits 1 on any I2/I4/I5/I6/I7 violation (see SPEC.md). Warnings (I1 proxies)
 and info lines never affect the exit code.
 
-Visualization lives outside this file: external tooling (hypergraph-viz, built on
-excaligraph) consumes the very same JSON exports. `viz` remains as a signpost only.
+Visualization lives outside this file: the JSON exports are the contract any
+external renderer consumes.
 
 The local (git-native) backend keeps both graphs as committed markdown files under
 .hypergraph/graph/{record,state}/<slug>.md and produces the very same export JSON
@@ -58,8 +58,7 @@ block, workflows) and writes by default — every effect is `git checkout`-rever
 `upgrade --graph` repairs *graph content*: a registry of typed repairs that carry a
 capability backwards into a repo that adopted before it existed. It rewrites node
 files and may spend mirror writes that cannot be un-spent, so it is **detect-only
-until `--apply`** — the one inverted default in this file. `heal` survives as a
-deprecated alias for the 0.0.x series.
+until `--apply`** — the one inverted default in this file.
 """
 from __future__ import annotations
 
@@ -1269,19 +1268,6 @@ def cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
-# --------------------------------------------------------------------------- viz
-# Visualization moved out of core. External tooling (hypergraph-viz, built on
-# excaligraph) consumes the same JSON exports as `check` and `render`; the stub
-# below is a signpost, not a capability.
-
-
-def cmd_viz(args: argparse.Namespace) -> int:
-    print("viz moved out of hypergraph-protocol core.", file=sys.stderr)
-    print("Visualization consumes the JSON exports (.hypergraph/cache/*.json):", file=sys.stderr)
-    print("see hypergraph-viz (excaligraph-based) — https://github.com/theo-kirby", file=sys.stderr)
-    return 2
-
-
 # ----------------------------------------------------------------- local backend
 # The git-native adapter (backend/local-adapter.md): markdown files under
 # .hypergraph/graph/{record,state}/<slug>.md are the source of truth, and `export`
@@ -1625,16 +1611,6 @@ def synth_tag(name: str) -> dict:
             "text_color": hexed(*colorsys.hsv_to_rgb(hue, 0.10, 0.96))}
 
 
-def tag_def(name: str, vocab: dict | None = None, kind: str | None = None) -> dict:
-    """The full definition for a name: declared if it is, synthesized if it is not."""
-    for entry in tag_vocab_entries(vocab or {}, kind):
-        if str(entry.get("name") or "") == name:
-            merged = dict(synth_tag(name))
-            merged.update({k: v for k, v in entry.items() if v is not None})
-            return merged
-    return {"name": name, **synth_tag(name)}
-
-
 def tag_vocab_entries(vocab: dict, kind: str | None = None) -> list[dict]:
     """Declared tag definitions for one graph kind, or all of them when kind is None."""
     kinds = [kind] if kind else list(GRAPH_KINDS)
@@ -1894,16 +1870,6 @@ def artifact_is_outside(stored: str) -> bool:
     text = str(stored)
     return (text.startswith("/") or text == ".." or text.startswith("../")
             or (len(text) > 1 and text[1] == ":"))
-
-
-def artifact_abspath(repo_root: Path | str, stored: str) -> Path:
-    """A stored path back to an absolute one. The inverse of `normalize_artifact_path`."""
-    import os  # deferred, matching the rest of this file's os usage
-
-    path = Path(str(stored))
-    if path.is_absolute():
-        return path
-    return Path(os.path.normpath(str(Path(repo_root) / path)))
 
 
 def artifact_case_mismatch(abs_path: Path | str) -> str | None:
@@ -4437,7 +4403,6 @@ def stamp_config_version(text: str, version: str) -> str:
 # file we shipped and `git checkout` undoes it. The graph half rewrites the graph
 # itself and spends an irreversible mirror-write budget, so it cannot share the
 # copies half's "just run it" posture: it stays detect-only until `--apply`.
-# (`heal` survives as a deprecated alias for the 0.0.x series.)
 #
 # The framework exists because tags will not be the last capability to land after
 # somebody's adoption. Healer number two must cost **one registry entry and one
@@ -4933,10 +4898,6 @@ def cmd_heal(args: argparse.Namespace) -> int:
     human-initiated, sits in no commit flow, rewrites the whole graph at once, and
     spends mirror writes that cannot be un-spent. `--apply` is the word that makes it
     act."""
-    if getattr(args, "_heal_alias", False):
-        print("note: `heal` is deprecated — it folded into `upgrade --graph` at "
-              "0.0.11, and the alias goes away after the 0.0.x series.",
-              file=sys.stderr)
     repo = Path(args.repo or ".").resolve()
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
@@ -6003,8 +5964,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hypergraph.py", description=__doc__)
     parser.add_argument("--version", action="version",
                         version=f"hypergraph-protocol {__version__}")
-    # metavar hides unlisted aliases (the deprecated `heal`) from the usage line's
-    # brace enumeration; parsers added without help= already stay out of the table.
     sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     p_check = sub.add_parser("check", help="validate protocol invariants over graph exports")
@@ -6035,9 +5994,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_render.add_argument("--config", type=Path, help=".hypergraph/config.yml")
     p_render.add_argument("-o", "--output", type=Path, help="output path (default: stdout)")
     p_render.set_defaults(func=cmd_render)
-
-    p_viz = sub.add_parser("viz", help="moved out of core; see hypergraph-viz")
-    p_viz.set_defaults(func=cmd_viz)
 
     # ---- local (git-native) backend: backend/local-adapter.md
     def graph_args(p: argparse.ArgumentParser) -> None:
@@ -6352,17 +6308,6 @@ def build_parser() -> argparse.ArgumentParser:
     # Deprecated alias for `upgrade --graph` (0.0.11). No help= → absent from the
     # commands table; the subparsers metavar keeps it out of the usage brace list.
     # Works through the 0.0.x series, then goes away.
-    p_heal = sub.add_parser("heal")
-    p_heal.add_argument("healer", nargs="*",
-                        help=f"which repair(s) to run (have: "
-                             f"{', '.join(h.name for h in HEALERS)}). "
-                             "With none named, lists the registry and exits 0")
-    graph_args(p_heal)
-    mirror_args(p_heal)
-    heal_args(p_heal)
-    p_heal.add_argument("--repo", type=Path, help="repo root (default: cwd)")
-    p_heal.set_defaults(func=cmd_heal, _heal_alias=True)
-
     # The graph-repair half of `upgrade` (formerly `heal`): bare `--graph` lists the
     # registry, `--graph <healer>` detects, `--apply` makes it act. p_upgrade already
     # declares --repo/--config, so the shared helpers that would re-add those
