@@ -303,7 +303,8 @@ Mechanics, failure modes and the re-homing migration: [mirror.md](../docs/intern
 ## Failure handling
 
 - All local-backend errors exit **2** with a one-line `error:` on stderr; `check` keeps
-  its own 0/1 contract. `push --plan` exits 1 when the plan carries violations.
+  its own 0/1 contract. `push --plan` exits 1 when the plan carries violations. The
+  canonical exit-code table is in [docs/cli.md](../docs/cli.md).
 - Structural problems are caught on load, not silently tolerated: slug not matching
   `SLUG_RE`, filename ≠ frontmatter slug, duplicate `node_id`, missing or unparseable
   `created_at` (the unreconciled/HWM partition is timestamp-ordered), a parent slug with

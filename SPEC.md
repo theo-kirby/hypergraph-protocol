@@ -412,6 +412,9 @@ uv run tools/hypergraph.py check  --record .hypergraph/cache/record.json --state
 uv run tools/hypergraph.py render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
 ```
 
+The full subcommand reference and the canonical exit-code table live in
+[docs/cli.md](docs/cli.md).
+
 `check` exits nonzero on any I2/I4/I5/I6/I7 violation. `check --since <ref>` adds
 the branch-mode I1 check: comparing `<ref>...HEAD`, work outside the graph with no
 new record node added is a violation — the PR gate, and the only mechanism that
@@ -456,3 +459,39 @@ committed node files to a hosted graph the project owns (Flywheel), so the mirro
 regenerable projection and the repo stays canonical. It is a property of the tool, not
 of the protocol: **the skills do not know it exists**, and a project with no mirror
 configured never touches that path. Mechanics: [docs/internal/mirror.md](docs/internal/mirror.md).
+
+## Versioning
+
+One version number covers the spec, the CLI and the shipped skills — the
+`vX.Y.Z` in this document's header, held equal to the distribution by test.
+Releases are listed in [CHANGELOG.md](CHANGELOG.md), which also names the
+labels that were retracted without ever being published (0.9.0 is one; a repo
+stamped with a retracted label re-stamps via `hypergraph upgrade`).
+
+**What a minor bump (0.x → 0.y) may change:**
+
+- Checker strictness — new violations, tightened parsing. A rule that flags a
+  correct live graph is treated as a defect in the rule, and this repo's own
+  graph is a standing regression test for that.
+- The CLI surface — subcommands and flags may be added, renamed or removed
+  (removals are announced one release ahead where practical; the `heal` alias
+  and the `viz` stub are precedents).
+- Prose output — the wording of `check` findings, progress lines and errors is
+  **not** a contract. Machine consumers read the JSON exports and the exit
+  codes, never the prose.
+
+**What is stable:**
+
+- **Invariant numbers are permanent.** I1–I8 mean what this document says they
+  mean; a retired invariant's number is never reused, and a changed enforcement
+  (as when I5 became an ancestry frontier at v0.0.5) keeps the number and
+  documents the migration.
+- **Exit codes are a contract**: 0 = success or a deliberate stand-down
+  (no mirror configured, wrong branch, nothing to do); 1 = findings
+  (violations, drift); 2 = usage or environment error (bad flags, missing
+  config or export, refused operation). CI may rely on them.
+- **The node-file format is additive.** An older CLI reads a newer graph; new
+  frontmatter keys never change the meaning of existing ones, and the body
+  hash (`sha256` over the body alone) stays the append-only boundary.
+- **The export JSON shape** consumed by `check`/`render` — the keys the
+  committed export-contract baseline pins.

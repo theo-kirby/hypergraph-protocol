@@ -375,7 +375,7 @@ node files — read-only, exit 1 on any drift, `check`-style DRIFT report. It fl
 nodes never pushed or missing from the export, body-hash mismatches, summary
 mismatches, local edits pending push (`flywheel.content_sha256` vs current body), and
 revision skew between the export and each file's `flywheel:` block, and **parent-set
-drift**.
+drift**. Exit codes follow the canonical table in [cli.md](../cli.md).
 
 Parents are compared by default, and that is a deliberate move out of `--strict`:
 topology is the one thing a node file asserts that `push` used to be unable to change,

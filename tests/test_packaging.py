@@ -299,3 +299,32 @@ def test_upgrade_converts_a_fat_install_to_shared_references(tmp_path, monkeypat
     link = target / "hypergraph-record" / "references" / "spec.md"
     assert link.is_symlink()
     assert link.read_text() == (ROOT / "SPEC.md").read_text()
+
+
+# ---- release surface (0.1.0 gate, U10) ----------------------------------------
+
+import re as _re
+
+
+def test_changelog_newest_released_heading_matches_pyproject():
+    """CHANGELOG.md is the sixth synchronized version location. `[Unreleased]` is
+    permitted on top; the first *versioned* heading must be the shipped version."""
+    declared = _pyproject()["project"]["version"]
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    headings = _re.findall(r"^## \[([^\]]+)\]", text, flags=_re.M)
+    assert headings, "CHANGELOG.md has no release headings"
+    released = [h for h in headings if h != "Unreleased"]
+    assert released, "CHANGELOG.md has no released heading"
+    assert released[0] == declared, (
+        f"CHANGELOG.md's newest released heading is {released[0]}, pyproject says {declared}")
+
+
+def test_every_subcommand_is_documented_in_cli_md():
+    """docs/cli.md is the CLI reference; a subcommand it does not name is
+    undocumented surface. Checked against build_parser(), the actual CLI."""
+    import argparse
+    sub = next(a for a in hg.build_parser()._actions
+               if isinstance(a, argparse._SubParsersAction))
+    text = (ROOT / "docs" / "cli.md").read_text(encoding="utf-8")
+    missing = [name for name in sub.choices if f"`{name}`" not in text]
+    assert not missing, f"docs/cli.md does not document: {missing}"

@@ -243,7 +243,10 @@ back to its markdown source.
 ## Repo map
 
 ```
-SPEC.md                     the protocol (invariants + conventions)
+SPEC.md                     the protocol (invariants + conventions + versioning policy)
+CHANGELOG.md                releases, and the labels that never shipped
+docs/cli.md                 the CLI reference — 16 subcommands, the exit-code table
+docs/example.md             a worked walkthrough over the CI-pinned fixture graph
 backend/INTERFACE.md        ~10 abstract operations — the portability contract
 backend/local-adapter.md    op → node files + hypergraph CLI (git-native; the one impl)
 docs/internal/              mirror internals (mirror.md, flywheel.md) — not agent-facing
