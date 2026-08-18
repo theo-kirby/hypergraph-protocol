@@ -397,3 +397,54 @@ def test_comment_above_status_line_passes_i6(tmp_path):
                      "<!-- reviewed 2026-08-18 -->\n" + c)
     report = hg.run_check(FIXTURES / "clean" / "record.json", state)
     assert report.violations() == [], [str(f) for f in report.violations()]
+
+
+# ---- guarded export loading + timestamp ordering (0.1.0 gate, U2) -------------
+
+
+def test_check_on_missing_export_exits_2_with_instruction(tmp_path, capsys):
+    rc = hg.main(["check", "--record", str(tmp_path / "record.json"),
+                  "--state", str(FIXTURES / "clean" / "state.json")])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "no export at" in err
+    assert "hypergraph export" in err
+
+
+def test_check_on_truncated_export_exits_2_with_instruction(tmp_path, capsys):
+    bad = tmp_path / "record.json"
+    bad.write_text((FIXTURES / "clean" / "record.json").read_text()[:180])
+    rc = hg.main(["check", "--record", str(bad),
+                  "--state", str(FIXTURES / "clean" / "state.json")])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "not valid JSON" in err
+    assert "hypergraph export" in err
+
+
+def test_created_key_is_chronological_and_total():
+    z, offset = "2026-08-02T02:00:00Z", "2026-08-02T10:00:00+09:00"  # 02:00 vs 01:00 UTC
+    assert hg.created_key(offset) < hg.created_key(z)   # instants, not strings
+    assert sorted([offset, z]) == [z, offset]           # raw strings disagree
+    assert hg.created_key("") < hg.created_key(z)       # unparseable sorts first
+    assert hg.created_key("garbage", "a") < hg.created_key("garbage", "b")
+
+
+def _tsnode(slug, created_at, parents=()):
+    return hg.Node(node_id="id-" + slug, slug=slug, title=slug, content="",
+                   parent_ids=list(parents), created_at=created_at)
+
+
+def test_unreconciled_enumeration_orders_by_instant_not_string():
+    root = _tsnode("wise-root-0001", "2026-08-01T00:00:00+00:00")
+    early = _tsnode("early-node-0002", "2026-08-02T10:00:00+09:00",  # 01:00 UTC
+                    ["id-wise-root-0001"])
+    late = _tsnode("late-node-0003", "2026-08-02T02:00:00+00:00",    # 02:00 UTC
+                   ["id-wise-root-0001"])
+    nodes = {n.node_id: n for n in (root, early, late)}
+    record = hg.Graph(nodes=nodes, by_slug={n.slug: n for n in nodes.values()})
+    out = hg.unreconciled_nodes(record, ["wise-root-0001"], root)
+    assert [n.slug for n in out] == ["early-node-0002", "late-node-0003"]
+    # the raw strings sort the other way round — this is what the fix is for
+    assert sorted([early.created_at, late.created_at]) == [late.created_at,
+                                                           early.created_at]

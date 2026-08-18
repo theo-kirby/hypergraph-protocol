@@ -175,6 +175,19 @@ def parse_ts(value: str | None) -> datetime | None:
     return dt
 
 
+_TS_FLOOR = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def created_key(created_at: str, tiebreak: str = "") -> tuple:
+    """Chronological sort key for `created_at` strings.
+
+    `Z` and `+00:00` spell the same instant but sort apart as raw strings, so a
+    graph touched by two tools interleaves its siblings under lexicographic order.
+    Unparseable stamps sort first, then by their raw text, then the tiebreak —
+    total and deterministic either way."""
+    return (parse_ts(created_at) or _TS_FLOOR, created_at, tiebreak)
+
+
 def _norm_parents(raw: object) -> list[str]:
     if not raw:
         return []
@@ -189,11 +202,42 @@ def _norm_parents(raw: object) -> list[str]:
     return out
 
 
-def load_graph(path: Path) -> Graph:
-    data = json.loads(Path(path).read_text())
+def _normalize_export_nodes(data: object) -> list[dict]:
+    """Parsed export JSON → its raw node dicts, whatever shape the export took."""
     raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
     if isinstance(raw_nodes, dict):
         raw_nodes = list(raw_nodes.values())
+    return [r for r in (raw_nodes or []) if isinstance(r, dict)]
+
+
+def load_export_json(path: Path, *, what: str = "graph export") -> list[dict]:
+    """Read an export JSON file → raw node dicts, failing with an instruction.
+
+    The exports live in a gitignored cache, so a fresh clone or a cleaned checkout
+    legitimately has none — and a truncated file is a stale cache, not a graph.
+    Both used to surface as raw tracebacks out of `read_text`/`json.loads`, which
+    named pathlib as the problem instead of the missing file (the same failure
+    shape that cost two arm-C runs their config — see `load_config`)."""
+    path = Path(path)
+    if not path.exists():
+        raise LocalGraphError(
+            f"{what}: no export at {path}\n"
+            "  Exports are a gitignored cache — a fresh clone has none. Regenerate:\n"
+            "    hypergraph export --config .hypergraph/config.yml")
+    try:
+        data = json.loads(path.read_text())
+    except OSError as exc:
+        raise LocalGraphError(f"{what}: cannot read {path}: {exc}") from None
+    except json.JSONDecodeError as exc:
+        raise LocalGraphError(
+            f"{what}: {path} is not valid JSON ({exc})\n"
+            "  Likely a truncated or stale cache. Regenerate:\n"
+            "    hypergraph export --config .hypergraph/config.yml") from None
+    return _normalize_export_nodes(data)
+
+
+def load_graph(path: Path, *, what: str = "graph export") -> Graph:
+    raw_nodes = load_export_json(path, what=what)
     nodes: dict[str, Node] = {}
     for raw in raw_nodes:
         node = Node(
@@ -666,7 +710,7 @@ def unreconciled_nodes(record: Graph, frontier: list[str],
             continue
         if node.node_id not in reconciled:
             out.append(node)
-    return sorted(out, key=lambda n: (n.created_at, n.slug))
+    return sorted(out, key=lambda n: created_key(n.created_at, n.slug))
 
 
 def suggest_frontier(record: Graph, frontier: list[str],
@@ -691,7 +735,7 @@ def suggest_frontier(record: Graph, frontier: list[str],
         if node.node_id in covered:
             has_covered_child.update(pid for pid in node.parent_ids)
     tips = [record.nodes[nid] for nid in covered if nid not in has_covered_child]
-    return [n.slug for n in sorted(tips, key=lambda n: (n.created_at, n.slug))]
+    return [n.slug for n in sorted(tips, key=lambda n: created_key(n.created_at, n.slug))]
 
 
 def check_hwm(record: Graph, state: Graph, record_root: Node | None,
@@ -960,8 +1004,8 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
         config_given = bool(config)
     config = config or {}
     report = Report()
-    record = load_graph(record_path)
-    state = load_graph(state_path)
+    record = load_graph(record_path, what="record export")
+    state = load_graph(state_path, what="state export")
     record_root = find_root(record, config.get("record_root"), report, "record",
                             config_given=config_given)
     state_root = find_root(state, config.get("state_root"), report, "state",
@@ -1155,7 +1199,7 @@ def render_state(state_path: Path, config: dict | None = None) -> str:
         for pid in node.parent_ids:
             children.setdefault(pid, []).append(node)
     for kids in children.values():
-        kids.sort(key=lambda n: (n.created_at, n.slug))
+        kids.sort(key=lambda n: created_key(n.created_at, n.slug))
 
     def entry(node: Node) -> str:
         status = node_status(node) or "?"
@@ -1494,7 +1538,7 @@ def load_local_graph(graph_dir: Path, kind: str, missing_ok: bool = False) -> Gr
 
 def topo_order(nodes: dict[str, LocalNode]) -> list[LocalNode]:
     """Parents before children; ties broken by (created_at, slug) for determinism."""
-    key = lambda s: (nodes[s].created_at, s)  # noqa: E731
+    key = lambda s: created_key(nodes[s].created_at, s)  # noqa: E731
     pending = {s: [p for p in n.parents if p in nodes] for s, n in nodes.items()}
     out: list[LocalNode] = []
     done: set[str] = set()
@@ -2170,7 +2214,7 @@ def export_graph_json(graph_dir: Path, kind: str) -> dict:
             "parent_ids": graph.nodes[node.node_id].parent_ids,
             "created_at": node.created_at,
         })
-    records.sort(key=lambda r: (r["created_at"], r["node_id"]))  # INTERFACE op 8
+    records.sort(key=lambda r: created_key(r["created_at"], r["node_id"]))  # INTERFACE op 8
     return {"version": EXPORT_VERSION, "exported_at": utc_now(), "nodes": records}
 
 
@@ -2977,13 +3021,9 @@ def side_from_export(path_or_data: object, *, key: str = "node_id",
                      name: str = "export") -> GraphSide:
     """A graph export (a file path, or already-parsed JSON) as one comparable side."""
     if isinstance(path_or_data, (str, Path)):
-        data = json.loads(Path(path_or_data).read_text())
+        raw_nodes = load_export_json(Path(path_or_data), what=name)
     else:
-        data = path_or_data
-    raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
-    if isinstance(raw_nodes, dict):
-        raw_nodes = list(raw_nodes.values())
-    raw_nodes = [r for r in (raw_nodes or []) if isinstance(r, dict)]
+        raw_nodes = _normalize_export_nodes(path_or_data)
     side = GraphSide(name=name, key=key)
     side.records = _export_records(raw_nodes, key)
     return _index(side)
@@ -3519,16 +3559,11 @@ def push_plan(graph_dir: Path, *, do_tags: bool = True, do_artifacts: bool = Tru
 
 def _load_export_nodes(path: Path) -> dict[str, dict]:
     """Export JSON → {node_id: raw node dict}, tolerant of the same shapes load_graph eats."""
-    data = json.loads(Path(path).read_text())
-    raw_nodes = data.get("nodes", data) if isinstance(data, dict) else data
-    if isinstance(raw_nodes, dict):
-        raw_nodes = list(raw_nodes.values())
     out: dict[str, dict] = {}
-    for raw in raw_nodes:
-        if isinstance(raw, dict):
-            nid = str(raw.get("node_id") or raw.get("id") or "")
-            if nid:
-                out[nid] = raw
+    for raw in load_export_json(path, what="verify export"):
+        nid = str(raw.get("node_id") or raw.get("id") or "")
+        if nid:
+            out[nid] = raw
     return out
 
 

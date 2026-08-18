@@ -1105,3 +1105,17 @@ def test_new_state_refuses_an_artifact(tmp_path, capsys, monkeypatch):
                "--status", "working", "--prov", "brave-otter-1002 — why",
                "--artifact", "runs/train.log") == 2
     assert "record-only" in capsys.readouterr().err
+
+
+def test_export_orders_mixed_timestamp_spellings_chronologically(tmp_path):
+    """`+09:00` and `+00:00` spellings of adjacent instants must not shuffle."""
+    from graph_fixtures import local_graph_copy
+    graph_dir = local_graph_copy(tmp_path)
+    path = graph_dir / "record" / "brave-otter-1002.md"
+    path.write_text(path.read_text().replace(
+        "'2026-08-02T01:00:00+00:00'", "'2026-08-02T10:00:00+09:00'"))  # same instant
+    payload = hg.export_graph_json(graph_dir, "record")
+    assert [n["slug_name"] for n in payload["nodes"]] == [
+        "wise-anchor-1001", "brave-otter-1002", "calm-fern-1003"]
+    stamps = [n["created_at"] for n in payload["nodes"]]
+    assert stamps != sorted(stamps)  # lexicographic order would have misordered them
