@@ -316,7 +316,7 @@ epoch:
   did not come across — never in a title, and never as a structural pretence that
   the two graphs are one. (If the project also mirrors itself to a hosted store, the
   mirror projects the repo and never the archive; mechanics live in
-  [backend/mirror.md](backend/mirror.md).)
+  [docs/internal/mirror.md](docs/internal/mirror.md).)
 
 ## Forward work and Operator directives
 
@@ -449,33 +449,4 @@ refuse to run without it.
 committed node files to a hosted graph the project owns (Flywheel), so the mirror is a
 regenerable projection and the repo stays canonical. It is a property of the tool, not
 of the protocol: **the skills do not know it exists**, and a project with no mirror
-configured never touches that path. Mechanics: [backend/mirror.md](backend/mirror.md).
-
-## Future work (out of scope for v0.0.5)
-
-Committed forward work lives in the state graph as open frontier nodes (see Forward
-work above) — for this repo, that is where field dogfooding is tracked. The list below
-is speculative protocol machinery only, not yet worth a standing state claim:
-
-- Repo-drift check: `check` warns when the repo HEAD is ahead of the newest record
-  node's `head_commit_sha` — unrecorded work is otherwise invisible (unreconciled
-  and unrecorded are different failure modes; the checker only sees the former).
-- Export-freshness check: `check` warns when the cache export's `exported_at`
-  predates recent activity — an agent that records after its last export leaves
-  `check` reporting 0 unreconciled while the live graph is ahead.
-- Hooks-based `unreconciled` auto-tagging of record nodes past the HWM.
-- `provenance.json` machine-readable artifact per state node.
-- **Artifact custody.** Op 9 travels paths, and a path is only as good as the file
-  still being at it. A repo that publishes evidence and later deletes the file leaves
-  its mirror holding the only copy of something the repo can no longer regenerate —
-  the one place the "the mirror is a regenerable projection" property genuinely bends
-  (backend/mirror.md states it as a bounded exception). Content-addressed custody, or
-  an explicit "this evidence is retired" record, is the open question.
-- **Pointer-tag history.** A one-only tag that moves (a "current best") is
-  representable, but its *chain of moves* is not modelled: every hop a real graph
-  recorded carried a timestamp and no reason. A move with a reason is a decision, and
-  a decision is a record node — so the chain is routed into the adoption epoch marker
-  as prose rather than given a third home in frontmatter.
-- Bidirectional sync with a mirror. Today git is the merge substrate and the mirror is
-  a one-way projection — with drift detection via `push --verify` and a mirror-only
-  slug legend, but no slug translation inside mirrored bodies.
+configured never touches that path. Mechanics: [docs/internal/mirror.md](docs/internal/mirror.md).

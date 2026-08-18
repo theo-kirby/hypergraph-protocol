@@ -31,7 +31,7 @@ origin:                         # only on nodes from `import --fork` (see §Impo
   slug: bright-harbor-2001      # the archive's slug — same as `slug:` above
   revision: 3
   exported_at: '2026-08-01T00:00:00+00:00'
-flywheel:                       # bookkeeping, only once mirrored (see mirror.md)
+flywheel:                       # bookkeeping, only once mirrored (see ../docs/internal/mirror.md)
   node_id: 9e68…
   slug: wild-river-2201
   revision: 3
@@ -199,7 +199,7 @@ pointer chain is already one hop: STATE.md → the state node's `## Provenance` 
 `hypergraph artifacts ls <record-slug>`.
 
 Mirroring these files to a hosted graph is a separate concern, under "Mirroring to a
-hosted graph" below and in [mirror.md](mirror.md). The repo stays canonical; the
+hosted graph" below and in [mirror.md](../docs/internal/mirror.md). The repo stays canonical; the
 mirror holds a copy.
 
 ### 10. `tag` *(optional)* — frontmatter plus a committed vocabulary
@@ -242,7 +242,7 @@ Three things worth stating rather than discovering:
   build over one would invent an obligation the spec does not carry.
 
 The tag id a mirror minted is bookkeeping, not identity: names travel, ids do not.
-See [mirror.md](mirror.md) for how `push` publishes them, and for `hypergraph heal
+See [mirror.md](../docs/internal/mirror.md) for how `push` publishes them, and for `hypergraph heal
 tags`, which carries them into a repo that adopted before any of this existed.
 
 ## Importing an existing graph
@@ -252,7 +252,7 @@ tags`, which carries them into a repo that adopted before any of this existed.
 all stay valid across the migration:
 
 ```bash
-# fetch the export first — `hypergraph mirror pull` writes both files (mirror.md), then:
+# fetch the export first — `hypergraph mirror pull` writes both files (../docs/internal/mirror.md), then:
 hypergraph import --record .hypergraph/cache/record.json \
                   --state  .hypergraph/cache/state.json
 git add .hypergraph/graph && git commit -m "Import the graph into the repo"
@@ -297,7 +297,7 @@ committed node files to a Flywheel graph the project owns, so the mirror is a
 regenerable projection and the repo stays canonical. The CLI does all of it — there is
 no plan for a caller to execute and no MCP call to make by hand.
 
-Mechanics, failure modes and the re-homing migration: [mirror.md](mirror.md).
+Mechanics, failure modes and the re-homing migration: [mirror.md](../docs/internal/mirror.md).
 
 ## Failure handling
 

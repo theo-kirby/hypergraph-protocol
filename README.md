@@ -87,7 +87,7 @@ the spec above the Storage section mentions files.
 in your working tree can read them. The mirror is a one-way, regenerable projection —
 your files stay canonical — and it is entirely a property of the CLI: the skills don't
 know it exists, and a project without it never touches that path
-([mirror.md](backend/mirror.md)).
+([mirror.md](docs/internal/mirror.md)).
 
 ## Working in parallel
 
@@ -245,8 +245,7 @@ back to its markdown source.
 SPEC.md                     the protocol (invariants + conventions)
 backend/INTERFACE.md        ~10 abstract operations — the portability contract
 backend/local-adapter.md    op → node files + hypergraph CLI (git-native; the one impl)
-backend/mirror.md           optional one-way mirroring — CLI internals, not agent-facing
-backend/flywheel.md         the host's payload/lease contract, for the mirror code only
+docs/internal/              mirror internals (mirror.md, flywheel.md) — not agent-facing
 backend/lanes.md            the lane-provider seam for dispatch (local ships; box is future)
 skills/hypergraph-*/        the skills (.claude/skills/ symlinks these)
 templates/                  record-node / state-node / config shapes

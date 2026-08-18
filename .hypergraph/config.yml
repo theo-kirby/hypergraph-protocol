@@ -25,7 +25,7 @@ state_md: STATE.md
 # mirror: Flywheel stays a regenerable projection, refreshed after each reconcile.
 graph_dir: .hypergraph/graph
 
-# Optional one-way mirror (backend/mirror.md). Absent → `push` is a no-op, exit 0.
+# Optional one-way mirror (docs/internal/mirror.md). Absent → `push` is a no-op, exit 0.
 # `mirror_account_id` is the account that owns the mirror roots: without it, a run
 # with a key from a different account reports "the graph is missing" instead of
 # "wrong account", which cost this project two rounds [rec: solemn-dawn-6752].

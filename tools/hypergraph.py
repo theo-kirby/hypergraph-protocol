@@ -41,7 +41,7 @@ resolved, no binary is looked for, and the mirror module is never even imported
 that is the whole storage story (SPEC: Storage).
 
 One optional feature does reach out, and only when the config declares a `mirror:`
-(backend/mirror.md). It publishes the committed node files to a hosted graph the
+(docs/internal/mirror.md). It publishes the committed node files to a hosted graph the
 project owns, one-way, with the repo staying canonical:
 
     hypergraph.py push [--dry-run] [--batch N] [--limit N] [--verify]
@@ -869,7 +869,7 @@ def check_legacy_backend_key(config: dict, report: Report) -> None:
                    f"`backend: {backend}` is ignored — the node files are the graph "
                    "(SPEC: Storage). If this project's graph still lives on a hosted "
                    "store, re-home it into the repo first: see 'Re-homing a hosted "
-                   "graph into the repo' in backend/mirror.md. Then drop the key.")
+                   "graph into the repo' in docs/internal/mirror.md. Then drop the key.")
 
 
 def check_conflict_markers(graph: Graph, report: Report) -> None:
@@ -3881,7 +3881,7 @@ def mirror_root_ids(config: dict) -> dict:
             f"mirror root {sorted(clash)[0]} is also an `archive:` root. The archive is "
             "frozen and this project never writes to it; splicing it in makes "
             "`push --verify` pass while the mirror holds almost none of the graph "
-            "(backend/mirror.md).")
+            "(docs/internal/mirror.md).")
     return roots
 
 
@@ -4864,7 +4864,7 @@ def artifacts_apply(ctx: HealContext, drifts: list[Drift]) -> list[Change]:
     each imported node, under `origin.artifacts`. It records where the bytes are; it
     does not fetch them, and it must not publish them. Those bytes are not in this
     repo, so re-uploading them would leave the mirror holding evidence the repo cannot
-    regenerate — the one property `backend/mirror.md` will not trade away.
+    regenerate — the one property `docs/internal/mirror.md` will not trade away.
 
     Because every write here is a frontmatter edit, this healer never needs
     `heal_write_targets`, works offline, and is fully `git checkout`-reversible."""
@@ -6270,7 +6270,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_upgrade.set_defaults(func=cmd_upgrade)
 
 
-    # ---- optional one-way mirror: backend/mirror.md. Nothing below here runs on a
+    # ---- optional one-way mirror: docs/internal/mirror.md. Nothing below here runs on a
     # project whose config declares no `mirror:` — `push` exits 0 as a no-op, which
     # is what lets the reconcile skill call it unconditionally.
     def mirror_args(p: argparse.ArgumentParser) -> None:

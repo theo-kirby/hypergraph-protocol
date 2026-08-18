@@ -411,7 +411,7 @@ def test_a_pure_reparent_plans_a_parents_op_and_no_body_update(tmp_path):
 
 
 def test_a_reparent_adds_before_it_removes(tmp_path):
-    """backend/flywheel.md's stated ordering, and the reason it is stated: the other
+    """docs/internal/flywheel.md's stated ordering, and the reason it is stated: the other
     order leaves the node momentarily parentless."""
     graph_dir, fake = pushed_via_fake(tmp_path)
     reparent(graph_dir, "plain-cedar-2003", "quiet-summit-2002")

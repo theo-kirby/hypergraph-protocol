@@ -16,7 +16,7 @@ subgraph. Artifacts and tags are optional in the sense that a *store* need not h
 them; the shipped implementation implements both without asking the store for
 anything — tags as frontmatter names (op 10), artifacts as frontmatter paths (op 9).
 
-Mirroring committed node files to a hosted graph ([mirror.md](mirror.md)) is a separate
+Mirroring committed node files to a hosted graph ([mirror.md](../docs/internal/mirror.md)) is a separate
 concern and does **not** go through this table: a mirror is a projection the CLI
 writes, not a store the protocol reads.
 

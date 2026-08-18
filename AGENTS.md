@@ -57,8 +57,8 @@ record of this project itself, and your work must land in it.
   the mirror's networked half, lazily loaded; tests in `tests/`.
 - `backend/` — `INTERFACE.md` (the ~10 operations that make the protocol portable),
   `local-adapter.md` (the shipped implementation: node files), `lanes.md` (the
-  dispatch lane-provider seam), `mirror.md` and `flywheel.md` (optional one-way
-  mirroring — CLI internals, not agent-facing).
+  dispatch lane-provider seam). The optional one-way mirror's internals live in
+  `docs/internal/{mirror,flywheel}.md` — CLI internals, not agent-facing.
 
 ## The CLI
 

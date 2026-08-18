@@ -44,7 +44,7 @@ graph_dir: .hypergraph/graph
 # publish_branch: main
 
 # Optional: publish the committed node files to a hosted graph you own
-# (backend/mirror.md). One-way — the files stay canonical and the mirror is a
+# (docs/internal/mirror.md). One-way — the files stay canonical and the mirror is a
 # regenerable projection. Absent → `hypergraph push` is a no-op that exits 0, which
 # is why callers never have to test for it. The skills do not know it exists.
 # A fork inherits this key and has no credentials for it; that is expected, and

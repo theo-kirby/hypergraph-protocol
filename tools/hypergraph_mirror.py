@@ -1,4 +1,4 @@
-"""The optional one-way mirror (backend/mirror.md) — the networked half.
+"""The optional one-way mirror (docs/internal/mirror.md) — the networked half.
 
 Loaded lazily and exclusively through `hypergraph_core._mirror()`, which registers
 the running core module under the name `hypergraph_core` before executing this
@@ -273,7 +273,7 @@ class FlywheelCliTransport:
 
         The cursor loop is not optional: a record root with more than one page of
         children silently misses an existing legend node without it, and then
-        creates a second one on every push (backend/mirror.md)."""
+        creates a second one on every push (docs/internal/mirror.md)."""
         after = None
         seen = 0
         while True:
@@ -351,7 +351,7 @@ class FlywheelCliTransport:
         self._run("nodes:delete", node_id=node_id, delete_mode=mode, extra=["--yes"])
 
     # --- re-parenting ----------------------------------------------------------
-    # Not an INTERFACE operation — a topology repair (backend/flywheel.md). Both are
+    # Not an INTERFACE operation — a topology repair (docs/internal/flywheel.md). Both are
     # graph writes and both take **four** optimistic locks, two per endpoint. Nothing
     # here re-reads them: the caller does, immediately before each call, because the
     # add bumps the child and a revision computed once and reused across a batch is
@@ -1624,7 +1624,7 @@ def push_parents(graph_dir: Path, config: dict, roots: dict, transport, *,
     Two refusals, both about never making the graph worse than it was:
 
     - **A node is never left parentless.** Add-before-remove is the ordering
-      (backend/flywheel.md), and a move whose desired set is empty, or whose parents
+      (docs/internal/flywheel.md), and a move whose desired set is empty, or whose parents
       are not all on the mirror yet, is skipped and reported rather than half-applied.
     - **A mirror-only root edge is never removed.** For an adopted project the local
       roots hang off the configured `mirror_roots`, an edge that exists on the mirror
@@ -1710,7 +1710,7 @@ def push_parents(graph_dir: Path, config: dict, roots: dict, transport, *,
                                         add=add, remove=remove)
         for parent_id in add:
             def _reissue(_exc, _child=node_id, _parent=parent_id):
-                """The 409 recipe backend/flywheel.md states: re-read, then retry —
+                """The 409 recipe docs/internal/flywheel.md states: re-read, then retry —
                 never blind-retry. Safe here in a way an artifact upload is not: an
                 edge is a *set* member, so re-issuing at worst asserts an edge that
                 already exists, which is the `tags:assign` property one noun over."""
