@@ -1,6 +1,6 @@
 """Upgrading an adopted repo's copies, and detecting when nobody did.
 
-An adopted repo carries *copies* of what this package ships — the five skills, the
+An adopted repo carries *copies* of what this package ships — the skills, the
 sentinel-delimited AGENTS.md block, sometimes the CI workflows. `uv tool upgrade`
 refreshes the CLI and cannot see any of them. That gap shipped: 0.0.6 fixed the
 adopt workflow, and every repo that had already run `skills install` kept the
@@ -9,9 +9,11 @@ so.
 
 Two properties carry the weight here:
 
-- **upgrade never installs what is not already there.** An upgrade that quietly adds
-  CI to a repo that never wanted it is worse than a stale file — and it is what
-  keeps the command from writing outside the repo it was pointed at.
+- **upgrade never opts a repo in.** It refreshes and completes what a repo already
+  chose (a repo with skills gets the full current set, including ones a release
+  added), but a repo with no skills, no block, no workflows gets nothing — an
+  upgrade that quietly adds CI to a repo that never wanted it is worse than a
+  stale file.
 - **the skew is *detected*, not assumed.** The stamp exists so `check` can say which
   half is old; without it the staleness is invisible, which is exactly how it got
   shipped.
@@ -106,14 +108,67 @@ def test_upgrade_refreshes_stale_skills_and_prunes_removed_files(tmp_path, capsy
     assert not stray.exists()
 
 
-def test_upgrade_never_installs_what_is_not_already_there(tmp_path, capsys):
-    """The whole safety property: upgrade refreshes copies, it does not adopt."""
+def test_upgrade_never_opts_a_repo_in(tmp_path, capsys):
+    """The safety property: a repo that chose nothing gets nothing — upgrade names
+    `skills install` instead of running it."""
     repo = adopted_repo(tmp_path, skills=False, agents=False, workflow=False)
-    assert run("upgrade", "--repo", repo) == 0
-    capsys.readouterr()
+    code, out = run_out(capsys, "upgrade", "--repo", repo)
+    assert code == 0
+    assert "hypergraph skills install" in out
     assert not (repo / ".claude").exists()
     assert not (repo / "AGENTS.md").exists()
     assert not (repo / ".github").exists()
+
+
+def test_upgrade_installs_a_skill_the_release_added(tmp_path, capsys):
+    """0.0.11 added hypergraph-dispatch; an adopter on the documented two-command
+    path must actually receive it — skipping absent skills froze every adopter at
+    the skill set of the release they installed."""
+    repo = adopted_repo(tmp_path)
+    missing = repo / ".claude" / "skills" / "hypergraph-dispatch"
+    import shutil as _shutil
+    _shutil.rmtree(missing)
+    code, out = run_out(capsys, "upgrade", "--repo", repo)
+    assert code == 0
+    assert "installed" in out
+    assert (missing / "SKILL.md").read_text() == (
+        SOURCE / "hypergraph-dispatch" / "SKILL.md").read_text()
+    assert not missing.is_symlink()      # copy-mode install got a copy
+
+
+def test_upgrade_installs_missing_skill_as_symlink_in_a_linked_install(tmp_path, capsys):
+    """Mode-matched: an all-symlink install (install.sh) gets its new skill as a
+    symlink too, not a copy that would go stale."""
+    target = tmp_path / "user-skills"
+    assert run("skills", "install", "--link", "--target", target) == 0
+    capsys.readouterr()
+    victim = target / "hypergraph-dispatch"
+    victim.unlink()
+    changes = []
+    hg.upgrade_skills(SOURCE, target, changes, dry_run=False)
+    assert victim.is_symlink()
+    assert victim.resolve() == (SOURCE / "hypergraph-dispatch").resolve()
+    assert ("installed", victim, "new in this release") in changes
+
+
+def test_skills_install_link_is_idempotent(tmp_path, capsys):
+    """install.sh runs `skills install --link`; its second run must exit 0."""
+    target = tmp_path / "user-skills"
+    assert run("skills", "install", "--link", "--target", target) == 0
+    code, out = run_out(capsys, "skills", "install", "--link", "--target", target)
+    assert code == 0
+    assert "already linked" in out
+    assert (target / "hypergraph-record").is_symlink()
+
+
+def test_skills_install_copy_mode_still_refuses_over_a_source_link(tmp_path, capsys):
+    """Copy over a source-linked entry replaces the live skill with a snapshot of
+    itself — the one install failure that is invisible when it happens."""
+    target = tmp_path / "user-skills"
+    assert run("skills", "install", "--link", "--target", target) == 0
+    assert run("skills", "install", "--target", target) == 2
+    assert (target / "hypergraph-record").is_symlink()   # the live link survived
+
 
 
 def test_upgrade_replaces_an_unedited_block_and_leaves_the_prose_alone(tmp_path, capsys):
@@ -316,6 +371,18 @@ def test_check_warns_the_other_way_when_the_cli_is_the_old_half():
     findings = skew("99.0.0").warnings()
     assert len(findings) == 1
     assert "uv tool upgrade hypergraph-protocol" in str(findings[0])
+
+
+def test_a_retracted_label_never_says_upgrade_the_cli():
+    """0.9.0 was stamped into the wild and never published. `0.9.0 > 0.0.11`, so
+    the naive comparison told those repos to upgrade to a CLI that does not exist —
+    a permanent loop. The remedy is re-stamping the copies, and only that."""
+    findings = skew("0.9.0").warnings()
+    assert len(findings) == 1
+    text = str(findings[0])
+    assert "retracted" in text
+    assert "hypergraph upgrade" in text
+    assert "uv tool upgrade" not in text
 
 
 def test_matching_versions_and_unparseable_ones_say_nothing():

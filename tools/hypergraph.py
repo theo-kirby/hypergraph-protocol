@@ -4007,17 +4007,39 @@ def _links_into(dst: Path, tree: Path) -> bool:
 
 
 def upgrade_skills(source: Path, target: Path, changes: list, dry_run: bool) -> None:
-    """Replace installed skills wholesale, so a file we deleted upstream goes away.
+    """Replace installed skills wholesale, so a file we deleted upstream goes away —
+    and install the skills a release *added*.
 
     `skills install` copies with `dirs_exist_ok`, which merges — a reference file
     removed in a later release would linger forever. Upgrade is the one place that
-    can safely prune, because the whole directory is ours."""
-    for src in sorted(source.glob("hypergraph-*")):
-        if not src.is_dir():
-            continue
+    can safely prune, because the whole directory is ours.
+
+    A repo that opted in gets the full set: present skills are refreshed and
+    missing ones installed, mode-matched (an all-symlink install gets a symlink,
+    anything else a copy). Skipping absent skills entirely meant no pre-0.0.11
+    adopter could ever receive `hypergraph-dispatch` through the documented path.
+    A target with no hypergraph skills at all never opted in, and **upgrade never
+    opts a repo in** — it names `skills install` and does nothing."""
+    shipped = [p for p in sorted(source.glob("hypergraph-*")) if p.is_dir()]
+    present = [target / p.name for p in shipped
+               if (target / p.name).exists() or (target / p.name).is_symlink()]
+    if not present:
+        changes.append(("skipped", target / "hypergraph-*",
+                        "no hypergraph skills installed here — `hypergraph skills "
+                        "install` opts a repo in; upgrade never does"))
+        return
+    all_links = all(d.is_symlink() for d in present)
+    for src in shipped:
         dst = target / src.name
         if not dst.exists() and not dst.is_symlink():
-            continue                      # not installed here — upgrade never installs
+            if not dry_run:
+                target.mkdir(parents=True, exist_ok=True)
+                if all_links:
+                    dst.symlink_to(src.resolve(), target_is_directory=True)
+                else:
+                    shutil.copytree(src, dst)
+            changes.append(("installed", dst, "new in this release"))
+            continue
         if _links_into(dst, source):
             changes.append(("skipped", dst, "symlinked to the source (dev checkout)"))
             continue
@@ -4158,8 +4180,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     else:
         changes.append(("skipped", config_path, "no config — not an adopted project"))
 
-    verb = {"refreshed": "would refresh", "unchanged": "unchanged",
-            "skipped": "skipped", "differs": "differs",
+    verb = {"refreshed": "would refresh", "installed": "would install",
+            "unchanged": "unchanged", "skipped": "skipped", "differs": "differs",
             "customized": "customized"} if args.dry_run else {}
     for state, path, note in changes:
         label = verb.get(state, state)
@@ -4217,17 +4239,28 @@ def cmd_skills(args: argparse.Namespace) -> int:
     else:
         target = Path.cwd() / ".claude" / "skills"
     target.mkdir(parents=True, exist_ok=True)
-    installed = []
+    installed, kept = [], []
     for src in sorted(source.glob("hypergraph-*")):
         if not src.is_dir():
             continue
         dst = target / src.name
         if _links_into(dst, source):
+            if args.link:
+                # Idempotent: `install --link` over its own output is a no-op (or a
+                # re-point if the source moved) — this is install.sh's second run.
+                if dst.resolve() == src.resolve():
+                    kept.append(src.name)
+                    continue
+                dst.unlink()
+                dst.symlink_to(src.resolve(), target_is_directory=True)
+                installed.append(src.name)
+                continue
             raise LocalGraphError(
                 f"{dst} is already linked to the source ({src}) — nothing to install. "
                 "This is a dev checkout where the skills are dogfooded through "
-                "symlinks; installing would replace the live skill with a stale copy. "
-                "Use --target DIR to install elsewhere.")
+                "symlinks; installing (copy mode) would replace the live skill with "
+                "a stale copy. Use --link to keep links, or --target DIR to install "
+                "elsewhere.")
         if dst.is_symlink():  # a link to somewhere else — replace it wholesale
             dst.unlink()
         if args.link:
@@ -4241,11 +4274,13 @@ def cmd_skills(args: argparse.Namespace) -> int:
             # so the installed skill is self-contained
             shutil.copytree(src, dst, dirs_exist_ok=True)
         installed.append(src.name)
-    if not installed:
+    if not installed and not kept:
         raise LocalGraphError(f"no hypergraph-* skills found under {source}")
     verb = "linked" if args.link else "installed"
     for name in installed:
         print(f"{verb} {target / name}")
+    for name in kept:
+        print(f"already linked {target / name}")
     return 0
 
 
@@ -4307,6 +4342,12 @@ def version_tuple(text: str) -> tuple[int, ...] | None:
     return tuple(int(p) for p in parts)
 
 
+# Release labels that were stamped into the wild but never published. A repo
+# carrying one must never be told "upgrade the CLI" — no CLI with that version
+# exists to upgrade to, so that advice is a permanent loop.
+RETRACTED_VERSIONS = frozenset({"0.9.0"})
+
+
 def check_version_skew(config: dict, report: Report) -> None:
     """Compare the version that installed this repo's copies against the running CLI.
 
@@ -4323,6 +4364,13 @@ def check_version_skew(config: dict, report: Report) -> None:
                    "no `hypergraph_version:` — this project's skills and AGENTS.md "
                    "block predate the stamp, so nothing can tell whether they are "
                    "current. `hypergraph upgrade` refreshes them and adds it.")
+        return
+    if declared in RETRACTED_VERSIONS:
+        report.add("warning", "-", "config",
+                   f"`hypergraph_version: {declared}` is a retracted release label — "
+                   f"it was never published, so no CLI exists to upgrade to. The "
+                   f"copies are what is mislabeled: run `hypergraph upgrade` to "
+                   f"refresh them and re-stamp with the running CLI ({__version__}).")
         return
     theirs, ours = version_tuple(declared), version_tuple(__version__)
     if theirs is None or ours is None or theirs == ours:
