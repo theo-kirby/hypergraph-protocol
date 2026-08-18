@@ -9,9 +9,9 @@ summary: 'SPEC.md and the two-graph structure: invariants I1-I8, the conventions
 flywheel:
   node_id: 3310b4b6-38dc-5091-b321-0a62ce235f80
   slug: young-wave-9364
-  revision: 9
-  pushed_at: '2026-08-18T12:12:46+00:00'
-  content_sha256: 7cebd493733600727efde627a2f58fb4debba07e64332a27fd95c049e73e6f8f
+  revision: 10
+  pushed_at: '2026-08-18T12:24:52+00:00'
+  content_sha256: d51ddef491985addec1260a4f7125fd031f4bdc6c6b5335183708ad8deb931ec
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -29,7 +29,9 @@ SPEC.md is where the structure is written down: invariants I1–I8 — record-fi
 - **I1–I8 were untouched by that change**, which is the evidence the storage/protocol boundary was drawn in the right place: they were already storage-neutral, and only the framing around them named a backend [rec: silver-ember-3035]. The fork/mirror doctrine split along the same line — fork semantics and "artifacts do not travel" are protocol and stayed; mirror mechanics moved out [rec: silver-ember-3035].
 - **I5 became an ancestry frontier in v0.0.5** [rec: placid-ridge-4035]. The old wording — "record nodes created after the HWM node are unreconciled" — was the concurrency defect written down, so fixing the code without fixing the sentence would have left the next implementer to rebuild it [rec: vast-rain-4873].
 - **SPEC's Future-work section is deleted at the 0.1.0 gate** [rec: mellow-birch-2818]: its durable items already live as frontier state nodes, and the speculative list was weight; the slot is reserved for a Versioning section stating what a minor bump may change and what is stable.
-- **The 0.1.0 audit found SPEC drift, queued for the gate's sweep** [rec: lively-spring-9646]: `check --since` — the one mechanism that reaches a contributor who never read AGENTS.md — appears nowhere in SPEC's Tooling section; the enforced-set sentences underdescribe what branch mode enforces (I1 is mechanical under `--since`); the heal-vs-`upgrade --graph` contradiction spans five files; and the last section is still headed v0.0.5.
+- **The audit's SPEC drift is closed** [rec: lively-spring-9646] [rec: steady-rose-0661]: `check --since` is documented in Tooling as the PR gate; the enforced-set sentences now name the structural checks and branch-mode I1 (mechanical under `--since`); every stale `heal` spelling reads `upgrade --graph` and the alias promises are gone; no stale version headers remain outside the intentional I5 migration prose.
+- **SPEC gained a Versioning section in Future-work's old slot** [rec: damp-meadow-9143]: a minor bump may tighten the checker (a rule that flags a correct live graph is a defect in the rule — the dogfood test is the standing net), reshape the CLI surface, and reword prose output; stable are invariant numbers (permanent, never reused — I5's v0.0.5 change as the precedent), exit codes 0/1/2 as a contract, the additive node-file format, and the export JSON shape.
+- **What the audit had measured** [rec: lively-spring-9646]: `check --since` — the one mechanism that reaches a contributor who never read AGENTS.md — appears nowhere in SPEC's Tooling section; the enforced-set sentences underdescribe what branch mode enforces (I1 is mechanical under `--since`); the heal-vs-`upgrade --graph` contradiction spans five files; and the last section is still headed v0.0.5.
 - The spec header is pinned to `pyproject.toml` by assertion, after the two drifted with SPEC saying v0.0.2 while the tool shipped 0.0.3 [rec: calm-sand-3399].
 
 ## Negative knowledge
@@ -50,3 +52,5 @@ None yet.
 - late-sage-5549 — narrowed to the two-graph structure, with the record and state halves as children
 - lively-spring-9646 — the 0.1.0 audit: SPEC drift enumerated with line-level evidence
 - mellow-birch-2818 — U7: the Future-work section deleted; the slot reserved for Versioning
+- steady-rose-0661 — U9: the SPEC half of the drift sweep
+- damp-meadow-9143 — U10: the Versioning section, and CHANGELOG as the sixth held version location

@@ -9,9 +9,9 @@ summary: 'How a release reaches a repo that already adopted: three things travel
 flywheel:
   node_id: 742f4d32-ea9c-54fc-a8d3-4b0067dfc1aa
   slug: round-thunder-5855
-  revision: 12
-  pushed_at: '2026-08-18T12:12:46+00:00'
-  content_sha256: b94c04098427ab6c338ac5406b24bf9e90115f4a6b3032e5b839599fea8bd7cf
+  revision: 13
+  pushed_at: '2026-08-18T12:24:52+00:00'
+  content_sha256: 26f68f10eeabd0b82a4c18108a93823d2c676b1153bb43880edf023e535d2900
   parents_sha256: 437819574dd587d939fe237b83326a9f0d60c63e5db173f7d30329bb8d01fc22
   parents:
   - 67d32718-3dcf-5321-978a-212599c531b4
@@ -42,6 +42,8 @@ The block itself now points an arriving agent at dispatch: non-negotiable 1 gain
 
 **The installed payload no longer ships its references six times** [rec: old-jasper-8833]. The audit measured 348 KB with 78% duplicates (every skill's references/ symlinks materialized at wheel build). The wheel now carries each referenced file once under `hypergraph_protocol_data/references/`, `skills install` links each skill's `references/<name>` relatively into a shared `hypergraph-references/` payload (copy-fallback when `symlink()` raises), and `upgrade` refreshes/prunes the shared dir — converting fat pre-0.1.0 installs on their first run. Measured on a real venv install from the built wheel: 136 KB. En route: hatchling's `force-include` bypasses `exclude` *and* `skip-excluded-dirs` (both measured ineffective), so the skill payload is enumerated file by file with a test pinning the enumeration complete, and `skills/references.yml` stands in for the symlinks a wheel cannot carry, test-pinned equal to them [rec: old-jasper-8833].
 
+**The shipped block itself moved at the gate** [rec: weathered-badger-8682]: non-negotiable 4's gate is `hypergraph sync` and a fifth non-negotiable states the branch discipline (record on any branch; reconcile only on the default branch). The 0.1.0 digest is registered in `SHIPPED_BLOCK_DIGESTS` with all prior digests kept, so every clean block this project ever shipped stays refreshable — and init now writes the same block adopt does, so all three paths in (init, adopt, upgrade) deliver one current contract.
+
 A smaller gap remains: on a repo adopted before the stamp, `check` emits only the "predates the stamp" info, so the case where the **CLI** is the older half cannot be reported at all — cadex ran a 0.0.6 CLI against 0.0.7 skills and nothing said so [rec: vast-valley-5745].
 
 ## Negative knowledge
@@ -65,3 +67,4 @@ A smaller gap remains: on a repo adopted before the stamp, `check` emits only th
 - lively-spring-9646 — the 0.1.0 audit: upgrade skips absent skills, install.sh not idempotent, the 0.9.0 skew loop
 - rough-hill-4967 — U4: upgrade completes the skill set, install.sh idempotent, the 0.9.0 loop broken
 - old-jasper-8833 — U6: the references payload ships once; installs link to it (348 KB to 136 KB)
+- weathered-badger-8682 — U8: the block's sync gate and branch-discipline item; the 0.1.0 digest registered

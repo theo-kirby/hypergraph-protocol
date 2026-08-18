@@ -9,9 +9,9 @@ summary: Six single-path skills (init, adopt, record, reconcile, orient, dispatc
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 18
-  pushed_at: '2026-08-18T12:12:46+00:00'
-  content_sha256: a8996ba6917e6bbadbaa58629fcd76f7bfd529f1ec8c4bacf3076031dc312e0e
+  revision: 19
+  pushed_at: '2026-08-18T12:24:52+00:00'
+  content_sha256: 1b11f0e07776fd2476db6d4a69bf9281d1a6f6b4037c04a03e50ba73ce2c2459
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -28,7 +28,9 @@ Status: working
 - **The collaboration rules are split across two skills, which is the point** [rec: placid-ridge-4035]: reconcile carries the maintainer-on-main rule, frontier guidance in its HWM step, and a guardrail to start from `sync` rather than a bare `check` after a merge; record carries the converse a contributor needs — recording is safe on any branch, fork or machine, and it is the *whole* obligation.
 - **record teaches tagging, and the guidance is mostly about restraint** [rec: clear-moss-4527]: read `tags.yml`, use declared names only, add one with `hypergraph tags add` and never by hand, and in a repo with no `tags.yml` **tag nothing**. The load-bearing sentence is that a tag is a way to *find* nodes and not a way to assert things about them.
 - **record's step 7 stopped being one line, because it decides whether the artifact feature reaches the field at all** [rec: shady-bay-7654]. It said "commit the files and reference them by path"; it now says three things and names the third as the one that is easy to skip: commit them *or don't* (gitignoring a 40 GB dataset is a legitimate call, but an uncommitted file that gets published is one the mirror alone holds), **explain** them in `## Method`/`## Result` because prose is the claim, and **enumerate** them because the list is the claim's index and no tool reads prose.
-- **The 0.1.0 audit measured skill/spec drift, queued for the gate's later units** [rec: lively-spring-9646]: the reconcile skill still states unreconciled enumeration by wall clock — the pre-0.0.5 rule I5 exists to forbid — in the one skill that must get I5 right; the dispatch skill teaches open/ls/harvest but never `close`, while naming the abandoned-lane failure it remedies; three documents give three different counts of who passes `--reconcile` (the true answer is three: init and adopt once each at setup, reconcile ongoing); and adopt shipped three representations of one procedure plus a factual `--slug` error at 43% of all skill bytes — **the adopt half is fixed**: one mode-branched workflow whose Mode A order is native (pull → import → `--init`), the corrective note and the duplicate walkthrough deleted (363 → 286 lines), with the interview and the four authoring traps kept verbatim [rec: mellow-birch-2818].
+- **init installs the onboarding contract since the 0.1.0 gate** [rec: weathered-badger-8682]. Day-zero adopters used to get two graphs and zero instructions to the agents the protocol exists for — only adopt wrote the AGENTS.md block. init's step 8 now does the idempotent sentinel append (never breaking a `CLAUDE.md` symlink), writes `.hypergraph/AGENTS.md`, and runs `skills install` + `git check-ignore`; its gate is `hypergraph sync`, and the step-3/4 waffle is resolved (record node #1 first, then the skeleton citing it). Verified end to end on a scratch repo, where `upgrade` read the freshly written block as shipped [rec: open-snow-3693].
+- **The audit's skill drift is closed by the gate's sweep** [rec: lively-spring-9646] [rec: steady-rose-0661]: reconcile teaches reachability enumeration and the multi-tip `high_water_mark:` syntax with `hwm --tips`; the writer count is stated truthfully everywhere (three — init and adopt once at setup, reconcile ongoing); dispatch's lifecycle names `dispatch close` (`--force` abandons, said out loud); the six identical CLI preambles are one sentence each and record's tagging essay is its operative lines; adopt's trap 3 states the real trap (a `NEW <kebab-name>` never auto-resolves; `--slug` exists but must fit `word-word-####`).
+- **What the audit had measured** [rec: lively-spring-9646]: the reconcile skill still states unreconciled enumeration by wall clock — the pre-0.0.5 rule I5 exists to forbid — in the one skill that must get I5 right; the dispatch skill teaches open/ls/harvest but never `close`, while naming the abandoned-lane failure it remedies; three documents give three different counts of who passes `--reconcile` (the true answer is three: init and adopt once each at setup, reconcile ongoing); and adopt shipped three representations of one procedure plus a factual `--slug` error at 43% of all skill bytes — **the adopt half is fixed**: one mode-branched workflow whose Mode A order is native (pull → import → `--init`), the corrective note and the duplicate walkthrough deleted (363 → 286 lines), with the interview and the four authoring traps kept verbatim [rec: mellow-birch-2818].
 - **The unattended-loop gap narrowed at 0.0.11**: `hypergraph-dispatch` packages one aimed pass — orient, claim, work, record, close — proven by two acceptance runs whose second read the first's claim and steered around it [rec: young-sage-8406] [rec: idle-crow-3832] [rec: bold-sand-5009]. What no skill packages yet is the *series* — resume, again and again, across contexts — which Autonomous operation holds [rec: late-sage-5549].
 
 ## Negative knowledge
@@ -61,3 +63,6 @@ Status: working
 - vast-birch-5192 — Operator directive: the release label is 0.0.11, not 0.9.0
 - lively-spring-9646 — the 0.1.0 audit: skill drift measured against SPEC, fixes queued
 - mellow-birch-2818 — U7: adopt collapsed to one procedure with the native Mode A order
+- weathered-badger-8682 — U8: init gains the onboarding install; the block gains the sync gate and non-negotiable 5
+- steady-rose-0661 — U9: the drift sweep; the documents agree with the code
+- open-snow-3693 — the gate's close-out: the updated init skill verified end to end on a scratch repo

@@ -9,9 +9,9 @@ summary: 'The one unshipped half of distribution: a spec-first announcement, par
 flywheel:
   node_id: 609c7366-4f4e-5f6d-87f2-f384afc8bf6a
   slug: weathered-union-7494
-  revision: 17
-  pushed_at: '2026-08-18T11:54:36+00:00'
-  content_sha256: e80130b3a56ab5252358176fbff00c5672958eac92cf360f6fb5cdb3823010d7
+  revision: 18
+  pushed_at: '2026-08-18T12:24:52+00:00'
+  content_sha256: e2f98e0cffa08d179935b8310ed59cfb4c75cd81149974d2ce96da537907dba0
   parents_sha256: 9c8039d8ccc995d9c15665648d7d82c9399050ef076f05102c409e2d18ebabfb
   parents:
   - e6697aa9-2f7c-5b23-8ef4-abc687d15567
@@ -24,7 +24,7 @@ The one unshipped half of distribution: a **spec-first announcement**, whose ven
 
 - **Parked by Operator directive with no date**, alongside the 0.1.0 release; no agent work proceeds on either [rec: southern-ridge-1802]. The v0.1 package gate for general adoption — the git-native backend — was met long ago [rec: damp-mountain-8757].
 - **The reason for the park is the reason this node is still open.** Everything shipped shows the protocol works mechanically; nothing yet shows it makes agent work better than plain git, and an announcement with no evidence is a claim. The evidence is being built first, as the protocol benchmark [rec: southern-ridge-1802].
-- **The park gained a concrete exit checklist from the 0.1.0 readiness audit** [rec: lively-spring-9646]: checker trust fixes, `init` writing the agents-block, `upgrade` delivering new skills, the doc drift sweep, a CHANGELOG and versioning policy, and the mirror docs off the public surface. The mechanical half is being executed as the gate; the park itself still waits on the evidence decision — the benchmark — exactly as directed.
+- **The mechanical half of the exit checklist is met in full** [rec: lively-spring-9646] [rec: open-snow-3693]: checker trust fixed with the live graph as a standing regression net, `init` writes the agents-block, `upgrade` delivers new skills, the drift sweep landed, CHANGELOG + versioning policy + CLI reference + worked example exist, and the mirror docs are off the public surface — verified by 342 green tests, a clean `check --since` over the whole gate range, and a scratch-repo init end to end. The repo is release-ready at 0.0.11; the bump is one written-down commit. The park itself still waits on the evidence decision — the benchmark — and the Operator's venue call, exactly as directed.
 - Also still open and small: the npm placeholder still points at PyPI 0.0.2 [rec: long-peak-1620].
 - **This node used to carry the shipped half too, and that made the frontier lie**: five releases were live and index-verified while the whole of publication flew an `open` flag. The releases are facts and now live under Distribution; only the announcement is a gap [rec: late-sage-5549].
 
@@ -39,3 +39,4 @@ None here — the naming and packaging lessons live on Distribution and PyPI rel
 - long-peak-1620 — the npm placeholder still pointing at an old release
 - late-sage-5549 — narrowed to the announcement so the frontier stops overstating the gap
 - lively-spring-9646 — the 0.1.0 audit: the gate checklist that makes the park's exit concrete
+- open-snow-3693 — the gate's close-out: release-ready at 0.0.11, measured
