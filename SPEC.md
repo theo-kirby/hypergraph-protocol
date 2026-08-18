@@ -1,4 +1,4 @@
-# Hypergraph Protocol — v0.0.11
+# Hypergraph Protocol — v0.0.12
 
 Hypergraph is a **substrate for autonomous research and engineering**: the memory
 layer an agent needs to carry real work across months and across contexts without a

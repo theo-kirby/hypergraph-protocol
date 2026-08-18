@@ -8,11 +8,14 @@ inline were internal or never published.
 
 ## [Unreleased]
 
-The 0.1.0 readiness gate. The version stays 0.0.11 until the Operator lifts the
-release park; the bump itself is one commit — five synchronized version
-locations (`pyproject.toml`, `tools/hypergraph.py` `__version__`, `SPEC.md`
-header, `templates/config.example.yml`, `.hypergraph/config.yml`) plus promoting
-this section to `[0.1.0]` — and `tests/test_packaging.py` holds all six.
+Nothing yet.
+
+## [0.0.12]
+
+The 0.1.0 readiness gate, shipped as 0.0.12 by Operator decision — more work is
+planned before the 0.1.0 label is used. Staged in the repo on 2026-08-18; PyPI
+publication is its own step, and this heading gains its date when the release
+is verified from the public index.
 
 ### Added
 - `hwm --tips`: the record graph's childless tips — the frontier a

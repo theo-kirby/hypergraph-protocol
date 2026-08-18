@@ -65,7 +65,7 @@ from __future__ import annotations
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.0.11"
+__version__ = "0.0.12"
 
 import argparse
 import hashlib
@@ -4084,7 +4084,7 @@ def _refresh_shared_references(source: Path, target: Path, changes: list,
 
     Only under a wheel layout (a `references/` dir beside `skills/`); a dev
     checkout's dogfooding symlinks resolve in-tree and need nothing. Also the
-    conversion path: a fat pre-0.1.0 install has its per-skill copies replaced
+    conversion path: a fat pre-0.0.12 install has its per-skill copies replaced
     by links the first time it upgrades."""
     ref_source = source.parent / "references"
     if not ref_source.is_dir():
@@ -4382,7 +4382,7 @@ SHIPPED_BLOCK_DIGESTS = frozenset({
     "0e6bd61095cb87c87cb96d5c74c52e18ad0dc22f5f6a5ae2dd636f4d4961a7d3",
     # 0.0.11 — non-negotiable 1 points at hypergraph-dispatch for deliberate work
     "5f15fb60813ac4611d3d22a11034fa54812110bffca34249ce79504eddde8678",
-    # 0.1.0 — the gate becomes `hypergraph sync`; non-negotiable 5 adds the branch
+    # 0.0.12 — the gate becomes `hypergraph sync`; non-negotiable 5 adds the branch
     # discipline (record anywhere, reconcile only on the default branch)
     "d9e9e1558fbec432dd56f2d9aef4ccd46c2543cae4bb5a751e478f51c96e2730",
 })
