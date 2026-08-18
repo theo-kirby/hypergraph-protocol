@@ -286,7 +286,7 @@ a probe it cannot clean up after.
 adoption that predated tags *lost the names* — they were on the archive and nothing
 local held them. An adoption that predated artifacts lost nothing, because there was
 nothing local to lose. A repo adding paths to old record nodes today is served by
-`push`: the plan fires on the absent stamp. `heal artifacts` exists only to record an
+`push`: the plan fires on the absent stamp. `upgrade --graph artifacts` exists only to record an
 *inventory* of what the frozen archive still holds, under `origin.artifacts` — it never
 repatriates the bytes, because they are not in this repo and re-uploading them would
 leave the mirror holding evidence the repo cannot regenerate.
@@ -331,31 +331,31 @@ Four rules, each of which is a bug if you drop it:
 
 ## Retroactive repair
 
-`hypergraph heal` carries a capability *backwards* into a repo that adopted before the
-capability existed. Tags are healer number one: an adoption that ran before this
+`hypergraph upgrade --graph` carries a capability *backwards* into a repo that
+adopted before the capability existed. Tags are healer number one: an adoption that ran before this
 shipped imported its nodes and dropped its whole tag taxonomy, silently.
 
 ```bash
-hypergraph heal                      # the registry, and what applies here
-hypergraph heal tags                 # DETECT ONLY — dry run is the default
-hypergraph heal tags --apply --offline   # frontmatter + tags.yml, no network
+hypergraph upgrade --graph                    # the registry, and what applies here
+hypergraph upgrade --graph tags               # DETECT ONLY — dry run is the default
+hypergraph upgrade --graph tags --apply --offline   # frontmatter + tags.yml, no network
 git add .hypergraph && git commit
-hypergraph heal tags --apply         # then the vocabulary and the assignments
+hypergraph upgrade --graph tags --apply       # then the vocabulary and the assignments
 git add .hypergraph/graph && git commit   # the revision fold
 ```
 
-It is a **separate command from `upgrade`**, and the distinction is the point:
-`upgrade` refreshes *copies* of files this package ships and every effect of it is
-`git checkout`-reversible; `heal` rewrites *graph content* and spends a mirror-write
-budget that cannot be un-spent. Three consequences:
+It is the **graph half of `upgrade`**, and the `--graph` boundary is the point:
+bare `upgrade` refreshes *copies* of files this package ships and every effect of it
+is `git checkout`-reversible; `--graph` rewrites *graph content* and spends a
+mirror-write budget that cannot be un-spent. Three consequences:
 
-- **Dry run is heal's default**, and opt-in everywhere else in the CLI.
+- **Dry run is the graph half's default**, and opt-in everywhere else in the CLI.
 - **Detected drift exits 0.** Unhealed drift is a capability that landed after your
   adoption, not a broken invariant — the same reasoning that keeps `check`'s version
   skew a warning. `--fail-on-drift` opts into exit 1.
 - **Nothing is persisted.** No "have I run?" flag: the written data is the state and
   detection re-derives it, the same property that makes `push_plan` a safe resume
-  primitive. A heal that recorded its own completion could lie.
+  primitive. A repair that recorded its own completion could lie.
 
 The safety rule worth naming: a healer's write targets come from `flywheel:` and
 **never** from `origin:`. In an adopted repo every `origin.node_id` is an id on the
@@ -366,7 +366,7 @@ stated in prose.
 
 Heal also refuses on an uncommitted graph directory (`--allow-dirty` overrides). That
 is deliberately *not* the same stance as `push`, which has no dirty-tree guard because
-reconcile publishes before it commits. Nothing about heal is inside that flow.
+reconcile publishes before it commits. Nothing about `--graph` is inside that flow.
 
 ## Verification
 

@@ -11,9 +11,7 @@ what is true now. Protocol: [spec.md](references/spec.md).
 
 ## The CLI
 
-Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that is
-`uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
-`uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
+`hypergraph …` — in a dev checkout of the protocol repo, `uv run tools/hypergraph.py …`.
 
 ## When To Use
 

@@ -13,11 +13,10 @@ lanes); providers: [lanes.md](references/lanes.md).
 
 ## The CLI
 
-Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that
-is `uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
-`uv tool install hypergraph-protocol`. The `hypergraph dispatch` verb manages the
-local lane (worktree + branch); this skill may name that verb but never a
-provider's internals — lane mechanics live behind
+`hypergraph …` — in a dev checkout of the protocol repo, `uv run tools/hypergraph.py …`.
+The `hypergraph dispatch` verb manages the local lane (worktree + branch); this
+skill may name that verb but never a provider's internals — lane mechanics live
+behind
 [lanes.md](references/lanes.md), the way mirror mechanics live behind the CLI.
 
 ## When To Use
@@ -91,7 +90,9 @@ corrupt, because no dispatched agent writes state.
    `Dispatch closed: …` line.
 7. **Report.** Slugs written, impacts declared, and the words "reconcile
    pending" — the maintainer folds this lineage on the default branch
-   (`hypergraph dispatch harvest <lane>` brings a lane's commits home first).
+   (`hypergraph dispatch harvest <lane>` brings a lane's commits home first,
+   then `hypergraph dispatch close <lane>` tears the worktree down; it refuses
+   while work is unharvested, and `--force` abandons it — say so out loud).
 
 ## Guardrails
 
@@ -100,7 +101,8 @@ corrupt, because no dispatched agent writes state.
   the status flip is a declared impact, folded later by the maintainer.
 - **Budget exhausted mid-unit**: record the partial unit honestly (what ran, what
   is unfinished, what the next agent needs), close the dispatch, stop. An
-  abandoned lane with uncommitted work is the one unrecoverable outcome.
+  abandoned lane with uncommitted work is the one unrecoverable outcome — which is
+  why `dispatch close` refuses it without `--force`.
 - **Re-dispatch is a new node.** Continuing a closed dispatch, or taking over a
   stale claim, starts a fresh `Dispatch:` node whose `## Why` names the
   predecessor. Never edit a committed dispatch node (record nodes are immutable).

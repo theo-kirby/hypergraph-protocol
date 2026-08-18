@@ -93,7 +93,8 @@ years of commits, or docs describing what already works → adopt.
   (SPEC: pointers are markdown slugs, not edges).
 - Keep the skeleton small — components, not tasks. A handful of `open` nodes is a
   healthy day-one frontier.
-- `--reconcile` is required for every state write (SPEC I3), and init is one of the
-  two places allowed to pass it. It is a gate, not a formality.
+- `--reconcile` is required for every state write (SPEC I3). Three writers ever
+  pass it: init and adopt once each at setup, the reconcile skill ongoing. It is a
+  gate, not a formality.
 - Report the created slugs (both roots + skeleton) to the user; they are permanent
   handles.

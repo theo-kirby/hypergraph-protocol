@@ -181,7 +181,7 @@ record node carries the files.
 record graph is append-only in its *bodies*: the node's `sha256` — what the CAS in
 op 7 locks on, what `push` compares, what `push --verify` rests on — hashes the body
 alone. Frontmatter a tool owns has always been outside that boundary; `push` stamps
-`flywheel:` into frozen nodes on every run, and `heal tags` rewrites `tags:` on nodes
+`flywheel:` into frozen nodes on every run, and `upgrade --graph tags` rewrites `tags:` on nodes
 years old. `hypergraph artifacts` never touches the title, the summary or the body, so
 it cannot reach the hash. `hypergraph update` still refuses record nodes outright: a
 correction to a *claim* is a new child node, never an edit.
@@ -242,8 +242,9 @@ Three things worth stating rather than discovering:
   build over one would invent an obligation the spec does not carry.
 
 The tag id a mirror minted is bookkeeping, not identity: names travel, ids do not.
-See [mirror.md](../docs/internal/mirror.md) for how `push` publishes them, and for `hypergraph heal
-tags`, which carries them into a repo that adopted before any of this existed.
+See [mirror.md](../docs/internal/mirror.md) for how `push` publishes them, and for
+`hypergraph upgrade --graph tags`, which carries them into a repo that adopted
+before any of this existed.
 
 ## Importing an existing graph
 
@@ -284,7 +285,7 @@ The source graph stays untouched as the frozen archive (`archive:` in config). A
 *archive's* attachments do **not** survive import: op 9 travels repo-relative paths,
 and the archive's bytes are not in this repo, so the archive reference stays the only
 pointer to them and `push --lineage` says so at the mirror record root (below).
-`hypergraph heal artifacts` records an inventory of what the archive holds under
+`hypergraph upgrade --graph artifacts` records an inventory of what the archive holds under
 `origin.artifacts` — where they are, never a copy of them. Artifacts *recorded after
 adoption* are ordinary repo files and travel with the repo like everything else. In epoch-split mode (huge graphs, history left on the archive) the marker
 is authored with `--root`: node files can only parent on slugs that resolve locally, so

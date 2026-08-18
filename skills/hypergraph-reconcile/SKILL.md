@@ -5,20 +5,19 @@ description: The single-writer librarian pass for a Hypergraph project - folds d
 
 # Hypergraph Reconcile
 
-The **only** writer of state nodes (SPEC I3). Reads record nodes past the high-water
-mark, folds their declared impacts into the distilled state graph, advances the HWM,
-and regenerates STATE.md. Protocol: [spec.md](references/spec.md).
+The only **ongoing** writer of state nodes (SPEC I3) — init and adopt each pass
+`--reconcile` once at setup; every later state write happens here. Reads record nodes
+past the high-water mark, folds their declared impacts into the distilled state
+graph, advances the HWM, and regenerates STATE.md. Protocol: [spec.md](references/spec.md).
 
 ## The CLI
 
-Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that is
-`uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
-`uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
+`hypergraph …` — in a dev checkout of the protocol repo, `uv run tools/hypergraph.py …`.
 
 Every state write goes through `hypergraph update <slug> --expect <sha> --reconcile`
 or `hypergraph new state … --reconcile` ([local-adapter.md](references/local-adapter.md)
-§1/§2/§7). Both refuse without `--reconcile` — that flag is the I3 gate, and this is
-the only skill that ever passes it.
+§1/§2/§7). Both refuse without `--reconcile` — that flag is the I3 gate, and after setup this
+is the only skill that passes it.
 
 ## When To Use
 
@@ -40,9 +39,11 @@ record it first (SPEC I1), then reconcile it in.
    parse `## Reconciliation` for the current HWM.
 2. **Export both graphs** → `.hypergraph/cache/{record,state}.json`:
    `hypergraph export --config .hypergraph/config.yml`.
-3. **Enumerate unreconciled nodes**: record nodes created after the HWM node, in
-   causal/created order — `check` prints the count and the pending impact targets. If
-   none, regenerate STATE.md and stop.
+3. **Enumerate unreconciled nodes**: record nodes that are not ancestors of any
+   frontier tip (reachability, never wall clock — a node authored before the last
+   reconcile but merged after it is unreconciled). `check` prints the count and the
+   pending impact targets; `hypergraph hwm` lists the nodes. If none, regenerate
+   STATE.md and stop.
 4. **Fold impacts, per state node** (batch all pending deltas for a target into one
    write). For each affected state node: read-sha → compose the complete new body →
    `hypergraph update --expect --reconcile`.
@@ -64,9 +65,12 @@ record it first (SPEC I1), then reconcile it in.
    `high_water_mark:` = the record **tips** you folded through and `reconciled_at:` = now
    (SPEC I5), through the same read-sha → update sequence. Do this *after* the folds so
    a crashed run under-reports rather than skips.
-   - Usually one slug — the newest node you folded. After a merge there are several,
-     because a branch's tip is not an ancestor of main's. `hypergraph hwm` lists what is
-     outstanding; anything still listed after you write the mark was not covered.
+   - The mark is the record graph's **tips**, comma-separated on one line:
+     `high_water_mark: <tip>, <tip>, …` (SPEC I5). Often one slug — the newest node
+     you folded; after a merge there are several, because a branch's tip is not an
+     ancestor of main's. `hypergraph hwm --tips` prints exactly the frontier a
+     fold-everything pass writes; plain `hypergraph hwm` lists what is outstanding,
+     and anything still listed after you write the mark was not covered.
    - If `check` says nodes *predate* the mark and names `hwm --suggest`, this graph is
      crossing the v0.0.5 change. Run it and write the frontier it prints — those nodes
      were already folded, and folding them again duplicates claims.

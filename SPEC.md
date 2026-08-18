@@ -60,9 +60,12 @@ enough to build on and the projection above them is a live hypothesis.
 
 ## Invariants
 
-Numbered invariants are the protocol. I2, I4, I5, I6, and I7 are mechanically enforced
-by `tools/hypergraph.py check`; I1, I3, and I8 are procedural (enforced by the skills),
-with the checker reporting proxies where it can.
+Numbered invariants are the protocol. I2, I4, I5, I6, and I7 are mechanically
+enforced by `tools/hypergraph.py check`, alongside structural checks that are not
+invariants (conflict markers, artifact placement, root identification). I1, I3, and
+I8 are procedural (enforced by the skills), with the checker reporting proxies where
+it can — and in `check --since <ref>` mode, I1 itself becomes mechanical across a
+branch: changed files with no new record node fail the check.
 
 ### I1 — Record-first
 
@@ -101,8 +104,9 @@ check-time only: authoring a new record node is never epoch-exempt.
 Only the reconcile pass writes state nodes. Recording agents — including many running
 in parallel — only ever append record nodes with impact declarations. This avoids
 stage-lease contention on hot state nodes and prevents weakest-agent drift in the
-distilled projection. Procedural; the reconcile skill is the only skill that acquires
-leases on state nodes.
+distilled projection. Procedural. Three writers ever pass the `--reconcile` gate: init and adopt once
+each at setup (seeding and distilling), and the reconcile skill ongoing — every
+state write after setup goes through it.
 
 ### I4 — Provenance
 
@@ -309,8 +313,8 @@ epoch:
   they are written into the **epoch marker's body as prose**. That routing is what
   makes it a decision rather than a loss — and it is the adopting agent's job, not the
   tool's, because only a human or an agent reading the graph can say *why* the pointer
-  moved. A repo that adopted before tags travelled is repaired by `hypergraph heal
-  tags`, not by re-running the adoption.
+  moved. A repo that adopted before tags travelled is repaired by
+  `hypergraph upgrade --graph tags`, not by re-running the adoption.
 - **A continuing graph is not a copy of the graph it forked from.** Lineage is
   content: it belongs in a node body that names the archive and states what did and
   did not come across — never in a title, and never as a structural pretence that
@@ -408,7 +412,10 @@ uv run tools/hypergraph.py check  --record .hypergraph/cache/record.json --state
 uv run tools/hypergraph.py render --state .hypergraph/cache/state.json --config .hypergraph/config.yml -o STATE.md
 ```
 
-`check` exits nonzero on any I2/I4/I5/I6/I7 violation.
+`check` exits nonzero on any I2/I4/I5/I6/I7 violation. `check --since <ref>` adds
+the branch-mode I1 check: comparing `<ref>...HEAD`, work outside the graph with no
+new record node added is a violation — the PR gate, and the only mechanism that
+reaches a contributor who never read AGENTS.md.
 
 **Visualization is not part of this tool.** The JSON exports
 (`.hypergraph/cache/{record,state}.json`) are the contract: any external
@@ -424,8 +431,7 @@ a capability backwards into a repo that adopted before the capability existed.
 Because it rewrites the graph and may spend writes that cannot be un-spent, the graph
 half is **detect-only until `--apply`** — the one place in this tooling where a dry
 run is the default — and plain detected drift exits 0, since a capability that landed
-after your adoption is not a broken invariant. (`heal`, the former name of the graph
-half, survives as a deprecated alias through the 0.0.x series.)
+after your adoption is not a broken invariant.
 
 ## Storage
 

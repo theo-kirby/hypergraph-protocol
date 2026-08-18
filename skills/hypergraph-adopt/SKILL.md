@@ -261,10 +261,12 @@ discoverable from the templates.
 - **`--impact` already writes `- target: `.** Pass `"<slug> — <delta>"`, *not*
   `"target: <slug> — <delta>"` — copying a line out of the template verbatim yields
   `- target: target: …` and an I2 violation.
-- **You cannot choose a state node's slug.** They are minted `adjective-noun-####`;
-  `--slug sim-substrate` is refused. So the readable `NEW <kebab-name>` target in an
-  impact line never resolves to the node you then mint. Write the mapping down —
-  kebab name → minted slug — in the node that declared them.
+- **A `NEW <kebab-name>` impact target never auto-resolves to the node you then
+  mint.** Reconcile creates the state node with its own slug, and nothing links
+  the readable name to it — write the mapping down (kebab name → minted slug) in
+  the node that declared them. `--slug` does exist on `hypergraph new`, but it
+  must fit the `word-word-####` shape (`--slug sim-substrate` is refused by
+  `SLUG_RE`, not by policy), so it cannot make the kebab name resolve either.
 - **Record nodes are immutable.** `hypergraph update <record-slug>` refuses. A
   correction is a **new child node**, which is why you should not write a count you
   have not measured yet.

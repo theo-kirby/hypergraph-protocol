@@ -28,8 +28,9 @@ repo](backend/local-adapter.md):
 
 Concretely: on a mature project, cold-start orientation over an append-only DAG means
 traversing thousands of nodes. With Hypergraph, a fresh agent reads the frontier in
-≤ ~6 tool calls and follows provenance slugs into the record graph only where the task
-demands history.
+a handful of tool calls (≤ ~6 in our own use — whether that beats plain git on real
+work is an open benchmark question) and follows provenance slugs into the record
+graph only where the task demands history.
 
 How it stays coherent with many parallel agents: knowledge lands **record-first** —
 every record node declares its `## State Impact` (or `none: <reason>`), and a separate
@@ -140,7 +141,7 @@ manual steps, exit 0 — the same stand-down posture as `push` with no mirror.
   `update` are the storage layer, `hwm` reports the reconciliation frontier,
   `dispatch` manages local lanes, and `upgrade` refreshes an adopted repo's copies of
   the skills and the AGENTS.md block (`--graph` runs the retroactive graph repairs,
-  detect-only until `--apply`; the old `heal` name is a deprecated alias). The
+  detect-only until `--apply`). The
   optional mirror's networked half (`push`'s executing tail, `sync`'s publish,
   `mirror`) lives in **tools/hypergraph_mirror.py**, loaded lazily — offline
   commands never import it.
@@ -166,7 +167,7 @@ hypergraph upgrade                    # the copies — skills, AGENTS.md block, 
 
 (`hypergraph upgrade --graph` is the third, rarer thing: retroactive *graph* repairs
 for a repo that adopted before a capability existed — detect-only until `--apply`,
-because those rewrite node files. The former `heal` command is a deprecated alias.)
+because those rewrite node files.)
 
 `skills install` writes real files into your repo, so `uv tool upgrade` cannot see
 them and they go stale silently. `hypergraph upgrade` refreshes what is already
@@ -191,7 +192,7 @@ your architecture, `.hypergraph/config.yml`, and `STATE.md`.
 #   run hypergraph-init            → roots + state skeleton + config + STATE.md
 #   ... do work; run hypergraph-record after each unit of work
 #   run hypergraph-reconcile       → fold impacts into state, regenerate STATE.md
-#   (fresh session) hypergraph-orient → frontier brief in ≤ ~6 tool calls
+#   (fresh session) hypergraph-orient → frontier brief in a handful of tool calls
 ```
 
 **Existing project → `hypergraph-adopt`**: a repo with real history, an existing
@@ -252,7 +253,7 @@ templates/                  record-node / state-node / config shapes
 templates/github-actions/   PR check + publish-on-merge workflows
 tools/hypergraph.py         the offline core: checker + renderer + storage + dispatch (uv script)
 tools/hypergraph_mirror.py  the mirror's networked half, lazily loaded by the core
-tools/fixtures/             test fixtures (clean, violations, local-graph, self)
+tools/fixtures/             test fixtures (clean, violations, local-graph, epoch)
 tests/                      pytest suites (checker, storage, mirror, split, dispatch, collaboration, adoption, upgrade)
 ```
 

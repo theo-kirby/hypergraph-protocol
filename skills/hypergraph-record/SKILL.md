@@ -11,12 +11,9 @@ into the state graph. Protocol: [spec.md](references/spec.md).
 
 ## The CLI
 
-Invocations below write `hypergraph …`. In a dev checkout of the protocol repo that is
-`uv run tools/hypergraph.py …`; an adopter gets the bare `hypergraph` from
-`uv tool install hypergraph-protocol`. Same tool, same flags — pick whichever resolves.
-
+`hypergraph …` — in a dev checkout of the protocol repo, `uv run tools/hypergraph.py …`.
 The graphs are markdown node files committed in this repo
-([local-adapter.md](references/local-adapter.md)) — one `hypergraph` call per operation.
+([local-adapter.md](references/local-adapter.md)).
 
 ## When To Use
 
@@ -38,6 +35,10 @@ The graphs are markdown node files committed in this repo
 
 Not for editing state nodes (that is reconcile's job — SPEC I3) or for orientation
 (use hypergraph-orient).
+
+On a branch or fork, `hypergraph check --since <base-ref>` is the PR gate: it fails
+when the branch changed files without adding a record node — run it before opening
+the pull request.
 
 ## Workflow
 
@@ -64,11 +65,10 @@ Not for editing state nodes (that is reconcile's job — SPEC I3) or for orienta
      hand-merged duplicate name is the one unrecoverable tag failure;
    - pass them with `--tag <name>` (repeatable) in step 6.
 
-   A tag is a way to **find** nodes, not a way to assert things about them. **No
-   invariant reads a tag**, so a claim that lives only as a tag is invisible to the
-   protocol, to `check`, and to reconcile. If it matters, it goes in the body and in
-   `## State Impact`. Tag families that earn their keep are the ones you would want to
-   filter by later — `kind:*`, `outcome:*`, `cluster:*`. Two or three per node.
+   A tag is a way to **find** nodes, never a way to assert things about them — no
+   invariant reads one, so a claim that lives only as a tag is invisible; it goes in
+   the body and in `## State Impact`. Two or three per node (`kind:*`, `outcome:*`,
+   `cluster:*`).
 6. **Commit.** Write `## What/Why/Method/Result` to a body file, then:
    ```
    hypergraph new record --title "…" --body body.md --parent <slug> \
