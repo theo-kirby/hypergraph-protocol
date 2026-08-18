@@ -8,6 +8,21 @@ parents:
 summary: ''
 artifacts:
 - .hypergraph/evidence/2026-08-18-release-readiness-audit.md
+flywheel:
+  node_id: 9083f871-21b1-500f-b44a-980d99519eba
+  slug: aged-disk-2774
+  revision: 1
+  pushed_at: '2026-08-18T11:07:30+00:00'
+  content_sha256: 27758e343cfdc346e3cd07f941795718093b816ce98a32b01309eb143282fa69
+  parents_sha256: 3a2f6aaddf88e3f9d0a45704cdf04b946be418c8f31fc2349b43d1282d83c28f
+  parents:
+  - 60dad4c5-2fbe-569b-acec-07595b948638
+  artifacts_sha256: 860f5aace8b6cf911349496ac217e22dc20925637cf245ad98668f07195db081
+  artifacts:
+  - path: .hypergraph/evidence/2026-08-18-release-readiness-audit.md
+    sha256: 6995361944ba8a1241ee3ff9a87734d81a16517f4a10000d3929698cb4e3c399
+    artifact_id: c068e6d6-64a1-50a7-8f74-b2d05a7601a5
+    uploaded_at: '2026-08-18T11:07:29.491993+00:00'
 ---
 ## What
 
