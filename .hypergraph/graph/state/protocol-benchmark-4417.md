@@ -5,13 +5,13 @@ title: Protocol benchmark
 created_at: '2026-08-08T17:21:41+00:00'
 parents:
 - cool-king-8586
-summary: Whether the protocol makes agent work better than plain git — still unmeasured. Nine runs completed and were reclassified as uncontrolled; the harness is hardened, the measures re-pre-registered, and the relaunch is parked by the Operator.
+summary: 'Whether the protocol makes agent work better than plain git — still unmeasured, no longer parked. The rig is public in hypergraph-bench (labs archived): two arms, Claude Code harness, plain boxes; the mission decision and METRICS rev-2 gate the relaunch.'
 flywheel:
   node_id: 756924b4-8adc-5bac-91a0-89158110daef
   slug: solitary-boat-7937
-  revision: 3
-  pushed_at: '2026-08-14T13:37:04+00:00'
-  content_sha256: 0d04aba052ecdcfe08cfd1aca8f62a40072c9f7c753936e23a4f80fe12888450
+  revision: 4
+  pushed_at: '2026-08-19T19:12:10+00:00'
+  content_sha256: 910eff002cd893d2029fdbad4ea793c0c818f7496f230c6068af42218d1ee28c
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -22,7 +22,7 @@ Status: open
 
 **The gap this closes.** Everything to date shows the protocol works *mechanically* — `check` reports 0 violations on several repos, and a fresh agent completed the full loop with zero violations [rec: fond-tree-4727]. No evidence yet shows it makes agent work *better* than plain git. An announcement with no evidence is a claim, so the Operator parked the release and opened this thrust instead [rec: southern-ridge-1802].
 
-- **The design**: three isolated agents implement the same paper — word2vec skip-gram with negative sampling on text8 — on identical VMs. Arm A has git only, arm B Flywheel, arm C this protocol; three seeds per arm, nine runs, because one run per arm is an anecdote [rec: southern-ridge-1802]. **The control is a real control**, taught commit-as-record, a running `NOTES.md`/`DECISIONS.md`/`DEAD-ENDS.md`, branch-per-alternative and log interrogation — if the protocol cannot beat competent git hygiene, that is the finding [rec: twilight-wood-1934].
+- **The original design**: three isolated agents implement the same paper — word2vec skip-gram with negative sampling on text8 — on identical VMs. Arm A has git only, arm B Flywheel, arm C this protocol; three seeds per arm, nine runs, because one run per arm is an anecdote [rec: southern-ridge-1802]. **The control is a real control**, taught commit-as-record, a running `NOTES.md`/`DECISIONS.md`/`DEAD-ENDS.md`, branch-per-alternative and log interrogation — if the protocol cannot beat competent git hygiene, that is the finding [rec: twilight-wood-1934].
 - **Capability is confirmed and the target is reachable**: a 27-minute pilot produced a complete 71,290-word `vectors.txt` scoring 19.36%, against a 20% reproduced band and a 24.16% literature reference [rec: northern-tree-5868].
 
 ### The first nine-run benchmark — evidence, and a harness that invalidated most of it
@@ -39,15 +39,18 @@ Status: open
 - **The independent variable is isolated by construction**: the primer core is byte-identical for every arm and the three memory sections are held within 15% by test, measured at a 5.9% spread [rec: twilight-wood-1934] [rec: staid-field-2723]. **Cold-start resilience costs nothing to measure** — neither harness is passed a resume flag, and a relaunched session asked what it had just done answers `NO-PRIOR-SESSION` [rec: twilight-wood-1934] [rec: scarlet-orchard-8774].
 - **METRICS.md rev-1 was fixed before the second launch and with no access to its data**, because the first run showed three of the original measures could be satisfied by a run that measured nothing [rec: staid-field-2723]. Fidelity is now two numbers — the teardown artifact, and the best model the run can still *point to*, restricted to candidates whose number the run's own record cites — and **the gap between them is itself a measure: how much proven work each memory system lost**. "Produced a usable model at all" is a pre-registered binary outcome. Cold start counts only runs with something to recover. `MIN_N = 3` and the direction-aware overlap test are deliberately unchanged and now pinned by test.
 
+### The rig's public home, and the second design
+
+- **Unparked.** The rig lives in public `theo-kirby/hypergraph-bench`, protocol-run from its first commit; hypergraph-labs is archived with its run data, and its README points forward. Bench's own graph records the port (`patient-cove-7085` there) and the redesign (`dawn-prairie-5469` there); cross-repo provenance stays prose [rec: green-tower-8550].
+- **The second design, decided and recorded before any spend**: **two arms** — A git control, C this protocol — with arm B (Flywheel) dropped; its code stays dormant and is never selected. That closes the wrong-account standing risk structurally (an account-identity gate covers even a revival) and retires the `--shared-flywheel` confound by construction. **Harness: Claude Code**, full product surface, so both remaining arms get their real packaged offering — removing the no-skills-layer bias pi imposed — billed by metered per-run Anthropic API keys so a quota wall cannot truncate arms unevenly [rec: green-tower-8550].
+- **The chassis substrate is dropped entirely** — an accepted cost, recorded: the digest-pinned image constant stays behind in the archive, and the plain-box rig provisions by script again with version pins asserted by preflight [rec: green-tower-8550].
+- **The launch is gated on deliberateness**: `EXPERIMENT_SLUG` is a sentinel preflight refuses, so the mission decision — walstore leading (hidden conformance ladder, a kill at every session boundary, deterministic score), perplexity and hillclimb as alternates — must land, with METRICS rev-2 pre-registered beside it, before anything can publish under a name [rec: green-tower-8550].
+
 ### Open
 
-- **Parked by Operator decision, unblocked but deliberately not started.** Nothing spends until the Operator resumes [rec: sweet-wave-7885].
-- **Arm B runs on one Flywheel account — a declared, asymmetric confound.** Its seeds can read and overwrite each other; arms A and C keep full isolation, so a reader who discounts arm B entirely still has a valid A-vs-C comparison. Attribution survives where isolation did not: preflight captures the account's full node-id set before launch and `had_prior_state` reads only nodes created after it. Opt-in behind `--shared-flywheel`; declared in METRICS.md rev-1 [rec: sweet-wave-7885].
-- **A standing risk**: the environment variable the lab reads for arm B's account points at an unrelated account, so a relaunch as configured today would provision arm B against the wrong one and the captured baseline belongs to that account. Parked, so nothing is broken now [rec: solemn-dawn-6752].
-- **Under pi, both protocol arms run without their skills layer** — a narrower test than either packaged product offers, biasing against both [rec: scarlet-orchard-8774].
-- **The lab has moved out into a private sibling repo** and `research/` is gone from this one; sibling repos rather than submodules, on an Operator decision, so labs consumes this package **from PyPI exactly as a stranger does** and every benchmark run is also a test of the published artifact [rec: lean-field-0101].
-- **The provisioning-procedure defect class is closed at the root, not patched**: ~469 lines of bash are replaced by a container image built `FROM` a pinned base, with every run recording the chassis commit sha and both image ids — the environment is a recorded constant rather than a procedure nobody versioned. Proven live on three boxes, which found two more defects of the same class, both in the base image and both reported by the harness as exit 0 [rec: lean-field-0101].
-- **The relaunch is still not run**, and choosing the mission, METRICS rev-2 and the second experiment are each their own decision [rec: lean-field-0101].
+- **Before the gated live spike**: re-wire the counter acceptance smoke off the dropped chassis dispatcher onto the plain-box path; pin the `claude_code` model preflight requires; wire metered per-run keys through provisioning [rec: green-tower-8550].
+- **The mission decision itself** — walstore vs alternates, METRICS rev-2, the real experiment slug — is its own future recorded decision, in bench's graph [rec: green-tower-8550].
+- **The measured relaunch is still not run.** Nothing has spent money since the $2.18 first run [rec: green-tower-8550].
 
 ## Negative knowledge
 
@@ -66,6 +69,7 @@ Status: open
 - staid-field-2723 — the first run reclassified as uncontrolled; the harness hardened and METRICS re-pre-registered
 - sweet-wave-7885 — the shared-account confound declared; keys rotated; relaunch parked
 - sweet-aspen-3667 — preflight proved readable but not writable; write probe added
-- solemn-dawn-6752 — the standing wrong-account risk on arm B's provisioning
+- solemn-dawn-6752 — the standing wrong-account risk on arm B's provisioning, closed by the two-arm redesign
 - lean-field-0101 — the lab split into hypergraph-labs; the environment became a digest-pinned image
 - fond-tree-4727 — the mechanical-only evidence this thrust exists to go beyond
+- green-tower-8550 — unparked: hypergraph-bench public, two arms, Claude Code, plain boxes, mission open
