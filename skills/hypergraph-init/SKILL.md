@@ -93,6 +93,9 @@ years of commits, or docs describing what already works → adopt.
   (SPEC: pointers are markdown slugs, not edges).
 - Keep the skeleton small — components, not tasks. A handful of `open` nodes is a
   healthy day-one frontier.
+- Named views are strictly post-init (SPEC: Views): init creates the two mandatory
+  graphs only; a later reconcile pass adds a view with `hypergraph views add` if
+  the project grows a second axis worth distilling.
 - `--reconcile` is required for every state write (SPEC I3). Three writers ever
   pass it: init and adopt once each at setup, the reconcile skill ongoing. It is a
   gate, not a formality.

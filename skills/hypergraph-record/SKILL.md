@@ -57,6 +57,14 @@ the pull request.
    - `- target: NEW <kebab-name> — <delta>` when reconcile should create a state node;
    - `none: <reason>` when current state truly doesn't change.
    Look up real state slugs in STATE.md — a wrong target fails `check`.
+
+   If this project keeps **named views** (a `views:` block in the config — SPEC:
+   Views), the same two target forms may be view-qualified: `- target:
+   <view>/<slug> — <delta>` and `- target: <view>/NEW <kebab-name> — <delta>`.
+   Unqualified targets always mean the state graph. The view must already exist —
+   an impact naming an undeclared view fails `check` (run
+   `hypergraph views add <view> --md <FILE> --reconcile` first, from a reconcile
+   pass; `views ls` lists what exists).
 5. **Tag it, if this project keeps a vocabulary.** Read `.hypergraph/tags.yml`. If
    there is no such file, **tag nothing** — this project has not opted in, and one
    node with tags in a repo with none is noise. If there is one:

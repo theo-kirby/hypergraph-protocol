@@ -29,8 +29,9 @@ The local (git-native) backend keeps both graphs as committed markdown files und
 
     hypergraph.py export [--config config.yml] [--graph-dir D] [--out-dir cache/]
     hypergraph.py import --record record.json --state state.json [--graph-dir D]
-    hypergraph.py new record|state --title T --body body.md [--tag NAME] ...
+    hypergraph.py new record|state|VIEW --title T --body body.md [--tag NAME] ...
     hypergraph.py update SLUG --body new.md --expect <sha256> --reconcile
+    hypergraph.py views ls|add NAME [--md FILE] [--reconcile]
     hypergraph.py tags list|add|rm [NAME]
     hypergraph.py skills install [--user | --link | --target DIR]
     hypergraph.py upgrade --graph [tags] [--apply] [--offline]
@@ -65,7 +66,7 @@ from __future__ import annotations
 # Kept in step with pyproject.toml's `version` by tests/test_packaging.py. It is
 # duplicated rather than read from the installed metadata because this file also
 # runs directly as a `uv run` script, where no distribution metadata exists.
-__version__ = "0.0.12"
+__version__ = "0.0.13"
 
 import argparse
 import hashlib
@@ -89,6 +90,12 @@ FRONTIER_ORDER = {"broken": 0, "blocked": 1, "open": 2}
 IMPACT_LINE_RE = re.compile(r"^-\s*target:\s*(?P<target>.+?)\s*(?:—|--)\s*(?P<delta>.+)$")
 IMPACT_NONE_RE = re.compile(r"^none:\s*(?P<reason>.+)$")
 NEW_TARGET_RE = re.compile(r"^NEW\s+(?P<name>[a-z0-9][a-z0-9-]*)$")
+# A named view (SPEC: Views) is an extra derived graph over the record graph; its
+# name qualifies impact targets (`policy/<slug>`), so it must never look like a
+# slug and never collide with the two graph kinds every project has, nor with the
+# cache directory its export lands in.
+VIEW_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+RESERVED_VIEW_NAMES = {"record", "state", "cache"}
 CITE_RE = re.compile(r"\[rec:\s*(?P<slug>[a-z0-9-]+)\s*\]")
 NEG_ENTRY_RE = re.compile(
     r"^-\s*\[\s*scope:\s*(?P<scope>[^|\]]+?)\s*"
@@ -376,9 +383,14 @@ def find_root(graph: Graph, configured: dict | None, report: Report, label: str,
 
 # ---------------------------------------------------------------- invariant checks
 
-def check_impacts(record: Graph, state: Graph, record_root: Node | None, report: Report,
-                  epoch_cutoff: datetime | None = None) -> None:
+def check_impacts(record: Graph, views: dict[str, Graph], record_root: Node | None,
+                  report: Report, epoch_cutoff: datetime | None = None) -> None:
     """I2: every non-root record node declares parseable state impact.
+
+    `views` maps each configured view name to its graph — the state graph always,
+    plus any named views (SPEC: Views). An impact qualified with a name not in the
+    mapping is an I2 violation: the declaration would fold into a graph nothing
+    reconciles.
 
     Record nodes created strictly before `epoch_cutoff` (the adoption-epoch marker's
     created_at) are legacy history and exempt from I2 (SPEC: Adoption epochs).
@@ -410,10 +422,16 @@ def check_impacts(record: Graph, state: Graph, record_root: Node | None, report:
         elif none_reason is None and not entries:
             report.add("violation", "I2", node.ref,
                        "`## State Impact` has no impact lines and no `none: <reason>`")
-        for target, _delta, is_new in entries:
-            if not is_new and target not in state.by_slug:
+        for view, target, _delta, is_new in entries:
+            graph = views.get(view)
+            if graph is None:
                 report.add("violation", "I2", node.ref,
-                           f"impact targets unknown state node `{target}`")
+                           f"impact targets unconfigured view `{view}` — "
+                           f"`hypergraph views add {view}` creates it first")
+            elif not is_new and target not in graph.by_slug:
+                where = "state node" if view == "state" else f"`{view}` view node"
+                report.add("violation", "I2", node.ref,
+                           f"impact targets unknown {where} `{target}`")
     if exempted:
         # "the record root is not I2-checked" is why this can read one below the
         # number you imported. Saying so beats leaving a reader to work out whether
@@ -424,9 +442,15 @@ def check_impacts(record: Graph, state: Graph, record_root: Node | None, report:
                    f"below an import count that included it)")
 
 
-def parse_impacts(body: str) -> tuple[list[tuple[str, str, bool]], str | None, list[str]]:
-    """→ ([(target, delta, is_new)], none_reason, bad_lines)."""
-    entries: list[tuple[str, str, bool]] = []
+def parse_impacts(body: str) -> tuple[list[tuple[str, str, str, bool]], str | None, list[str]]:
+    """→ ([(view, target, delta, is_new)], none_reason, bad_lines).
+
+    A target is `<slug>`, `NEW <kebab>`, or either form qualified with a view
+    name — `policy/<slug>`, `policy/NEW <kebab>` (SPEC: Views). The split on the
+    first `/` happens *before* the NEW test, so `policy/NEW x` is a NEW target in
+    the `policy` view and `NEW policy/x` is a bad line. Unqualified targets mean
+    the state graph, which keeps every pre-views record node parseable."""
+    entries: list[tuple[str, str, str, bool]] = []
     none_reason: str | None = None
     bad: list[str] = []
     for line in body.splitlines():
@@ -439,10 +463,18 @@ def parse_impacts(body: str) -> tuple[list[tuple[str, str, bool]], str | None, l
         if m := IMPACT_LINE_RE.match(line):
             target = m.group("target").strip()
             delta = m.group("delta").strip()
+            view = "state"
+            if "/" in target:
+                head, _, rest = target.partition("/")
+                rest = rest.strip()
+                if not VIEW_NAME_RE.fullmatch(head) or not rest:
+                    bad.append(line)
+                    continue
+                view, target = head, rest
             if new := NEW_TARGET_RE.match(target):
-                entries.append((new.group("name"), delta, True))
+                entries.append((view, new.group("name"), delta, True))
             elif SLUG_RE.fullmatch(target):
-                entries.append((target, delta, False))
+                entries.append((view, target, delta, False))
             else:
                 bad.append(line)
             continue
@@ -737,15 +769,31 @@ def suggest_frontier(record: Graph, frontier: list[str],
     return [n.slug for n in sorted(tips, key=lambda n: created_key(n.created_at, n.slug))]
 
 
+def record_tips(record: Graph) -> list[str]:
+    """The record graph's childless tips, chronologically — the frontier a
+    reconcile that folds everything writes, and the seed HWM a newborn view gets
+    so it starts already caught up (`views add`)."""
+    has_child = {pid for n in record.nodes.values() for pid in n.parent_ids}
+    tips = sorted((n for n in record.nodes.values() if n.node_id not in has_child),
+                  key=lambda n: created_key(n.created_at, n.slug))
+    return [n.slug for n in tips]
+
+
 def check_hwm(record: Graph, state: Graph, record_root: Node | None,
-              state_root: Node | None, report: Report) -> None:
-    """I5: parseable high-water mark on the state root + unreconciled enumeration."""
+              state_root: Node | None, report: Report, *, view: str = "state") -> None:
+    """I5: parseable high-water mark on the view root + unreconciled enumeration.
+
+    Runs once per view (SPEC: Views): each view root carries its own
+    `## Reconciliation` over the record graph, and the pending-impact tally counts
+    only the impacts qualified for `view` — a record node awaiting a `policy/`
+    fold is not pending work for the state graph."""
     if state_root is None:
         return
+    root_label = "state root" if view == "state" else f"`{view}` view root"
     frontier, ts = read_hwm(state_root)
     if frontier is None and ts is None:
         report.add("violation", "I5", state_root.ref,
-                   "state root missing `## Reconciliation` section")
+                   f"{root_label} missing `## Reconciliation` section")
         return
     if frontier is None:
         report.add("violation", "I5", state_root.ref, "missing `high_water_mark:` line")
@@ -774,7 +822,9 @@ def check_hwm(record: Graph, state: Graph, record_root: Node | None,
     newest = max((m.created for m in marks if m.created is not None), default=None)
     predating = [n for n in unreconciled
                  if n.created is not None and newest is not None and n.created <= newest]
-    if predating:
+    # State only: named views postdate the 0.0.5 timestamp→ancestry migration, so
+    # the hint can never be right for one (a same-second seed would false-fire it).
+    if predating and view == "state":
         report.add("info", "I5", state_root.ref,
                    f"{len(predating)} of those predate the newest mark — if they were folded "
                    f"under the pre-0.0.5 timestamp rule, run `hypergraph hwm --suggest` "
@@ -783,8 +833,12 @@ def check_hwm(record: Graph, state: Graph, record_root: Node | None,
     for node in unreconciled:
         _, sections = split_sections(node.content)
         entries, _none, _bad = parse_impacts(sections.get("state impact") or "")
-        for target, _delta, is_new in entries:
+        for iview, target, _delta, is_new in entries:
+            if iview != view:
+                continue
             key = f"NEW {target}" if is_new else target
+            if view != "state":
+                key = f"{view}/{key}"
             stale[key] = stale.get(key, 0) + 1
     for target, count in sorted(stale.items()):
         report.add("info", "I5", target, f"{count} pending impact(s) awaiting reconcile")
@@ -831,6 +885,47 @@ def load_config(path: Path | None) -> dict:
         raise SystemExit(
             f"check: {path} must be a YAML mapping, got {type(loaded).__name__}")
     return loaded
+
+
+def view_defs(config: dict) -> dict[str, dict]:
+    """Every derived view over the record graph, keyed by name — state first.
+
+    The state graph is view #1: mandatory and privileged (frontier, orient,
+    STATE.md). Extra views come from the optional `views:` config block and are
+    shaped exactly like it: `{"root": {node_id, slug} | None, "md": path | None}`.
+    One enumeration, one node template, one checker path (SPEC: Views)."""
+    views: dict[str, dict] = {"state": {"root": config.get("state_root"),
+                                        "md": config.get("state_md")}}
+    raw = config.get("views")
+    if raw is None:
+        return views
+    if not isinstance(raw, dict):
+        raise LocalGraphError(
+            "config `views:` must be a mapping of view name → {root:, md:} "
+            "(written by `hypergraph views add`)")
+    for name, entry in raw.items():
+        name = str(name)
+        if not VIEW_NAME_RE.fullmatch(name) or name in RESERVED_VIEW_NAMES:
+            raise LocalGraphError(
+                f"config `views:` name {name!r} is invalid — kebab-case "
+                f"(`{VIEW_NAME_RE.pattern}`) and not one of "
+                f"{', '.join(sorted(RESERVED_VIEW_NAMES))}")
+        if entry is None:
+            entry = {}
+        if not isinstance(entry, dict):
+            raise LocalGraphError(
+                f"config `views.{name}:` must be a mapping (root:, md:)")
+        views[name] = {"root": entry.get("root"), "md": entry.get("md")}
+    return views
+
+
+def graph_kinds(config: dict) -> tuple[str, ...]:
+    """Every graph this project keeps: the record graph, then each view.
+
+    This is the config-derived successor to the hardcoded `GRAPH_KINDS` pair,
+    which survives only as the no-config fallback — `graph_kinds({})` is exactly
+    `("record", "state")`."""
+    return ("record", *view_defs(config))
 
 
 def resolve_epoch_cutoff(config: dict, record: Graph, report: Report) -> datetime | None:
@@ -898,19 +993,22 @@ def check_conflict_markers(graph: Graph, report: Report) -> None:
                      "a record node is immutable once published, so this would be permanent.")
 
 
-def check_artifact_placement(state: Graph, report: Report) -> None:
+def check_artifact_placement(state: Graph, report: Report, *,
+                             view: str = "state") -> None:
     """`artifacts:` on a state node is a violation (SPEC: Evidence lives on record nodes).
 
     Evidence hangs off the record node whose work produced it. A state node claiming
     its own would give the same file two homes — and the state graph is rewritten on
     every reconcile, so that home has no stable owner. The one-hop path already
     exists and is the right one: `## Provenance` cites the record node, and the
-    record node enumerates the files."""
+    record node enumerates the files. The rule is per view (SPEC: Views): every
+    view is rewritten by its own reconcile, so no view node is a stable home."""
+    label = "state node" if view == "state" else f"`{view}` view node"
     for node in state.nodes.values():
         if not node.artifacts:
             continue
         report.add("violation", "-", node.ref,
-                   f"state node declares `artifacts:` ({len(node.artifacts)} path(s)). "
+                   f"{label} declares `artifacts:` ({len(node.artifacts)} path(s)). "
                    "Evidence lives on the record node whose work produced it — cite "
                    "that node from `## Provenance` and attach the files there.")
 
@@ -1004,25 +1102,42 @@ def run_check(record_path: Path, state_path: Path, config: dict | None = None,
     config = config or {}
     report = Report()
     record = load_graph(record_path, what="record export")
-    state = load_graph(state_path, what="state export")
     record_root = find_root(record, config.get("record_root"), report, "record",
                             config_given=config_given)
-    state_root = find_root(state, config.get("state_root"), report, "state",
-                           config_given=config_given)
+    # Every view, state first (SPEC: Views). Extra views' exports are derived as
+    # siblings of --state (`<dir>/<name>.json`) — no new required flags, and
+    # `cmd_sync`'s hand-built Namespaces keep parser parity.
+    views: dict[str, Graph] = {}
+    roots: dict[str, Node | None] = {}
+    for name, spec in view_defs(config).items():
+        path = Path(state_path) if name == "state" else \
+            Path(state_path).parent / f"{name}.json"
+        if name != "state" and not path.exists():
+            raise LocalGraphError(
+                f"{name} view export: no export at {path}\n"
+                f"  The config declares view `{name}`, and `check` reads each "
+                "view's export beside --state. Regenerate:\n"
+                "    hypergraph sync --config .hypergraph/config.yml")
+        what = "state export" if name == "state" else f"{name} view export"
+        views[name] = load_graph(path, what=what)
+        roots[name] = find_root(views[name], spec.get("root"), report, name,
+                                config_given=config_given)
     check_legacy_backend_key(config, report)
     if config_given:
         check_version_skew(config, report)
-        check_tag_vocabulary(record, state, config, report)
+        check_tag_vocabulary(record, views["state"], config, report)
         # Gated with the vocabulary warning and for the same reason: it reads files
         # outside the export, so it needs to know where the project actually lives.
         check_artifact_paths(record, config, report, repo_root=repo_root)
     check_conflict_markers(record, report)
-    check_conflict_markers(state, report)
-    check_artifact_placement(state, report)
+    for name, graph in views.items():
+        check_conflict_markers(graph, report)
+        check_artifact_placement(graph, report, view=name)
     epoch_cutoff = resolve_epoch_cutoff(config, record, report)
-    check_impacts(record, state, record_root, report, epoch_cutoff)
-    check_state_nodes(record, state, state_root, report)
-    check_hwm(record, state, record_root, state_root, report)
+    check_impacts(record, views, record_root, report, epoch_cutoff)
+    for name, graph in views.items():
+        check_state_nodes(record, graph, roots[name], report)
+        check_hwm(record, graph, record_root, roots[name], report, view=name)
     return report
 
 
@@ -1045,6 +1160,9 @@ def check_tag_vocabulary(record: Graph, state: Graph, config: dict, report: Repo
         return
     if not any(vocab.get(k) for k in GRAPH_KINDS):
         return
+    # Deliberately two-keyed even in a project with named views: tags.yml is keyed
+    # by record/state only, and per-view tag vocabularies are out of scope (SPEC:
+    # Views, out of scope).
     for kind, graph in (("record", record), ("state", state)):
         declared = declared_tag_names(vocab, kind)
         for node in sorted(graph.nodes.values(), key=lambda n: n.ref):
@@ -1080,6 +1198,9 @@ def check_since(ref: str, config: dict, report: Report, *, cwd: Path | None = No
     graph_dir = str(config.get("graph_dir") or DEFAULT_GRAPH_DIR).strip("/")
     generated = {str(config.get("state_md") or "STATE.md").strip("/"),
                  str(config.get("cache_dir") or DEFAULT_CACHE_DIR).strip("/")}
+    for spec in view_defs(config).values():
+        if spec.get("md"):    # each view's rendered snapshot is generated, like STATE.md
+            generated.add(str(spec["md"]).strip("/"))
 
     def is_generated(path: str) -> bool:
         return any(path == g or path.startswith(g + "/") for g in generated)
@@ -1134,12 +1255,20 @@ def cmd_hwm(args: argparse.Namespace) -> int:
     """
     config = load_config(args.config)
     record = load_graph(args.record)
-    state = load_graph(args.state)
+    view = getattr(args, "view", None) or "state"
+    defs = view_defs(config)
+    if view not in defs:
+        raise LocalGraphError(
+            f"hwm: `{view}` is not a configured view — this project has: "
+            f"{', '.join(defs)}")
+    view_path = Path(args.state) if view == "state" else \
+        Path(args.state).parent / f"{view}.json"
+    state = load_graph(view_path, what=f"{view} view export")
     scratch = Report()
     record_root = find_root(record, config.get("record_root"), scratch, "record")
-    state_root = find_root(state, config.get("state_root"), scratch, "state")
+    state_root = find_root(state, defs[view].get("root"), scratch, view)
     if state_root is None:
-        raise LocalGraphError("hwm: cannot identify the state root — pass --config")
+        raise LocalGraphError(f"hwm: cannot identify the {view} root — pass --config")
 
     frontier, ts = read_hwm(state_root)
     frontier = frontier or []
@@ -1148,10 +1277,7 @@ def cmd_hwm(args: argparse.Namespace) -> int:
         # The maximal nodes of the whole record graph: what a reconcile pass that
         # folds every outstanding impact writes as the new high-water mark.
         # Reachability semantics, never a timestamp cutoff (SPEC I5).
-        has_child = {pid for n in record.nodes.values() for pid in n.parent_ids}
-        tips = sorted((n for n in record.nodes.values() if n.node_id not in has_child),
-                      key=lambda n: created_key(n.created_at, n.slug))
-        print(f"high_water_mark: {format_hwm([n.slug for n in tips])}")
+        print(f"high_water_mark: {format_hwm(record_tips(record))}")
         return 0
 
     if args.suggest:
@@ -1191,13 +1317,16 @@ def summary_line(node: Node) -> str:
     return (first[:137] + "…") if len(first) > 140 else first
 
 
-def render_state(state_path: Path, config: dict | None = None) -> str:
+def render_state(state_path: Path, config: dict | None = None, *,
+                 view: str = "state") -> str:
     config = config or {}
-    state = load_graph(state_path)
+    state = load_graph(state_path, what=f"{view} view export" if view != "state"
+                       else "state export")
     scratch = Report()
-    root = find_root(state, config.get("state_root"), scratch, "state")
+    spec = view_defs(config).get(view) or {}
+    root = find_root(state, spec.get("root"), scratch, view)
     if root is None:
-        raise SystemExit("render: cannot identify state root; pass --config")
+        raise SystemExit(f"render: cannot identify {view} root; pass --config")
 
     project = config.get("project") or root.title.split(" — ")[0].strip() or "project"
     frontier, ts = read_hwm(root)
@@ -1224,9 +1353,11 @@ def render_state(state_path: Path, config: dict | None = None) -> str:
     )
 
     lines = [
-        f"# {project} — State",
+        f"# {project} — State" if view == "state" else f"# {project} — {view} view",
         "",
-        "> Generated by `tools/hypergraph.py render` from the state-graph export.",
+        "> Generated by `tools/hypergraph.py render` from the state-graph export."
+        if view == "state" else
+        f"> Generated by `tools/hypergraph.py render` from the `{view}` view export.",
         "> Do not hand-edit — run the hypergraph-reconcile skill instead.",
         "",
         f"Reconciled through {hwm or '`unknown`'} at {ts or 'unknown'}.",
@@ -1259,7 +1390,11 @@ def render_state(state_path: Path, config: dict | None = None) -> str:
 
 def cmd_render(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    output = render_state(args.state, config)
+    view = getattr(args, "view", None) or "state"
+    # a view's export is read as a sibling of --state, exactly as `check` does
+    path = Path(args.state) if view == "state" else \
+        Path(args.state).parent / f"{view}.json"
+    output = render_state(path, config, view=view)
     if args.output:
         Path(args.output).write_text(output)
         print(f"wrote {args.output}")
@@ -1278,6 +1413,9 @@ def cmd_render(args: argparse.Namespace) -> int:
 # uuid5(NAMESPACE_URL, "https://github.com/theo-kirby/hypergraph-protocol"): node ids
 # are derived from slugs, so they are reproducible and never depend on randomness.
 HYPERGRAPH_NS = uuid.UUID("830284cc-4acf-58ee-a7cc-67d88855cb41")
+# The no-config fallback and the mirror/tags constant. Anything that holds a
+# config derives the real set from it — `graph_kinds(config)` — because named
+# views (SPEC: Views) extend it per project.
 GRAPH_KINDS = ("record", "state")
 # Title of the mirror-only slug-legend node (local↔flywheel slug map). It exists only
 # on the mirror — excluded from `import` and `push --verify` by this exact title.
@@ -1944,16 +2082,19 @@ def cmd_artifacts(args: argparse.Namespace) -> int:
     nothing, and wrong in a way that only surfaces on someone else's machine."""
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
-    nodes = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in GRAPH_KINDS}
+    nodes = {k: load_local_nodes(graph_dir, k, missing_ok=True)
+             for k in graph_kinds(config)}
     repo = repo_root_for(config, graph_dir, getattr(args, "repo", None))
 
     if args.action == "ls":
         return artifacts_ls(args, nodes, repo)
 
     slug = args.slug
-    if slug in nodes["state"]:
+    held_by = next((k for k in nodes if k != "record" and slug in nodes[k]), None)
+    if held_by:
+        what = "state" if held_by == "state" else f"`{held_by}` view"
         raise LocalGraphError(
-            f"`{slug}` is a state node. Evidence attaches to the record node whose "
+            f"`{slug}` is a {what} node. Evidence attaches to the record node whose "
             "work produced it, never to a claim distilled from it — cite that record "
             "node from `## Provenance` and attach the files there (SPEC: Evidence "
             "lives on record nodes).")
@@ -2199,7 +2340,9 @@ def cmd_export(args: argparse.Namespace) -> int:
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
     out_dir = args.out_dir or Path(config.get("cache_dir") or DEFAULT_CACHE_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
-    for kind in GRAPH_KINDS:
+    # Config-derived kinds: an unconfigured directory under graph_dir is ignored —
+    # a view exists when the config declares it, not when a directory appears.
+    for kind in graph_kinds(config):
         payload = export_graph_json(graph_dir, kind)
         path = out_dir / f"{kind}.json"
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
@@ -2564,18 +2707,21 @@ def _solo_graph(slug: str, title: str, content: str, created_at: str) -> tuple[N
 
 
 def validate_node_content(kind: str, slug: str, title: str, content: str, created_at: str,
-                          record: Graph, state: Graph, is_root: bool) -> Report:
+                          record: Graph, views: dict[str, Graph], is_root: bool) -> Report:
     """Run the real checker over a single candidate node, before it is written —
-    a bad impact target or dangling provenance slug fails at authoring time."""
+    a bad impact target or dangling provenance slug fails at authoring time.
+
+    `kind` is `record` or a view name; `views` maps every configured view to its
+    graph, so an impact naming an unconfigured view fails here too."""
     report = Report()
     node, solo = _solo_graph(slug, title, content, created_at)
     check_conflict_markers(solo, report)
     if kind == "record":
-        check_impacts(solo, state, node if is_root else None, report)
+        check_impacts(solo, views, node if is_root else None, report)
     else:
         check_state_nodes(record, solo, node if is_root else None, report)
         if is_root:
-            check_hwm(record, solo, None, node, report)
+            check_hwm(record, solo, None, node, report, view=kind)
     return report
 
 
@@ -2592,16 +2738,26 @@ def cmd_new(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
     kind = args.kind
-    if kind == "state" and not args.reconcile:
+    kinds = graph_kinds(config)
+    if kind not in kinds:
+        # runtime-validated rather than argparse `choices=`: the set of kinds is
+        # config-derived (SPEC: Views), and argparse cannot read the config
         raise LocalGraphError(
-            "refusing to write a state node: only hypergraph-reconcile may write state "
-            "(SPEC I3). Declare a `## State Impact` on a record node instead; pass "
-            "--reconcile only from inside a reconcile pass.")
+            f"unknown graph kind `{kind}` — this project has: {', '.join(kinds)}. "
+            "A new view is declared first: `hypergraph views add <name>`.")
+    if kind != "record" and not args.reconcile:
+        what = "state" if kind == "state" else f"`{kind}` view"
+        raise LocalGraphError(
+            f"refusing to write a {what} node: only hypergraph-reconcile may write "
+            "a view (SPEC I3, single writer per view). Declare a `## State Impact` "
+            "on a record node instead; pass --reconcile only from inside a "
+            "reconcile pass.")
 
-    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in GRAPH_KINDS}
+    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in kinds}
     record = local_graph(existing["record"], "record")
-    state = local_graph(existing["state"], "state")
-    taken = set(existing["record"]) | set(existing["state"])
+    views = {k: local_graph(existing[k], k) for k in kinds if k != "record"}
+    # slugs are globally unique across every kind: node_id = uuid5(slug)
+    taken = {slug for nodes in existing.values() for slug in nodes}
 
     parents = list(args.parent or [])
     if not parents and not args.root:
@@ -2647,7 +2803,8 @@ def cmd_new(args: argparse.Namespace) -> int:
                                          args.root)
     else:
         if not args.root and not args.prov:
-            raise LocalGraphError("a state node needs --prov \"<record-slug> — <why>\" (SPEC I4)")
+            raise LocalGraphError(
+                f"a {kind} node needs --prov \"<record-slug> — <why>\" (SPEC I4)")
         if not args.root and args.status not in STATUSES:
             raise LocalGraphError(
                 f"--status must be one of {', '.join(sorted(STATUSES))} (SPEC I6)")
@@ -2668,7 +2825,7 @@ def cmd_new(args: argparse.Namespace) -> int:
 
     _report_and_raise(
         validate_node_content(kind, slug, args.title, content, created_at,
-                              record, state, args.root),
+                              record, views, args.root),
         f"new {kind} node `{slug}`")
 
     meta = {
@@ -2733,8 +2890,9 @@ def cmd_new(args: argparse.Namespace) -> int:
 def cmd_update(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
-    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in GRAPH_KINDS}
-    kinds = [k for k in GRAPH_KINDS if args.slug in existing[k]]
+    all_kinds = graph_kinds(config)
+    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in all_kinds}
+    kinds = [k for k in all_kinds if args.slug in existing[k]]
     if not kinds:
         raise LocalGraphError(f"`{args.slug}` is not a node under {graph_dir}")
     kind = kinds[0]
@@ -2748,9 +2906,11 @@ def cmd_update(args: argparse.Namespace) -> int:
             f"`{args.slug}` is a record node: the record graph is append-only. "
             "Corrections are new child nodes, not edits (SPEC conventions).")
     if not args.reconcile:
+        what = "state" if kind == "state" else f"`{kind}` view"
         raise LocalGraphError(
-            "refusing to write a state node: only hypergraph-reconcile may write state "
-            "(SPEC I3). Pass --reconcile only from inside a reconcile pass.")
+            f"refusing to write a {what} node: only hypergraph-reconcile may write "
+            "a view (SPEC I3, single writer per view). Pass --reconcile only from "
+            "inside a reconcile pass.")
     if node.sha256 != args.expect:
         raise LocalGraphError(
             f"stale write refused (optimistic lock, INTERFACE op 7): --expect "
@@ -2763,7 +2923,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     if not content.endswith("\n"):
         content += "\n"
 
-    parents = update_parents(node, existing["state"], args)
+    parents = update_parents(node, existing[kind], args, kind=kind)
     meta = dict(node.meta)
     if parents is not None:
         meta["parents"] = parents
@@ -2776,12 +2936,12 @@ def cmd_update(args: argparse.Namespace) -> int:
     # which node is the root, and `validate_node_content` reads that.
     node.meta.update(meta)
     record = local_graph(existing["record"], "record")
-    state = local_graph(existing["state"], "state")
+    views = {k: local_graph(existing[k], k) for k in all_kinds if k != "record"}
     is_root = not node.parents
     _report_and_raise(
-        validate_node_content("state", node.slug, args.title or node.title, content,
-                              node.created_at, record, state, is_root),
-        f"update to state node `{args.slug}`")
+        validate_node_content(kind, node.slug, args.title or node.title, content,
+                              node.created_at, record, views, is_root),
+        f"update to {kind} node `{args.slug}`")
 
     node.path.write_text(render_node_file(meta, content))
     moved = f", parents → {', '.join(parents) or 'root'}" if parents is not None else ""
@@ -2789,17 +2949,18 @@ def cmd_update(args: argparse.Namespace) -> int:
     return 0
 
 
-def update_parents(node: LocalNode, state: dict, args: argparse.Namespace
-                   ) -> list[str] | None:
+def update_parents(node: LocalNode, state: dict, args: argparse.Namespace,
+                   *, kind: str = "state") -> list[str] | None:
     """The new parent slug list for `hypergraph update --parent/--root`, or None.
 
     None means "leave the parents alone" — the flag was not passed — and is distinct
     from `[]`, which is a node being promoted to root.
 
-    **State nodes only.** `cmd_update` already refuses record nodes outright, and this
-    is why that refusal is not a warning: record topology *is* causal history, and a
-    parent edge there says "this happened after that". Distillation moves; history
-    does not."""
+    **View nodes only** (`state` or a named view; `kind` names which, and `state`
+    holds that one view's nodes). `cmd_update` already refuses record nodes
+    outright, and this is why that refusal is not a warning: record topology *is*
+    causal history, and a parent edge there says "this happened after that".
+    Distillation moves; history does not."""
     if not args.parent and not args.root:
         return None
     if args.parent and args.root:
@@ -2807,14 +2968,14 @@ def update_parents(node: LocalNode, state: dict, args: argparse.Namespace
     parents = list(dict.fromkeys(args.parent or []))
     for parent in parents:
         if parent not in state:
-            raise LocalGraphError(f"parent `{parent}` is not a state node")
+            raise LocalGraphError(f"parent `{parent}` is not a {kind} node")
         if parent == node.slug:
             raise LocalGraphError(f"`{node.slug}` cannot be its own parent")
     if args.root:
         others = [s for s, n in state.items() if not n.parents and s != node.slug]
         if others:
             raise LocalGraphError(
-                f"the state graph already has a root: {', '.join(others)}. A second "
+                f"the {kind} graph already has a root: {', '.join(others)}. A second "
                 "parentless node would split the graph, not re-home it.")
     # Walk up from each new parent: reaching this node means the edge would close a
     # cycle. `local_graph` resolves parent slugs but does not detect one, and a cycle
@@ -2832,6 +2993,121 @@ def update_parents(node: LocalNode, state: dict, args: argparse.Namespace
         seen.add(current)
         stack.extend(state[current].parents)
     return parents
+
+
+def cmd_views(args: argparse.Namespace) -> int:
+    """`hypergraph views {ls,add}` — the named views this project keeps (SPEC: Views).
+
+    A view is an extra derived graph over the record graph, reconciled
+    independently under its own high-water mark. The state graph is view #1 —
+    mandatory and privileged (frontier, orient, STATE.md) — so `ls` always shows
+    it. `add` mints the view root through the same primitives every other root
+    uses, seeds its HWM with the current record tips so a late-born view starts
+    caught up, and appends the `views:` block to config.yml *textually*, the same
+    append-only discipline `adopt --marker` and `mirror roots --mint` follow so
+    hand-written comments survive."""
+    config_path = Path(args.config) if args.config else Path(".hypergraph/config.yml")
+    if args.action == "add" and not config_path.exists():
+        raise LocalGraphError(
+            f"{config_path} does not exist — a view is declared in the project "
+            "config. Initialize the project first (hypergraph-init skill, or "
+            "`hypergraph adopt --init`).")
+    config = load_config(config_path if config_path.exists() else None)
+    graph_dir = args.graph_dir or Path(config.get("graph_dir") or DEFAULT_GRAPH_DIR)
+    defs = view_defs(config)
+
+    if args.action == "ls":
+        for name, spec in defs.items():
+            nodes = load_local_nodes(graph_dir, name, missing_ok=True)
+            root = next((n for n in nodes.values() if not n.parents), None)
+            hwm = "?"
+            if root is not None:
+                frontier, _ts = read_hwm(
+                    Node(node_id=root.node_id, slug=root.slug, title=root.title,
+                         content=root.content, parent_ids=[],
+                         created_at=root.created_at))
+                hwm = format_hwm(frontier or [])
+            print(f"{name:<16} root={root.slug if root else '?':<24} "
+                  f"{len(nodes):>3} node(s)   md={spec.get('md') or '-'}")
+            print(f"{'':<16} high_water_mark: {hwm}")
+        return 0
+
+    if args.action == "add":
+        name = args.name
+        if not VIEW_NAME_RE.fullmatch(name):
+            raise LocalGraphError(
+                f"view name {name!r} is invalid — kebab-case "
+                f"(`{VIEW_NAME_RE.pattern}`); it qualifies impact targets as "
+                f"`<name>/<slug>`, so the grammar owns its shape")
+        if name in RESERVED_VIEW_NAMES:
+            raise LocalGraphError(
+                f"view name `{name}` is reserved "
+                f"({', '.join(sorted(RESERVED_VIEW_NAMES))} name the graph kinds "
+                "and the export cache)")
+        if SLUG_RE.fullmatch(name):
+            raise LocalGraphError(
+                f"view name `{name}` is slug-shaped (`adjective-noun-####`) — a "
+                "name that also parses as a node slug would make every pointer "
+                "into the view ambiguous")
+        if name in defs:
+            raise LocalGraphError(f"view `{name}` already exists in {config_path}")
+        if not args.reconcile:
+            raise LocalGraphError(
+                "refusing to mint a view root: a view root is a view node, and "
+                "only hypergraph-reconcile may write a view (SPEC I3, single "
+                "writer per view). Pass --reconcile from inside a reconcile pass.")
+        text = config_path.read_text()
+        has_views_line = any(ln.rstrip() == "views:" for ln in text.split("\n"))
+        if config.get("views") and not has_views_line:
+            raise LocalGraphError(
+                f"{config_path} declares `views:` in a form this command cannot "
+                "append to (inline mapping?). Add the entry by hand.")
+
+        project = str(config.get("project") or Path.cwd().name)
+        record = local_graph(load_local_nodes(graph_dir, "record", missing_ok=True),
+                             "record")
+        seed = format_hwm(record_tips(record))
+        body = (f"{name} view root for {project}.\n\n"
+                f"A named view (SPEC: Views): a derived graph over the record "
+                f"graph tracking the `{name}` axis of this project. Rewritten "
+                "only by reconcile (SPEC I3).\n")
+        slug = create_root_node(graph_dir, name, f"{project} — {name}", body,
+                                kinds=(*graph_kinds(config), name), hwm=seed)
+        node = load_local_nodes(graph_dir, name)[slug]
+
+        entry = [f"  {name}:",
+                 "    root:",
+                 f"      node_id: {node.node_id}",
+                 f"      slug: {slug}"]
+        if args.md:
+            entry.append(f"    md: {args.md}")
+        if not has_views_line:
+            block = ("\n# Named views (SPEC: Views): extra derived graphs over the "
+                     "record graph,\n# each reconciled independently. Appended by "
+                     "`hypergraph views add`.\nviews:\n" + "\n".join(entry) + "\n")
+            config_path.write_text(text.rstrip("\n") + "\n" + block)
+        else:
+            lines = text.split("\n")
+            top = next(i for i, ln in enumerate(lines) if ln.rstrip() == "views:")
+            last = top
+            j = top + 1
+            while j < len(lines) and (not lines[j].strip() or lines[j].startswith(" ")):
+                if lines[j].strip():
+                    last = j
+                j += 1
+            lines[last + 1:last + 1] = entry
+            config_path.write_text("\n".join(lines))
+
+        print(f"view `{name}`: root {slug} minted under {graph_kind_dir(graph_dir, name)}")
+        print(f"  high_water_mark seeded with the current record tips: {seed}")
+        if args.md:
+            print(f"  will render to {args.md} on every sync")
+        print(f"appended `views.{name}:` to {config_path}")
+        print(f"\nNext: `hypergraph sync` exports and renders it; record-node "
+              f"impacts may now target `{name}/<slug>` or `{name}/NEW <kebab-name>`.")
+        return 0
+
+    raise LocalGraphError(f"unknown views action: {args.action}")
 
 
 # --------------------------------------------------------- graph comparison layer
@@ -3856,6 +4132,9 @@ def mirror_root_ids(config: dict) -> dict:
     `mirror_roots:` and must still push)."""
     roots: dict[str, str] = {}
     configured = config.get("mirror_roots") or {}
+    # Deliberately the two-kind constant: the mirror publishes record+state only.
+    # Named views are rebuildable projections, so pushing them would spend mirror
+    # writes on derivable content (SPEC: Views, out of scope).
     for kind in GRAPH_KINDS:
         node_id = ""
         entry = configured.get(kind) if isinstance(configured, dict) else None
@@ -4385,6 +4664,9 @@ SHIPPED_BLOCK_DIGESTS = frozenset({
     # 0.0.12 — the gate becomes `hypergraph sync`; non-negotiable 5 adds the branch
     # discipline (record anywhere, reconcile only on the default branch)
     "d9e9e1558fbec432dd56f2d9aef4ccd46c2543cae4bb5a751e478f51c96e2730",
+    # 0.0.13 — "two graphs" becomes the record graph plus one or more views
+    # (named views, SPEC: Views), the state graph mandatory
+    "0fdbc7e14c699decec22452054466b1b75f1fb5ee7cb0fc1ecad2f8fd20af7dd",
 })
 
 
@@ -5280,6 +5562,12 @@ def cmd_push(args: argparse.Namespace) -> int:
             print(f"push: {blocked} — nothing published")
             return 0
 
+    if extras := [v for v in view_defs(config) if v != "state"]:
+        # Deliberate: a view is a rebuildable projection of the record graph, so
+        # publishing it would spend mirror writes on derivable content (SPEC: Views).
+        print(f"push: named view(s) {', '.join(extras)} stay local — the mirror "
+              "carries record+state only")
+
     return _mirror().run_push(args, config, graph_dir)
 
 
@@ -5296,8 +5584,14 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
     state_md = args.state_md or config.get("state_md") or "STATE.md"
     render_args = argparse.Namespace(state=state_json, config=args.config,
-                                     output=Path(state_md))
+                                     output=Path(state_md), view="state")
     cmd_render(render_args)
+    for name, spec in view_defs(config).items():
+        # every extra view with an `md:` target renders beside STATE.md; a view
+        # without one is export-only
+        if name != "state" and spec.get("md"):
+            cmd_render(argparse.Namespace(state=state_json, config=args.config,
+                                          output=Path(spec["md"]), view=name))
 
     check_args = argparse.Namespace(record=record_json, state=state_json,
                                     config=args.config,
@@ -5858,26 +6152,33 @@ def resolve_id_prefixes(repo: Path, against: Path) -> dict:
             "unmatched_hex_tokens": sorted(unmatched)}
 
 
-def create_root_node(graph_dir: Path, kind: str, title: str, body: str) -> str:
+def create_root_node(graph_dir: Path, kind: str, title: str, body: str, *,
+                     kinds: tuple[str, ...] = GRAPH_KINDS,
+                     hwm: str | None = None) -> str:
     """Mint a parentless graph root, through the same primitives `new --root` uses.
 
     Exists so adopt can write a *valid* config in one step. Hand-written YAML is a
     proven failure mode: a stub config with no roots once made `check` report 0
-    violations while it silently guessed them (see `load_config`)."""
-    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in GRAPH_KINDS}
+    violations while it silently guessed them (see `load_config`).
+
+    `kinds` is every graph kind the slug must stay unique across (`views add`
+    passes the configured kinds plus the newborn view); `hwm` seeds the root's
+    `high_water_mark:` — how a late-born view starts already caught up."""
+    existing = {k: load_local_nodes(graph_dir, k, missing_ok=True) for k in kinds}
     roots = [s for s, n in existing[kind].items() if not n.parents]
     if roots:
         raise LocalGraphError(f"the {kind} graph already has a root: {', '.join(roots)}")
-    slug = mint_slug(set(existing["record"]) | set(existing["state"]))
+    slug = mint_slug({s for nodes in existing.values() for s in nodes})
     created_at = utc_now()
     if kind == "record":
         content = compose_record_content(body, [], None, None, True)
     else:
-        content = compose_state_content(body, "", [], [], None, created_at, True)
+        content = compose_state_content(body, "", [], [], hwm, created_at, True)
     _report_and_raise(
         validate_node_content(kind, slug, title, content, created_at,
                               local_graph(existing["record"], "record"),
-                              local_graph(existing["state"], "state"), True),
+                              {k: local_graph(existing[k], k)
+                               for k in kinds if k != "record"}, True),
         f"new {kind} root `{slug}`")
     meta = {"node_id": node_id_for(slug), "slug": slug, "title": title,
             "created_at": created_at, "parents": [], "summary": ""}
@@ -6093,12 +6394,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_hwm.add_argument("--tips", action="store_true",
                        help="print the record graph's childless tips — the frontier a "
                             "reconcile that folds everything writes")
+    p_hwm.add_argument("--view", metavar="NAME", default="state",
+                       help="which view's frontier (default: state); the view's "
+                            "export is read beside --state")
     p_hwm.set_defaults(func=cmd_hwm)
 
     p_render = sub.add_parser("render", help="render STATE.md from a state-graph export")
     p_render.add_argument("--state", type=Path, required=True, help="state-graph export JSON")
     p_render.add_argument("--config", type=Path, help=".hypergraph/config.yml")
     p_render.add_argument("-o", "--output", type=Path, help="output path (default: stdout)")
+    p_render.add_argument("--view", metavar="NAME", default="state",
+                          help="render this named view instead (SPEC: Views); its "
+                               "export is read beside --state")
     p_render.set_defaults(func=cmd_render)
 
     # ---- local (git-native) backend: backend/local-adapter.md
@@ -6133,8 +6440,10 @@ def build_parser() -> argparse.ArgumentParser:
                                "this project owns")
     p_import.set_defaults(func=cmd_import)
 
-    p_new = sub.add_parser("new", help="author a new record or state node file")
-    p_new.add_argument("kind", choices=list(GRAPH_KINDS))
+    p_new = sub.add_parser("new", help="author a new record, state or view node file")
+    # No `choices=`: the set of kinds is config-derived (record, state, plus any
+    # named views), so cmd_new validates at runtime against graph_kinds(config).
+    p_new.add_argument("kind", metavar="record|state|VIEW")
     graph_args(p_new)
     p_new.add_argument("--title", required=True)
     p_new.add_argument("--body", help="markdown body file, or `-` for stdin")
@@ -6218,7 +6527,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_tags.add_argument("--json", action="store_true", help="list: machine-readable output")
     p_tags.set_defaults(func=cmd_tags)
 
-    p_update = sub.add_parser("update", help="replace a state node's body (reconcile only)")
+    p_views = sub.add_parser(
+        "views", help="list or add this project's named views — extra derived "
+                      "graphs over the record graph (SPEC: Views)")
+    p_views.add_argument("action", choices=["ls", "add"],
+                         help="ls: every view with its root, node count and "
+                              "high-water mark. add NAME: declare a view — mint "
+                              "its root (HWM seeded with the current record tips) "
+                              "and append the config block")
+    p_views.add_argument("name", nargs="?", help="add: the view name (kebab-case; "
+                                                 "it qualifies impact targets as "
+                                                 "`NAME/<slug>`)")
+    graph_args(p_views)
+    p_views.add_argument("--md", metavar="FILE",
+                         help="add: render this view to FILE on every sync, as "
+                              "STATE.md is for the state graph")
+    p_views.add_argument("--reconcile", action="store_true",
+                         help="required for add: a view root is a view node, and "
+                              "only a reconcile pass may write one (SPEC I3)")
+    p_views.set_defaults(func=cmd_views)
+
+    p_update = sub.add_parser("update", help="replace a state or view node's body (reconcile only)")
     p_update.add_argument("slug")
     graph_args(p_update)
     p_update.add_argument("--body",
@@ -6498,6 +6827,9 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "command", None) == "tags" and args.action in ("add", "rm") \
             and not args.name:
         parser.error(f"tags {args.action} needs a tag name")
+    if getattr(args, "command", None) == "views" and args.action == "add" \
+            and not args.name:
+        parser.error("views add needs a view name")
     if getattr(args, "command", None) == "artifacts":
         if args.action != "ls" and not args.slug:
             parser.error(f"artifacts {args.action} needs a record node slug")

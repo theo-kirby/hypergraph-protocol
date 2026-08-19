@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "node_id": "20000000-0000-0000-0000-000000000001",
+      "slug_name": "amber-harbor-0101",
+      "title": "demo \u2014 state",
+      "content": "Demo project: ingest CSVs, serve a query API.\n\n## Reconciliation\n\n- high_water_mark: bold-ember-0005\n- reconciled_at: 2026-08-01T04:00:00+00:00\n",
+      "parent_ids": [],
+      "created_at": "2026-08-01T00:00:00+00:00"
+    },
+    {
+      "node_id": "20000000-0000-0000-0000-000000000002",
+      "slug_name": "mellow-quartz-0102",
+      "title": "Ingest pipeline",
+      "content": "Status: working\n\n## Current\n\n- Streaming csv parser ingests multi-GB files (2.3GB in 84s, 210MB peak RSS) [rec: calm-heron-0003].\n- Pipeline layout: reader/validator modules under ingest/ [rec: dim-walrus-0004].\n\n## Negative knowledge\n\n- [scope: ingest of files >2GB | confidence: medium | evidence: brisk-otter-0002] pandas chunked reader OOMs; do not revisit without a memory budget.\n\n## Provenance\n\n- brisk-otter-0002 \u2014 created this component; documents the OOM failure\n- calm-heron-0003 \u2014 streaming parser fix that made it work\n- dim-walrus-0004 \u2014 current module layout\n",
+      "parent_ids": [
+        "20000000-0000-0000-0000-000000000001"
+      ],
+      "created_at": "2026-08-01T00:30:00+00:00"
+    },
+    {
+      "node_id": "20000000-0000-0000-0000-000000000003",
+      "slug_name": "quiet-lantern-0103",
+      "title": "Query API",
+      "content": "Status: open\n\n## Current\n\n- Not started; planned as the consumer of the ingest pipeline [rec: brisk-otter-0002].\n\n## Negative knowledge\n\nNone yet.\n\n## Provenance\n\n- brisk-otter-0002 \u2014 pipeline output schema this API will consume\n",
+      "parent_ids": [
+        "20000000-0000-0000-0000-000000000001"
+      ],
+      "created_at": "2026-08-01T00:31:00+00:00"
+    }
+  ]
+}

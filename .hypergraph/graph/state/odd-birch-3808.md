@@ -5,13 +5,13 @@ title: PyPI releases
 created_at: '2026-08-14T13:25:06+00:00'
 parents:
 - damp-basin-8974
-summary: 0.0.2 through 0.0.8, 0.0.11 and 0.0.12 live, each verified from the public index; 0.0.12 carries the 0.1.0 gate (hardened checker, deduped skills payload, init onboarding, release surface).
+summary: Seven releases live on PyPI, every one verified from the public index. 0.0.13 (named views) is staged across all synchronized version locations; publication is the open step.
 flywheel:
   node_id: fc3ca91a-1b5d-5543-921b-b82d222f75ec
   slug: polished-sky-8897
-  revision: 4
-  pushed_at: '2026-08-18T21:21:51+00:00'
-  content_sha256: a0f8bb39792f8577c8c14561959c00a249c494f3749b3c5900b03910f67d5c0a
+  revision: 5
+  pushed_at: '2026-08-19T10:25:52+00:00'
+  content_sha256: eebd36191e9cecbdcb783b00431124196bbd80e0ca91d43c9d19442a1c7c1cbb
   parents_sha256: 9c8039d8ccc995d9c15665648d7d82c9399050ef076f05102c409e2d18ebabfb
   parents:
   - e6697aa9-2f7c-5b23-8ef4-abc687d15567
@@ -30,6 +30,7 @@ Seven releases are live on PyPI, and every one was verified **from the public in
 - **The published package is now consumed by a repo with no path to this source tree.** `hypergraph-labs` declares `hypergraph-protocol==0.0.8` as an ordinary dependency and bakes the pin into the container image its experiments run in, so every run of it is also a test of what was actually published [rec: lean-field-0101].
 - **0.0.11 is live and index-verified — the sixth release, and the first since 0.0.8** [rec: stormy-glade-0866]. The clean-slate release: substrate + skills + dispatch as one product, the mirror's networked half in its own module, `heal` folded into `upgrade --graph`. The Operator named the version [rec: vast-birch-5192] — 0.0.9 (staged by the viz cut [rec: loyal-tide-3608]) and 0.0.10 were never published, so the index goes 0.0.8 → 0.0.11. Verification ran entirely against the index via `uvx --isolated --from hypergraph-protocol==0.0.11`: the entry point reports 0.0.11, `skills install` lands six skills including `hypergraph-dispatch`, `upgrade --graph` lists the repair registry, and the JSON API lists exactly the wheel and the sdist.
 - **0.0.12 is live and index-verified — the seventh release, carrying the whole 0.1.0 gate** [rec: witty-summit-9656]. The Operator named the version — 0.0.12, not 0.1.0, with more work planned before that label — and directed both the staged bump [rec: smooth-nest-0450] and the publish. Verification ran entirely against the index via `uvx --isolated --from hypergraph-protocol==0.0.12`: the entry point reports 0.0.12, `skills install` lands six skills **plus the shared `hypergraph-references/` payload with every per-skill reference a resolving relative symlink** (the first index-side proof of the payload dedupe — one spec.md in the wheel, ~136 KB installed), `upgrade --graph` lists the repair registry, and the JSON API lists exactly the wheel and sdist. The synchronized version locations are six since the gate: CHANGELOG.md joined them, its heading dated only on index verification, per its own convention.
+- **0.0.13 is staged and unpublished** [rec: scarlet-dawn-9811]: every synchronized version location carries 0.0.13 with the suite green and this repo's `sync` at exit 0, the CHANGELOG entry carries the named-views compatibility statement (a project that adds views needs ≥0.0.13 tooling; bare projects unaffected both directions), and the heading stays undated until publication is verified from the public index. PyPI publication is the open step, as it was for 0.0.12 at this stage.
 - **Version parity is guarded in three places and the third has fired**: `test_spec_header_matches_pyproject` failed with `SPEC.md says v0.0.5, pyproject says 0.0.6` on a release where SPEC.md itself did not change [rec: sleepy-vine-2805]. The version lives in five places with two parity tests holding them in step [rec: humble-rain-0304], and the benchmark's boxes pin an exact version and assert it on the box, because `uv tool install` reuses a cached tool and would otherwise leave a box silently running an older build [rec: staid-field-2723].
 
 ## Negative knowledge
@@ -52,3 +53,4 @@ Seven releases are live on PyPI, and every one was verified **from the public in
 - stormy-glade-0866 — 0.0.11 published and verified from the public index
 - smooth-nest-0450 — the 0.0.12 bump staged across all six version locations (Operator decision: not 0.1.0)
 - witty-summit-9656 — 0.0.12 published and verified from the public index
+- scarlet-dawn-9811 — the 0.0.13 bump staged across the synchronized version locations; publication the open step

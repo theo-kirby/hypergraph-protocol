@@ -9,9 +9,9 @@ summary: The node files are the only storage; INTERFACE.md is a portability cont
 flywheel:
   node_id: d82f019d-c029-5999-ad8c-332abcfaa3ee
   slug: blue-sun-8921
-  revision: 11
-  pushed_at: '2026-08-14T13:37:28+00:00'
-  content_sha256: cd29650e5f208989ada5a3b1177c9984b8299de641d4a791404e14582325fc90
+  revision: 12
+  pushed_at: '2026-08-19T10:25:52+00:00'
+  content_sha256: 11408ff24c2746418a4eeac2422e2db5575e91bb16a9e856501722f7b409e27e
   parents_sha256: 7581a2a3ab3e0f666772fb38ea612fbca98197235dbd11585614ad362efda1a1
   parents:
   - 2b993e9c-708e-5940-a67f-cf80aa0955e4
@@ -33,6 +33,7 @@ What a node *is* on disk, and what a store would have to satisfy to hold one ins
 - **Assignment is an atomic replace, and that property is load-bearing**: a re-issued assignment cannot duplicate anything, so a 409 on one may be re-read and re-issued in place — the only operation here where that is safe. A *declaration* has no such property, since deleting a tag definition un-tags every node that used it, so an implementation must resolve an existing name before declaring [rec: clear-moss-4527].
 - **Two constraints op 10 must leave room for, both learned from a live backend** [rec: early-mesa-8507]: a store may constrain *where* a tag lives, not merely that it exists, which makes assignment order part of the contract; and a tag creation may move revisions graph-wide, so a node's revision can change without that node being written. The second is sharper — an optimistic lock held across an unrelated operation is stale, and nodes nobody touched read as drift.
 - **Two storage-path defects, both found by the first mode A adoption run without its author** [rec: clever-ledge-6588]. `adopt --init` derived the config's root `node_id` from the slug unconditionally, but a mode A root arrives through `import --fork`, which preserves the archive's id verbatim — so the project would have published under an id nothing else in the repo used; it now reads the node's own id. And `mirror pull` and `export` both defaulted to the same cache path, so the first export destroyed the legacy pull, which is the only record of what stayed on the archive; the pull now writes `legacy-*.json`.
+- **Named views change the directory set, never the file format** [rec: strong-star-9849]. At 0.0.13 a project may keep `graph/<view>/<slug>.md` beside the classic pair and export `cache/<view>.json` beside `record.json`/`state.json`; the config gains a write-once `views:` block appended textually by `views add`, the same discipline as `epoch:` and `mirror_roots:`. The node-file format itself is unchanged — the additive promise was verified against the real published 0.0.12, which reads a views-using graph fine and ignores the key. Slugs stay globally unique across every kind, because `node_id = uuid5(slug)`. The mirror stays record+state: a view is a rebuildable projection, and `push` says so in one line rather than spending writes on it.
 - **A state node's parents may move; a record node's may not** [rec: autumn-glade-5802]. `hypergraph update --parent/--root` re-homes a state node with the same compare-and-swap and the same `--reconcile` gate as a body write, refusing a self-parent, a second root and any edge that would close a cycle. Record topology is causal history.
 
 ## Negative knowledge
@@ -58,3 +59,4 @@ What a node *is* on disk, and what a store would have to satisfy to hold one ins
 - clever-ledge-6588 — two storage-path defects found by the first unattended mode A run
 - autumn-glade-5802 — state topology becomes writable through update --parent, with record topology refused
 - late-sage-5549 — re-homed under Protocol mechanics and given the storage half of the mirror node
+- strong-star-9849 — 0.0.13 named views: graph/<view>/ dirs, cache/<view>.json, the views: config block; format itself unchanged

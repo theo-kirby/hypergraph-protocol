@@ -1,4 +1,4 @@
-# Hypergraph Protocol — v0.0.12
+# Hypergraph Protocol — v0.0.13
 
 Hypergraph is a **substrate for autonomous research and engineering**: the memory
 layer an agent needs to carry real work across months and across contexts without a
@@ -21,6 +21,9 @@ in the repo](backend/local-adapter.md):
   the project's architecture, what currently works, what's broken or open (the
   **frontier**), and accumulated negative knowledge. Topology mirrors the project's
   architecture (components/capabilities), not history.
+
+A project may keep further named projections of the same record graph — **views**
+(see Views). The state graph is the first and only mandatory one.
 
 Every state node cites the record nodes it derives from. A claim answers to many pieces
 of evidence and a piece of evidence bears on many claims, so those citations join sets
@@ -52,11 +55,17 @@ enough to build on and the projection above them is a live hypothesis.
   DAGs would topologically merge them.
 - **Frontier** — the set of state nodes with status `open`, `broken`, or `blocked`.
   This is what a fresh agent should read first.
-- **High-water mark (HWM)** — the *frontier* of record tips whose declared state impact
-  has been folded into the state graph. A record node is reconciled when it is an
-  ancestor of one of them; a linear record graph has exactly one tip.
+- **View** — a named, derived, single-writer graph over the record graph (see Views).
+  The state graph is view #1: mandatory and privileged. Extra views are optional and
+  declared per project.
+- **View node** — a node in a named view. Same shape, template and invariants as a
+  state node; "state node" in I4–I7 reads as "view node" within each view.
+- **High-water mark (HWM)** — the *frontier* of record tips whose declared impact
+  has been folded into a view. Each view carries its own; a record node is reconciled
+  for a view when it is an ancestor of one of that view's tips. A linear record graph
+  has exactly one tip.
 - **Reconcile** — the single-writer pass that folds record-node impact declarations
-  into the state graph and advances the HWM.
+  into a view and advances that view's HWM.
 
 ## Invariants
 
@@ -85,13 +94,18 @@ as one of:
 1. One or more impact lines:
    - `- target: <state-slug> — <delta>` — the delta to fold into an existing state node.
    - `- target: NEW <kebab-name> — <delta>` — reconcile should create a new state node.
+   - `- target: <view>/<view-slug> — <delta>` and `- target: <view>/NEW <kebab-name>
+     — <delta>` — the same two forms aimed at a named view (see Views). An
+     unqualified target always means the state graph, so every pre-views record
+     node keeps parsing.
 2. Exactly `none: <reason>` — an explicit declaration that this node changes nothing
    about current state, with a non-empty reason.
 
-`<state-slug>` must resolve to an existing state node. `<delta>` is a non-empty
-human-readable description of what changes (status flip, new claim, new negative
-knowledge, supersession). Writing the impact is the *recording* agent's job — it is a
-declaration, not a state write (see I3).
+`<state-slug>` must resolve to an existing state node; a qualified `<view>` must be
+declared in the project config and its `<view-slug>` must resolve in that view.
+`<delta>` is a non-empty human-readable description of what changes (status flip, new
+claim, new negative knowledge, supersession). Writing the impact is the *recording*
+agent's job — it is a declaration, not a state write (see I3).
 
 **Adoption-epoch exemption**: when the project config declares an epoch marker
 (see Conventions: Adoption epochs), record nodes created *strictly before* the
@@ -101,12 +115,15 @@ check-time only: authoring a new record node is never epoch-exempt.
 
 ### I3 — Single-writer state
 
-Only the reconcile pass writes state nodes. Recording agents — including many running
-in parallel — only ever append record nodes with impact declarations. This avoids
-stage-lease contention on hot state nodes and prevents weakest-agent drift in the
-distilled projection. Procedural. Three writers ever pass the `--reconcile` gate: init and adopt once
-each at setup (seeding and distilling), and the reconcile skill ongoing — every
-state write after setup goes through it.
+Only the reconcile pass writes state nodes — and, with named views, the rule is
+**single writer per view**: every view (the state graph included) is written only by
+its reconcile pass. Recording agents — including many running in parallel — only
+ever append record nodes with impact declarations. This avoids stage-lease
+contention on hot state nodes and prevents weakest-agent drift in the distilled
+projection. Procedural. Three writers ever pass the `--reconcile` gate: init and
+adopt once each at setup (seeding and distilling), and the reconcile skill ongoing —
+every view write after setup goes through it (`views add` minting a view root is
+part of a reconcile pass by definition, hence its own `--reconcile` gate).
 
 ### I4 — Provenance
 
@@ -121,7 +138,8 @@ also resolve. Provenance is many-to-one: a state node typically cites many recor
 
 ### I5 — High-water mark
 
-The state root's content carries a `## Reconciliation` section:
+Every view root's content — the state root's, and each named view root's — carries a
+`## Reconciliation` section:
 
 ```
 ## Reconciliation
@@ -130,9 +148,11 @@ The state root's content carries a `## Reconciliation` section:
 ```
 
 The mark is a **frontier**: the set of record tips whose entire ancestry has been folded
-into state. A record node is *reconciled* exactly when it is an ancestor of some tip in
-the frontier, itself included; everything else is **unreconciled** — enumerable by the
-checker, which reports their count and per-state-node staleness. Unreconciled nodes are
+into that view. A record node is *reconciled* exactly when it is an ancestor of some tip
+in the frontier, itself included; everything else is **unreconciled** — enumerable by
+the checker, which reports their count and per-view pending impacts. The marks are
+independent per view: a project reconciles its state graph and a named view on
+different cadences without either lying about the other. Unreconciled nodes are
 normal between reconcile runs; a missing tip, or one that does not resolve to a record
 node, is a violation.
 
@@ -144,7 +164,8 @@ it from the frontier permanently, with no violation anywhere. Clock skew between
 machines widens the window. One tip — what a project with a linear record graph writes,
 and the only form this section had before v0.0.5 — is a frontier of one.
 
-`hypergraph hwm` reports the frontier and what is outstanding. `hwm --suggest` prints
+`hypergraph hwm` reports the frontier and what is outstanding (`--view <name>` for a
+named view's). `hwm --suggest` prints
 the frontier that expresses, in ancestry, what the pre-v0.0.5 timestamp rule treated as
 reconciled; a project upgrading across that change adopts it once, in a reconcile pass.
 
@@ -213,6 +234,61 @@ I1) or reconcile hallucinated (fix: rewrite the state node from its citations).
 - **State stays small.** The whole state graph should be readable in one sitting.
   Reconcile compacts: merge redundant claims, drop superseded detail (the record graph
   keeps the history), keep negative knowledge tight.
+
+## Views
+
+A **view** is a named derived graph over the record graph — the same construction as
+the state graph, of which the state graph is simply the first instance. Mathematically
+each view node is a hyperedge over record vertices (its provenance set); in
+engineering terms a view is one projection over the shared event log. A project that
+wants a second axis of distillation — an RL project tracking *policy evolution*, say,
+beside its architectural state — declares a `policy` view instead of overloading the
+state graph with it.
+
+- **The record graph stays the sole ground truth.** I1 generalizes: no knowledge
+  exists only in *a* view. Every view is rebuildable from the record nodes it cites.
+- **The state graph is view #1 — mandatory and privileged.** The frontier, orient,
+  and STATE.md all read the state graph and only it. Extra views are optional; a
+  project with none is exactly a pre-views project.
+- **View nodes are state nodes.** Same template (`Status:` / `## Current` /
+  `## Negative knowledge` / `## Provenance`), and I4–I7 apply per view, with
+  "state node" read as "view node". Provenance cites **record nodes only** —
+  view-over-view provenance is not representable, so views cannot stack.
+- **Single writer per view** (I3). Each view is written only by its own reconcile
+  pass; recording agents reach it exclusively through view-qualified impact
+  declarations: `- target: <view>/<slug> — <delta>` and
+  `- target: <view>/NEW <kebab-name> — <delta>` (I2). Unqualified targets mean the
+  state graph, which is why every pre-views record node — immutable by I1 — stays
+  valid.
+- **Reconciliation is per view** (I5). Each view root carries its own
+  `## Reconciliation` over the record graph. `hypergraph views add` seeds a newborn
+  view's high-water mark with the current record tips, so a late-born view starts
+  caught up rather than owing the whole history a reconcile.
+- **Declaration is config.** A view exists when the config's `views:` block names it
+  (`hypergraph views add <name> [--md FILE] --reconcile` mints the root and appends
+  the block). Names are kebab-case (`[a-z][a-z0-9-]*`), never `record`/`state`/`cache`
+  (reserved), and never slug-shaped — the name qualifies impact targets, so the
+  grammar owns its shape. An impact naming an undeclared view is an I2 violation.
+- **Artifacts stay on record nodes** — the existing state rule, per view.
+- Views export beside the classic pair (`cache/<name>.json`) and may render a
+  snapshot beside STATE.md (`md:` in the config block).
+
+**Compatibility.** The node-file format is unchanged — a pre-views CLI reads a graph
+that uses views, ignores the `views:` config key, and never looks under
+`graph/<view>/`. The one honest exception: pre-0.0.13 `check` reports a
+view-qualified impact line as an I2 unparseable-line violation. That is
+checker-strictness drift the versioning policy allows, but stated plainly: **a
+project that adds views needs ≥0.0.13 tooling; projects without views are unaffected
+in both directions.**
+
+**Out of scope (v1), deliberately:** mirror push of extra views (`push` publishes
+record+state only; views are rebuildable projections, and push notes the skip),
+per-view status vocabularies or templates, view-over-view provenance, orient reading
+extra views, dispatch targeting views, `views rm`/rename, `import`/`adopt --pull` of
+view graphs, and per-view tag vocabularies.
+
+(Naming note: an earlier, superseded state node titled "Views" — `lawful-ash-6222` —
+described panels of the removed in-core visualizer; these named views are unrelated.)
 
 ## Collaboration
 
@@ -362,7 +438,8 @@ Exact headings are load-bearing — the checker parses them. See
 
 - Record node content: `## What / ## Why / ## Method / ## Result / ## Repo / ## State Impact`
 - State node content: `Status:` line, then `## Current / ## Negative knowledge / ## Provenance`
-- State root content: project overview + `## Reconciliation`
+  — and this is also the view-node template, verbatim (SPEC: Views).
+- State root content: project overview + `## Reconciliation` — likewise every view root's.
 
 ## Per-project files
 
@@ -371,12 +448,15 @@ Created by the `hypergraph-init` skill (day zero) or the `hypergraph-adopt` skil
 
 - `.hypergraph/config.yml` — project name, record root and state root (node_id + slug);
   adopted projects add `epoch:` and, for imported legacy graphs, `archive:` (which
-  also feeds `push --lineage`). `hypergraph_version:` records which release last
+  also feeds `push --lineage`); projects with named views add a `views:` block
+  (`views.<name>.root` + optional `views.<name>.md`), written by `hypergraph views
+  add`. `hypergraph_version:` records which release last
   installed this project's *copies* of what the tooling ships — the skills, the
   AGENTS.md block, the workflows — which nothing else in the repo names; it is not a
   compatibility floor, because node files are additive and an older reader is fine on
   a newer graph. See [templates/config.example.yml](templates/config.example.yml).
-- `.hypergraph/graph/{record,state}/<slug>.md` — the node files: frontmatter carrying
+- `.hypergraph/graph/{record,state}/<slug>.md` — plus `graph/<view>/<slug>.md` per
+  named view — the node files: frontmatter carrying
   identity and parent slugs, body carrying the content verbatim. One optional block is
   protocol — **`origin:`**, where an imported node came from (immutable provenance,
   written once by `import --fork`). An optional **`tags:`** list of names may also
@@ -388,14 +468,17 @@ Created by the `hypergraph-init` skill (day zero) or the `hypergraph-adopt` skil
   nothing else reads, `check` included.
 - `.hypergraph/tags.yml` — optional, committed: the tag vocabulary (names, colours,
   flags, and whatever id a backend minted), keyed by graph kind because tag creation
-  is per graph root and there are two. Absent means "this project declares no
+  is per graph root; it covers `record` and `state` only — named views keep no
+  per-view vocabulary. Absent means "this project declares no
   vocabulary", not "this project has no tags": an undeclared name still works and
   takes a colour derived from its own digest. Edited through `hypergraph tags`, never
   by hand — a hand-merged duplicate name is the one unrecoverable tag failure.
-- `.hypergraph/cache/{record,state}.json` — graph exports consumed by the checker and
+- `.hypergraph/cache/{record,state}.json` — plus `cache/<view>.json` per named view —
+  graph exports consumed by the checker and
   renderer (gitignored; regenerated by reconcile).
 - `STATE.md` — generated snapshot of the state graph (regenerated by reconcile, never
-  hand-edited). Frontier at the top, architecture tree below.
+  hand-edited). Frontier at the top, architecture tree below. A named view with an
+  `md:` target gets the same treatment beside it.
 - `AGENTS.md` sentinel block (`<!-- hypergraph:begin/end -->`, from
   [templates/agents-block.md](templates/agents-block.md)) + `.hypergraph/AGENTS.md` —
   the onboarding contract installed by init and adopt, kept idempotent by the markers.

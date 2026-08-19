@@ -9,9 +9,9 @@ summary: Six single-path skills (init, adopt, record, reconcile, orient, dispatc
 flywheel:
   node_id: 0a4e4167-71ec-545b-a5b7-036016974a9d
   slug: dry-wildflower-2260
-  revision: 19
-  pushed_at: '2026-08-18T12:24:52+00:00'
-  content_sha256: 1b11f0e07776fd2476db6d4a69bf9281d1a6f6b4037c04a03e50ba73ce2c2459
+  revision: 20
+  pushed_at: '2026-08-19T10:25:52+00:00'
+  content_sha256: 3e947fb72097b6555f4a0297cf1996793a31347697aaa9087f6c3ba4aafe5915
   parents_sha256: a7a7d736bcfc7a886dc3bd4b6b138fcbabbc3a0bb49408b1c19e0413f4420ad9
   parents:
   - 9e687be1-1c80-56a2-bc0c-d4476edc0a2e
@@ -31,6 +31,7 @@ Status: working
 - **init installs the onboarding contract since the 0.1.0 gate** [rec: weathered-badger-8682]. Day-zero adopters used to get two graphs and zero instructions to the agents the protocol exists for — only adopt wrote the AGENTS.md block. init's step 8 now does the idempotent sentinel append (never breaking a `CLAUDE.md` symlink), writes `.hypergraph/AGENTS.md`, and runs `skills install` + `git check-ignore`; its gate is `hypergraph sync`, and the step-3/4 waffle is resolved (record node #1 first, then the skeleton citing it). Verified end to end on a scratch repo, where `upgrade` read the freshly written block as shipped [rec: open-snow-3693].
 - **The audit's skill drift is closed by the gate's sweep** [rec: lively-spring-9646] [rec: steady-rose-0661]: reconcile teaches reachability enumeration and the multi-tip `high_water_mark:` syntax with `hwm --tips`; the writer count is stated truthfully everywhere (three — init and adopt once at setup, reconcile ongoing); dispatch's lifecycle names `dispatch close` (`--force` abandons, said out loud); the six identical CLI preambles are one sentence each and record's tagging essay is its operative lines; adopt's trap 3 states the real trap (a `NEW <kebab-name>` never auto-resolves; `--slug` exists but must fit `word-word-####`).
 - **What the audit had measured** [rec: lively-spring-9646]: the reconcile skill still states unreconciled enumeration by wall clock — the pre-0.0.5 rule I5 exists to forbid — in the one skill that must get I5 right; the dispatch skill teaches open/ls/harvest but never `close`, while naming the abandoned-lane failure it remedies; three documents give three different counts of who passes `--reconcile` (the true answer is three: init and adopt once each at setup, reconcile ongoing); and adopt shipped three representations of one procedure plus a factual `--slug` error at 43% of all skill bytes — **the adopt half is fixed**: one mode-branched workflow whose Mode A order is native (pull → import → `--init`), the corrective note and the duplicate walkthrough deleted (363 → 286 lines), with the interview and the four authoring traps kept verbatim [rec: mellow-birch-2818].
+- **The four core skills speak views since 0.0.13** [rec: strong-star-9849]: record's step 4 teaches the view-qualified impact forms (`<view>/<slug>`, `<view>/NEW <kebab>`) with unqualified still meaning state, and says the view must exist first; reconcile gains step 5b — fold each view's qualified impacts and advance *that view's* `## Reconciliation`, and it alone runs `hypergraph views add`, because minting a view root is a view write (I3); orient states the state graph stays the cold-start read even with views present; init states views are strictly post-init. The isolation discipline holds — the skills name the `views` verb and the grammar, never the CLI's internals.
 - **The unattended-loop gap narrowed at 0.0.11**: `hypergraph-dispatch` packages one aimed pass — orient, claim, work, record, close — proven by two acceptance runs whose second read the first's claim and steered around it [rec: young-sage-8406] [rec: idle-crow-3832] [rec: bold-sand-5009]. What no skill packages yet is the *series* — resume, again and again, across contexts — which Autonomous operation holds [rec: late-sage-5549].
 
 ## Negative knowledge
@@ -66,3 +67,4 @@ Status: working
 - weathered-badger-8682 — U8: init gains the onboarding install; the block gains the sync gate and non-negotiable 5
 - steady-rose-0661 — U9: the drift sweep; the documents agree with the code
 - open-snow-3693 — the gate's close-out: the updated init skill verified end to end on a scratch repo
+- strong-star-9849 — 0.0.13 named views: record/reconcile/orient/init updated for the per-view discipline

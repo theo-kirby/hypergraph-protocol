@@ -7,7 +7,7 @@ project: my-project
 # against the running CLI and `hypergraph upgrade` refreshes them and re-stamps it.
 # Not a compatibility floor — the node files are additive, and an older CLI reads a
 # newer graph fine.
-hypergraph_version: 0.0.12
+hypergraph_version: 0.0.13
 
 record_root:
   node_id: 00000000-0000-0000-0000-000000000000
@@ -35,6 +35,20 @@ graph_dir: .hypergraph/graph
 # op 10). Defaults to `tags.yml` beside graph_dir.
 #
 # tags_file: .hypergraph/tags.yml
+
+# Optional: named views (SPEC: Views) — extra derived graphs over the record
+# graph beside the state graph, each reconciled independently under its own
+# high-water mark. Appended by `hypergraph views add <name> [--md FILE]
+# --reconcile`, never hand-written: `add` also mints the view root and seeds its
+# HWM with the current record tips. Record-node impacts reach a view as
+# `- target: <name>/<slug> — <delta>`. A project that adds views needs
+# >=0.0.13 tooling; without this block, nothing changes.
+# views:
+#   policy:
+#     root:
+#       node_id: 00000000-0000-0000-0000-000000000000
+#       slug: adjective-noun-0000
+#     md: POLICY.md              # optional rendered snapshot, like STATE.md
 
 # The branch a mirror is published from, and the branch reconcile belongs on
 # (SPEC: Collaboration). Defaults to `origin/HEAD` if it resolves, else `main`.

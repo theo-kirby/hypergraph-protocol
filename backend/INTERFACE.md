@@ -24,13 +24,13 @@ writes, not a store the protocol reads.
 
 | # | Operation | Signature (conceptual) | Used by | Notes |
 |---|-----------|------------------------|---------|-------|
-| 1 | `create_root` | `(title, content) → node` | init | Creates a parentless node. Called twice per project (record root, state root). |
+| 1 | `create_root` | `(title, content) → node` | init, views add | Creates a parentless node. Called once per graph: record root, state root, and one per named view a project declares (SPEC: Views) — 1+N roots. |
 | 2 | `append_record_node` | `(parent_ids, title, content, summary, repo_ctx) → node` | record, init, reconcile | Append-only; the returned slug is the node's permanent handle. Must support multiple parents. |
 | 3 | `read_node` | `(node_id \| slug) → node` | all | Full body: title, content, summary, revision. |
 | 4 | `list_children` | `(node_id) → [node-ref]` | orient, reconcile | Direct children, paged. |
 | 5 | `get_tree` | `(node_id, depth) → topology` | orient | Bounded tree/DAG projection for cheap orientation. |
 | 6 | `resolve_slug` | `(slug) → node_id` | all | Must surface ambiguity explicitly rather than guessing. |
-| 7 | `update_state_node` | `(node_id, content, base_revision) → node` | **reconcile only** (I3) | Full-content replace with optimistic locking; conflicts surfaced, not silently merged. |
+| 7 | `update_state_node` | `(node_id, content, base_revision) → node` | **reconcile only** (I3) | Full-content replace with optimistic locking; conflicts surfaced, not silently merged. Covers every view node — the state graph and any named view alike (single writer per view). |
 | 8 | `export_graph` | `(root_id) → JSON` | reconcile | Root + all descendants, with per-node `node_id`, `slug_name`, `title`, `content`, `parent_ids`, `created_at`. Feeds `tools/hypergraph.py`. |
 | 9 | `attach_artifact` *(optional)* | `(node_id, files) → artifact-refs` | record, push | Evidence on **record nodes only**. The shipped implementation stores repo-relative **paths** in frontmatter, not custody of bytes. |
 | 10 | `tag` *(optional)* | `declare(root_id, name, style) → tag-ref`; `assign(node_id, [name]) → ()` | record, import, push, heal | Vocabulary is declared **per graph root**; assignment is an **atomic replace** of a node's whole set. **Names**, not ids, are the portable identity. |
@@ -40,13 +40,15 @@ writes, not a store the protocol reads.
 - **Slugs are the cross-graph pointer currency.** They must be immutable and
   resolvable for the life of the project. Anything the protocol writes into markdown
   (`## Provenance`, `[rec: …]`, `## State Impact` targets, the HWM) is a slug.
-- **Two roots, two disjoint DAGs.** No backend edge may ever connect the record graph
-  to the state graph (SPEC: pointers are markdown, not edges).
-- **Append vs update.** Record graph uses only ops 1–2 for writes; state graph uses
-  ops 1–2 at init (seeding) and op 7 thereafter. An implementation must make op 7's
-  concurrency story explicit (lease, lock, CAS) — reconcile is single-writer by
-  protocol, but the store should still refuse a stale write. The shipped one uses a
-  body-hash CAS (`--expect`), with git as the merge substrate underneath.
+- **Disjoint DAGs — N+1 of them.** No backend edge may ever connect the record graph
+  to any view, or one view to another (SPEC: pointers are markdown, not edges). A
+  project has the record graph plus one DAG per view, the state graph included.
+- **Append vs update.** Record graph uses only ops 1–2 for writes; every view (the
+  state graph and each named view) uses
+  ops 1–2 at seeding and op 7 thereafter. An implementation must make op 7's
+  concurrency story explicit (lease, lock, CAS) — reconcile is single-writer *per
+  view* by protocol, but the store should still refuse a stale write. The shipped
+  one uses a body-hash CAS (`--expect`), with git as the merge substrate underneath.
 - **Export determinism.** Op 8 output for the same graph revision should be stable
   enough for diffing; ordering by `created_at` then `node_id` is recommended.
 - **A repo-relative path is the portable identity of an artifact (op 9).** Every store

@@ -9,6 +9,10 @@ The read-only landing path for a fresh agent: state root → frontier → orient
 brief. The record graph exists precisely so you do *not* have to traverse it to know
 what is true now. Protocol: [spec.md](references/spec.md).
 
+The **state graph** stays the cold-start read even in a project with named views
+(SPEC: Views) — the frontier lives there; extra views are specialist projections you
+open only when the work is about their axis.
+
 ## The CLI
 
 `hypergraph …` — in a dev checkout of the protocol repo, `uv run tools/hypergraph.py …`.

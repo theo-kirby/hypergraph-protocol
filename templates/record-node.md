@@ -34,5 +34,10 @@ goes here too — what this result means, what it rules out.
 <!-- EITHER one or more impact lines: -->
 - target: <state-slug> — <delta: status flip / new claim / new negative knowledge / supersession>
 - target: NEW <kebab-name> — <delta: what the new state node covers and its initial status>
+<!-- Either form may be qualified with a named view (SPEC: Views) — the view must
+     already be declared (`hypergraph views add <view>`); unqualified targets
+     always mean the state graph: -->
+- target: <view>/<view-slug> — <delta>
+- target: <view>/NEW <kebab-name> — <delta>
 <!-- OR exactly one none-line with a non-empty reason: -->
 none: <why this changes nothing about current state>

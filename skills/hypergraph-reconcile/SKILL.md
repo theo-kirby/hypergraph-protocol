@@ -10,6 +10,12 @@ The only **ongoing** writer of state nodes (SPEC I3) — init and adopt each pas
 past the high-water mark, folds their declared impacts into the distilled state
 graph, advances the HWM, and regenerates STATE.md. Protocol: [spec.md](references/spec.md).
 
+If the project keeps **named views** (`views:` in the config — SPEC: Views), the
+same single-writer rule holds *per view*, and this pass is the writer for every
+one: each view has its own high-water mark over the record graph, and view-qualified
+impacts (`policy/<slug>`) fold into their view exactly as unqualified ones fold into
+state.
+
 ## The CLI
 
 `hypergraph …` — in a dev checkout of the protocol repo, `uv run tools/hypergraph.py …`.
@@ -74,11 +80,21 @@ record it first (SPEC I1), then reconcile it in.
    - If `check` says nodes *predate* the mark and names `hwm --suggest`, this graph is
      crossing the v0.0.5 change. Run it and write the frontier it prints — those nodes
      were already folded, and folding them again duplicates claims.
+5b. **Named views, if any: repeat steps 4–5 per view.** For each configured view
+   (`hypergraph views ls`): fold that view's qualified impacts (`check` tallies them
+   as `<view>/<target>`) into its nodes — `hypergraph new <view> … --reconcile` /
+   `update … --reconcile`, same template, provenance citing record nodes only — then
+   advance *that view's* `## Reconciliation` on its own root. The marks are
+   independent: a view you did not touch keeps its old mark honestly, but folding a
+   view's pending impacts without advancing its mark under-reports, same as state.
+   A brand-new axis worth tracking is declared here, and only here:
+   `hypergraph views add <name> [--md FILE] --reconcile`.
 6. **Regenerate and check**:
    ```
    hypergraph sync --config .hypergraph/config.yml
    ```
-   `sync` re-exports both graphs, regenerates STATE.md, runs `check`, and publishes.
+   `sync` re-exports every graph (views included), regenerates STATE.md and each
+   view's `md:` snapshot, runs `check`, and publishes.
    It stops before publishing if `check` reports violations. (The separate
    `export` / `render` / `check` commands still exist if you want the steps apart.)
 7. **Publish.** `sync` already did this; run `hypergraph push` on its own if you split
@@ -91,7 +107,8 @@ record it first (SPEC I1), then reconcile it in.
    - *drift* — the published copy no longer matches the node files. **Local files are
      canonical.** Fix drift by re-publishing, or by investigating who else wrote;
      never by editing node files to match.
-8. **Commit.** `git add .hypergraph/graph STATE.md` — the reconcile is not durable
+8. **Commit.** `git add .hypergraph/graph STATE.md` (plus any view snapshots and the
+   config, if `views add` ran) — the reconcile is not durable
    until the node files are committed. Do this *after* publishing, so the frontmatter
    `push` writes is caught by the same `git add`.
 9. **Report honestly**: what was folded, what was created, checker output verbatim —

@@ -26,6 +26,10 @@ repo](backend/local-adapter.md):
   *now*: architecture, what works, what's broken or open (the **frontier**), and
   accumulated negative knowledge.
 
+A project can keep further **named views** — extra derived graphs over the same
+record graph (`hypergraph views add policy`), each reconciled independently; the
+state graph is simply the first, mandatory one (SPEC: Views).
+
 Concretely: on a mature project, cold-start orientation over an append-only DAG means
 traversing thousands of nodes. With Hypergraph, a fresh agent reads the frontier in
 a handful of tool calls (≤ ~6 in our own use — whether that beats plain git on real

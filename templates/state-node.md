@@ -2,6 +2,8 @@
 State node content template. Written ONLY by reconcile (SPEC I3).
 First non-blank line MUST be the Status line (SPEC I6).
 Title (backend field): the component/capability name, present tense.
+Also the template for nodes in any named view, verbatim (SPEC: Views) —
+I4–I7 apply per view, and provenance cites record nodes only.
 -->
 
 Status: working | open | broken | blocked | superseded

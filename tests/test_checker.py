@@ -17,7 +17,14 @@ VIOLATION_DIRS = sorted(p for p in (FIXTURES / "violations").iterdir() if p.is_d
 
 
 def check(fixture_dir):
-    return hg.run_check(fixture_dir / "record.json", fixture_dir / "state.json")
+    # A fixture that needs a config (a seeded named-view violation, say) commits
+    # one as config.json beside its exports; every other fixture runs config-less.
+    config = None
+    config_path = fixture_dir / "config.json"
+    if config_path.exists():
+        import json
+        config = json.loads(config_path.read_text())
+    return hg.run_check(fixture_dir / "record.json", fixture_dir / "state.json", config)
 
 
 def test_clean_fixture_passes():

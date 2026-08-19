@@ -86,6 +86,40 @@ def test_an_empty_frontier_means_nothing_is_reconciled():
     assert len(hg.unreconciled_nodes(record, [], root)) == 2
 
 
+def test_each_view_carries_its_own_frontier_over_the_same_record_graph():
+    """SPEC: Views — reconciliation is per view. The state graph has folded both
+    tips while a named view is still anchored on Bob's branch; the same ancestry
+    rule answers differently for each, over the identical record graph."""
+    record, root = merged_history()
+    state_pending = hg.unreconciled_nodes(
+        record, ["alice-node-0002", "bobs-node-0001"], root)
+    view_pending = hg.unreconciled_nodes(record, ["bobs-node-0001"], root)
+    assert state_pending == []
+    assert [n.slug for n in view_pending] == ["alice-node-0002"]
+
+
+def test_check_hwm_pending_tally_is_per_view():
+    """A record node awaiting a `policy/` fold is not pending work for the state
+    graph, and vice versa — check_hwm filters the tally by its view."""
+    root = node("record-root-0000", "2026-08-09T09:00:00+00:00")
+    a = node("state-work-0001", "2026-08-09T09:30:00+00:00", ["record-root-0000"],
+             content="body\n\n## State Impact\n\n- target: NEW ingest — created\n")
+    b = node("policy-work-0002", "2026-08-09T10:00:00+00:00", ["record-root-0000"],
+             content="body\n\n## State Impact\n\n- target: policy/NEW ppo — created\n")
+    record = graph(root, a, b)
+
+    def pending_tally(view):
+        vroot = node("view-root-0100", "2026-08-09T09:00:00+00:00", content=(
+            "body\n\n## Reconciliation\n\n- high_water_mark: record-root-0000\n"
+            "- reconciled_at: 2026-08-09T09:00:00+00:00\n"))
+        report = hg.Report()
+        hg.check_hwm(record, graph(vroot), root, vroot, report, view=view)
+        return [f.node for f in report.infos() if "pending impact" in f.message]
+
+    assert pending_tally("state") == ["NEW ingest"]
+    assert pending_tally("policy") == ["policy/NEW ppo"]
+
+
 def test_read_hwm_parses_one_slug_a_list_and_none():
     def frontier_of(line):
         content = f"body\n\n## Reconciliation\n\n- high_water_mark: {line}\n- reconciled_at: x\n"

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "node_id": "30000000-0000-0000-0000-000000000001",
+      "slug_name": "pale-meadow-0200",
+      "title": "demo \u2014 policy",
+      "content": "Policy view root for the demo project: what the current policy is and how it got here.\n\n## Reconciliation\n\n- high_water_mark: bold-ember-0005\n- reconciled_at: 2026-08-01T06:00:00+00:00\n",
+      "parent_ids": [],
+      "created_at": "2026-08-01T04:30:00+00:00"
+    },
+    {
+      "node_id": "30000000-0000-0000-0000-000000000002",
+      "slug_name": "shy-cabin-0201",
+      "title": "PPO baseline",
+      "content": "Status: working\n\n## Current\n\n- PPO baseline converges on the small env: mean return 187 (\u00b19) over 3 seeds [rec: bold-ember-0005].\n\n## Negative knowledge\n\nNone yet.\n\n## Provenance\n\n- bold-ember-0005 \u2014 the baseline run this line rests on\n",
+      "parent_ids": [
+        "30000000-0000-0000-0000-000000000001"
+      ],
+      "created_at": "2026-08-01T05:30:00+00:00"
+    }
+  ]
+}

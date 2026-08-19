@@ -10,6 +10,48 @@ inline were internal or never published.
 
 Nothing yet.
 
+## [0.0.13]
+
+Named views (SPEC: Views): N derived graphs over the record graph. The state
+graph becomes "view #1" — one enumeration, one node template, one checker path —
+and a project can declare more (`hypergraph views add policy`), each reconciled
+independently under its own high-water mark.
+
+### Added
+- `hypergraph views ls|add <name> [--md FILE] --reconcile` — declare a named
+  view: mints the view root through the usual primitives, seeds its
+  `high_water_mark:` with the current record tips (a late-born view starts
+  caught up), and appends the `views:` block to config.yml textually.
+- View-qualified impact targets (SPEC I2): `- target: <view>/<slug> — <delta>`
+  and `- target: <view>/NEW <kebab-name> — <delta>`. Unqualified targets still
+  mean the state graph, so every existing record node stays valid.
+- Per-view checking and reconciliation: I3 is now "single writer **per view**",
+  I4–I7 apply per view, and each view root carries its own `## Reconciliation`
+  (I5) with a per-view pending-impact tally in `check`.
+- `new <view>`/`update` write view nodes behind the same `--reconcile` gate and
+  body-hash CAS as state; `hwm --view <name>` and `render --view <name>` read a
+  view's export beside `--state`; `export`/`sync` emit `cache/<view>.json` and
+  render each view's optional `md:` snapshot beside STATE.md.
+- Config: an optional, `views add`-written `views:` block
+  (`views.<name>.root` + optional `views.<name>.md`).
+
+### Changed
+- The graph-kind enumeration is config-derived (`graph_kinds(config)`); the
+  hardcoded record/state pair survives only as the no-config fallback. A
+  project without `views:` behaves byte-for-byte as before (pinned by golden
+  tests over the fixture graphs).
+- The mirror stays record+state only: named views are rebuildable projections,
+  and `push` prints one line noting the skip when views are configured.
+
+### Compatibility
+- The node-file format is unchanged and the additive promise holds: an older
+  CLI reads a graph that uses views, ignores the `views:` config key, and never
+  reads `graph/<view>/`. **One honest exception:** pre-0.0.13 `check` reports a
+  view-qualified impact line as an I2 unparseable-line violation. This is
+  checker-strictness drift the versioning policy allows, stated plainly: **a
+  project that adds views needs ≥0.0.13 tooling; projects without views are
+  unaffected in both directions.**
+
 ## [0.0.12] — 2026-08-18
 
 The 0.1.0 readiness gate, shipped as 0.0.12 by Operator decision — more work is
