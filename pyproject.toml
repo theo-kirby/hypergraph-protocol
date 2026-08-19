@@ -7,7 +7,7 @@
 [project]
 name = "hypergraph-protocol"
 version = "0.0.13"
-description = "Hypergraph: a substrate for autonomous research and engineering. Two graphs per project — an append-only record graph of what happened, and a single-writer state graph of what is true now, each claim citing the evidence it rests on. Checker, STATE.md renderer, local git-native backend, dispatch lanes; optional mirror in a separate lazily-loaded module."
+description = "An agent-native substrate for autonomous research and engineering: an append-only record graph of everything that happened, distilled views of what is true now, every claim citing its evidence. Git-native — the graphs are markdown files in your repo."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
