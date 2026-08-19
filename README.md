@@ -2,73 +2,54 @@
 
 **An agent-native substrate for autonomous research and engineering.**
 
-Agents do not fail at long-running work for lack of capability. They fail because
-their environment has no shape: chat logs are not memory, a codebase keeps what was
-kept and never what was tried, task lists rot the moment reality moves. So every
-fresh context re-derives what the last one knew, repeats dead ends nobody wrote
-down, and contradicts decisions it never saw.
+Agents do not fail at long-running work for lack of capability. They fail because 
+their environment has no shape. Hypergraph gives agents a structure to work *in*.
+Knowledge has one place to go, being wrong is a first-class result, and an arriving
+agent reads **what is true now** instead of everything that ever happened. The unit
+of work is a claim with its evidence attached.
 
-Hypergraph gives agents a structure to work *in*. Knowledge has one place to go,
-being wrong is a first-class result, and an arriving agent reads **what is true
-now** instead of everything that ever happened. The unit of work is not a commit or
-a ticket — it is a claim with its evidence attached.
+## Structure
 
-## The structure
-
-Every graph is markdown files committed in your repo. Offline, mergeable through
-git, checkable in CI. No server, no account.
-
-```
-agents ──record──▶   RECORD GRAPH      append-only, causal: everything that
-                         │             happened, dead ends included
-                         │ reconcile   one writer per view, behind a
-                         ▼             high-water mark
-                     VIEWS             distilled: what is true now —
-                         │             the state graph, plus named views
-                         ▼
-agents ◀──orient──   THE FRONTIER      open · broken · blocked
-```
+Every graph is markdown files in the project with frontmatter.
 
 - **The record graph** is the ground truth: an append-only causal DAG of
-  experiments, decisions, evidence, dead ends. Nothing is ever rewritten.
+  experiments, decisions, evidence, implementations, dead ends. Nothing is ever rewritten.
 - **Views** are distilled projections over it. The **state graph** is view #1,
-  always present: architecture, what works, what is broken or open (the
-  **frontier**), and accumulated negative knowledge. Add more axes as the project
-  needs them — `hypergraph views add policy` — each reconciled independently.
+  always present: architecture, what works, what is broken or open, 
+  and accumulated negative knowledge. More axes can be added as the project
+  needs them: `hypergraph views add policy` — each reconciled independently.
 
 **Why "hypergraph":** every view node cites the record nodes it rests on. One claim
 answers to many pieces of evidence, and one piece of evidence bears on many claims,
-so the citations join *sets to sets* across the graphs. That structure is the
-hypergraph, and it is what makes any claim auditable — ask "what is this believed
-on the strength of?" and get back a set you can read.
+so the citations join *sets to sets* across the graphs. This structure is the
+hypergraph. 
 
-## The discipline
+## Discipline
 
 Four verbs, held by invariants ([SPEC.md](https://github.com/theo-kirby/hypergraph-protocol/blob/main/SPEC.md))
 and a mechanical checker:
 
-1. **Orient** — land on the frontier, not on history. A fresh agent reads
-   `STATE.md` in a handful of tool calls.
-2. **Record** — every unit of work becomes one causally-parented record node that
+1. **Orient**: land on the frontier, not on history.
+2. **Record**: every unit of work becomes one causally-parented record node that
    declares its impact on the views. A dead end recorded is worth as much as a
    success.
-3. **Reconcile** — a single writer per view folds declared impacts in and advances
-   the high-water mark. Nobody edits state inline; that is what keeps many
+3. **Reconcile**: a single writer per view folds declared impacts in and advances
+   the high-water mark. Nobody edits state inline; that is what aims to keep many
    parallel agents coherent.
-4. **Dispatch** — aim an agent at a frontier target with a bounded budget in an
+4. **Dispatch**: aim an agent at a frontier target with a bounded budget in an
    isolated lane; its claim is advisory and visible to other agents.
 
 Forward work enters the same way: intent lands as a decision record node, and the
-frontier carries gaps as claims — falsified by work, never checked off a list.
+frontier carries gaps as claims.
 
 **In parallel:** contributors record, the maintainer reconciles. Record nodes are
 one file each, so branches merge without conflict and a pull request carries each
 claim beside the code that justifies it. `hypergraph check --since <base>` is the
 PR gate: changed files with no record node fail.
 
-## Honest status
+## Status
 
-The record half is established practice — a lab notebook as a causal DAG. The
+The record half is established practice: a lab notebook as a causal DAG. The
 state half is the live hypothesis: whether a distilled projection stays small and
 honest while its evidence grows without bound. This repo runs on its own protocol
 ([STATE.md](https://github.com/theo-kirby/hypergraph-protocol/blob/main/STATE.md)),
@@ -80,10 +61,6 @@ and other projects have adopted it; it is not finished.
 uv tool install hypergraph-protocol
 hypergraph skills install          # → ./.claude/skills (project scope)
 ```
-
-That is the whole install. Updating later is two commands, because it is two
-things: `uv tool upgrade hypergraph-protocol` (the CLI) and `hypergraph upgrade`
-(your repo's copies — skills, AGENTS.md block, workflows).
 
 ## Quickstart
 
@@ -104,7 +81,7 @@ hypergraph sync --config .hypergraph/config.yml    # export → render → check
 git add .hypergraph/graph STATE.md                 # the memory travels with the repo
 ```
 
-## Going deeper
+## Deeper
 
 | | |
 |---|---|

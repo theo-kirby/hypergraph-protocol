@@ -10,7 +10,7 @@ inline were internal or never published.
 
 Nothing yet.
 
-## [0.0.13]
+## [0.0.13] — 2026-08-19
 
 Named views (SPEC: Views): N derived graphs over the record graph. The state
 graph becomes "view #1" — one enumeration, one node template, one checker path —
