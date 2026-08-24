@@ -327,6 +327,34 @@ across a batch produces one coherent claim where N passes produce N overlapping 
   means something else entirely: starting a *new* project from someone else's graph,
   which mints new identity and files the source under `archive:` (see below).
 
+### Staleness and the reconcile trigger
+
+The state graph is a **checkpoint over the record log**, and the unreconciled tail
+is **replayable**: every record node past the high-water mark carries its declared
+impact (I2), so a reader can lay the tail's deltas over the state graph without
+writing anything — `hypergraph hwm --impacts` prints exactly that tail. Orientation
+therefore *reads through* the checkpoint: state first, pending impacts on top. A
+stale HWM is compaction debt, not a correctness hole.
+
+Replay degrades as the tail grows — declared deltas are uncompacted and
+un-cross-checked, which is what makes reconcile worth running at all. So reconcile
+triggers on **pressure, never calendar or operator discipline**: orientation
+measures the tail, and on the default branch a tail past a small threshold (the
+orient skill's constant, ~3 nodes) makes "reconcile first, then the task" the
+brief's leading recommendation. Session start is also where the trigger belongs
+structurally: a fresh context is exactly the librarian condition reconcile wants.
+Off the default branch the recommendation is never made — record on any branch,
+reconcile only where the one writer lives — and the brief says instead that the
+tail folds in on the default branch after merge.
+
+Two consequences of being git-shaped, stated plainly. A side branch replays only
+the tail *it can see*: nodes merged to the default branch after the fork point are
+invisible to it, and the remedy is the ordinary one (merge the default branch in).
+And the measurement must never trust a stale cache — the exports are gitignored and
+go stale exactly when the tail gets fat, right after a merge — so orientation
+re-exports before it measures: the after-a-merge `sync` rule, applied at
+orientation time.
+
 ### Dispatch and lanes
 
 Dispatch is the act of pointing an agent at a target — a frontier node, a stated

@@ -1305,6 +1305,14 @@ def cmd_hwm(args: argparse.Namespace) -> int:
     print(f"\n{len(pending)} unreconciled record node(s):")
     for node in pending:
         print(f"  {node.slug}  {node.created_at}  {node.title[:70]}")
+        if getattr(args, "impacts", False):
+            _, sections = split_sections(node.content)
+            impact = (sections.get("state impact") or "").strip()
+            if not impact:
+                print("      (no ## State Impact section)")
+            for ln in impact.splitlines():
+                if ln.strip():
+                    print(f"      {ln.strip()}")
     return 0
 
 
@@ -6394,6 +6402,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_hwm.add_argument("--tips", action="store_true",
                        help="print the record graph's childless tips — the frontier a "
                             "reconcile that folds everything writes")
+    p_hwm.add_argument("--impacts", action="store_true",
+                       help="print each unreconciled node's ## State Impact lines — "
+                            "the replayable tail an orienting agent lays over state")
     p_hwm.add_argument("--view", metavar="NAME", default="state",
                        help="which view's frontier (default: state); the view's "
                             "export is read beside --state")

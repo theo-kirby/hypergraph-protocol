@@ -28,7 +28,9 @@ prose output is not.
   stdout without it). `--view <name>` renders a named view instead, reading its
   export beside `--state`.
 - **`hwm`** — report the reconciliation frontier and the unreconciled nodes
-  (read-only). `--tips` prints the record graph's childless tips — what a
+  (read-only). `--impacts` adds each unreconciled node's `## State Impact`
+  lines — the replayable tail an orienting agent lays over the state graph;
+  `--tips` prints the record graph's childless tips — what a
   fold-everything reconcile writes; `--suggest` is the pre-0.0.5 migration aid;
   `--view <name>` reads a named view's frontier.
 

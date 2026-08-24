@@ -138,6 +138,35 @@ def test_hwm_with_an_unresolvable_mark_exits_1(tmp_path, capsys):
     assert "does not resolve" in capsys.readouterr().out
 
 
+def test_hwm_impacts_prints_the_replayable_tail(tmp_path, capsys):
+    """--impacts turns the unreconciled listing into the replayable tail: each
+    pending node's declared ## State Impact lines, ready to lay over state."""
+    graph = json.loads((CLEAN / "record.json").read_text())
+    graph["nodes"].append({
+        "node_id": "10000000-0000-0000-0000-000000000099",
+        "slug_name": "young-otter-0099",
+        "title": "Landed the streaming retry",
+        "content": "## What\n\nRetry.\n\n## Why\n\nFlaky.\n\n## Method\n\nBackoff.\n\n"
+                   "## Result\n\nGreen.\n\n## State Impact\n\n"
+                   "- target: pale-marsh-0102 — status open → working; retry landed\n",
+        "parent_ids": ["10000000-0000-0000-0000-000000000004"],
+        "created_at": "2026-08-02T03:00:00+00:00",
+    })
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps(graph))
+
+    assert run("hwm", "--record", path, "--state", CLEAN / "state.json") == 0
+    out = capsys.readouterr().out
+    assert "1 unreconciled record node(s)" in out
+    assert "status open → working" not in out  # deltas only appear on request
+
+    assert run("hwm", "--impacts", "--record", path,
+               "--state", CLEAN / "state.json") == 0
+    out = capsys.readouterr().out
+    assert "young-otter-0099" in out
+    assert "- target: pale-marsh-0102 — status open → working; retry landed" in out
+
+
 def test_hwm_suggest_prints_an_adoptable_frontier_line(capsys):
     assert run("hwm", "--suggest", "--record", CLEAN / "record.json",
                "--state", CLEAN / "state.json") == 0

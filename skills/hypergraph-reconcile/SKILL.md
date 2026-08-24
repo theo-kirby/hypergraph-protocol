@@ -27,6 +27,11 @@ is the only skill that passes it.
 
 ## When To Use
 
+- **When orientation's pressure trigger fires**: hypergraph-orient measured a tail
+  of ≥ 3 unreconciled nodes on the default branch and led its brief with "reconcile
+  first" (SPEC: Staleness and the reconcile trigger). This is the standing trigger —
+  it needs no operator discipline and no calendar; a fresh session start is exactly
+  the context this pass wants.
 - After one or more hypergraph-record commits (the user asks to reconcile, or `check`
   reports unreconciled nodes / pending impacts).
 - Before a milestone, handoff, or fresh-agent onboarding, so the frontier is current.

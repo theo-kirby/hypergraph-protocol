@@ -8,7 +8,31 @@ inline were internal or never published.
 
 ## [Unreleased]
 
-Nothing yet.
+Read-through orientation and the pressure trigger (SPEC: Collaboration →
+Staleness and the reconcile trigger): the state graph is a checkpoint, the
+unreconciled tail is its replayable log, and reconcile triggers on measured
+tail size instead of operator discipline.
+
+### Added
+- `hypergraph hwm --impacts` — print each unreconciled node's `## State Impact`
+  lines: the replayable tail an orienting agent lays over the state graph.
+- SPEC: "Staleness and the reconcile trigger" under Collaboration — a stale
+  high-water mark is compaction debt, not a correctness hole; orientation reads
+  through it; reconcile-first becomes the brief's leading recommendation past a
+  small tail threshold, on the default branch only.
+
+### Changed
+- hypergraph-orient: measures the tail (export, then `hwm --impacts`) and
+  replays it over STATE.md; recommends by tail size and branch — reconcile-first
+  at tail ≥ 3 on the default branch, note-and-replay at 1–2, never a reconcile
+  recommendation on a side branch or worktree. No longer strictly read-only: it
+  runs `export` (gitignored cache only) so the measurement never trusts a stale
+  cache.
+- hypergraph-reconcile: orient's pressure trigger is now the first listed
+  reason to run.
+- hypergraph-dispatch: a coordinator on the default branch reconciles before
+  cutting lanes when the trigger fired, so every lane starts from a fresh
+  checkpoint.
 
 ## [0.0.13] — 2026-08-19
 
