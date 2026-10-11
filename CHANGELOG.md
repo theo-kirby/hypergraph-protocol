@@ -8,6 +8,19 @@ inline were internal or never published.
 
 ## [Unreleased]
 
+### Added
+- **The Flywheel repository store** (backend/flywheel-repo-adapter.md): a
+  `store: {kind: flywheel-repo, flywheel_cli: <pin>}` config block makes a Flywheel
+  local repository (`flywheel repo:*`, CLI ≥ 0.2.78 on Node ^24.15) the graphs'
+  store of record. `.hypergraph/graph/` becomes its gitignored working copy: every
+  writing command refreshes from the store, runs unchanged, and commits what it
+  changed, under one `flock` that every git worktree shares. New `hypergraph store
+  init|status|push|pull|verify`. Byte-exact: each node's Flywheel content carries
+  its frontmatter in an invisible trailer. `tools/hypergraph_store.py`, loaded only
+  when configured; `tests/test_flywheel_store.py` runs against the real CLI.
+- `check --since` under the store counts record nodes created after the merge
+  base's commit time (the node files are no longer in git).
+
 Read-through orientation and the pressure trigger (SPEC: Collaboration →
 Staleness and the reconcile trigger): the state graph is a checkpoint, the
 unreconciled tail is its replayable log, and reconcile triggers on measured

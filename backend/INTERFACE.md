@@ -1,14 +1,16 @@
 # Storage Interface
 
 The protocol is defined over these abstract operations rather than over any concrete
-graph store. **One implementation ships** — [local-adapter.md](local-adapter.md),
-git-native: markdown node files committed in the repo, driven by
-`tools/hypergraph.py`, no network and no account.
+graph store. **Two implementations ship.** The default is
+[local-adapter.md](local-adapter.md), git-native: markdown node files committed in the
+repo, driven by `tools/hypergraph.py`, with no network and no account. The opt-in one is
+[flywheel-repo-adapter.md](flywheel-repo-adapter.md), selected by a `store:` block: a
+Flywheel local repository holds the graphs, and the same node files become its
+gitignored working copy.
 
-So this table is not a menu. It is the **portability contract**: what a replacement
-store would have to satisfy for the rest of SPEC.md to hold unchanged, and the reason
-nothing in the protocol above the Storage section mentions files. There is no
-`backend:` selector to set — storage is not a decision a project makes at init.
+So this table is a **portability contract**: what a store must satisfy for the rest of
+SPEC.md to hold unchanged, and the reason nothing in the protocol above the Storage
+section mentions files. The second adapter is the evidence that it holds.
 
 Requirements on a store: a DAG of nodes with markdown content, immutable node IDs,
 immutable human-readable slugs, optimistic-locking writes, and JSON export of a

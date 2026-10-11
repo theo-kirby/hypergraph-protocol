@@ -115,7 +115,9 @@ record it first (SPEC I1), then reconcile it in.
 8. **Commit.** `git add .hypergraph/graph STATE.md` (plus any view snapshots and the
    config, if `views add` ran) — the reconcile is not durable
    until the node files are committed. Do this *after* publishing, so the frontmatter
-   `push` writes is caught by the same `git add`.
+   `push` writes is caught by the same `git add`. Under a `store:` config the node files
+   are gitignored and each `new`/`update` already committed to the Flywheel store, so
+   `git add` only `STATE.md`, the view snapshots and the config.
 9. **Report honestly**: what was folded, what was created, checker output verbatim —
    including violations you could not fix. Impacts that could not be applied cleanly
    (ambiguous target, contradictory deltas) get reported, not guessed at.

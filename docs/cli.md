@@ -1,6 +1,6 @@
 # The `hypergraph` CLI
 
-One tool, seventeen subcommands. Adopters get it from
+One tool, eighteen subcommands. Adopters get it from
 `uv tool install hypergraph-protocol`; in a dev checkout of the protocol repo it
 is `uv run tools/hypergraph.py …`. Everything below is offline except `push`,
 `sync`'s publish step, and `mirror` — and each of those stands down cleanly
@@ -61,6 +61,15 @@ prose output is not.
   (repo-relative, order-preserving). Never legal on state nodes.
 - **`tags`** — `list`/`add`/`rm` the declared vocabulary in
   `.hypergraph/tags.yml` (never hand-edit it).
+
+- **`store`** — only when the config declares `store: {kind: flywheel-repo}`
+  ([backend/flywheel-repo-adapter.md](../backend/flywheel-repo-adapter.md)): the
+  node files become a gitignored working copy of a Flywheel local repository.
+  `init` creates the repository and imports every node file; `status`; `push`
+  commits changed node files; `pull [--full]` re-materializes what the store
+  changed; `verify` rebuilds every node from the store and compares bytes
+  (exit 1 on any difference). Every other writing command already pushes on
+  success, and refreshes first, under one lock shared by every git worktree.
 
 ## Distribution and repair
 

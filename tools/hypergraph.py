@@ -884,6 +884,16 @@ def load_config(path: Path | None) -> dict:
     if not isinstance(loaded, dict):
         raise SystemExit(
             f"check: {path} must be a YAML mapping, got {type(loaded).__name__}")
+    if loaded.get("store") is not None:
+        # The Flywheel store (backend/flywheel-repo-adapter.md) lives at the *main*
+        # checkout, and so does its working copy: a git worktree reads and writes the
+        # one shared graph, never a branch slice of it.
+        store = _store()
+        store.store_config(loaded)
+        root = store.main_checkout(path.resolve().parent.parent)
+        graph_dir = Path(loaded.get("graph_dir") or DEFAULT_GRAPH_DIR)
+        loaded["graph_dir"] = str(graph_dir if graph_dir.is_absolute() else root / graph_dir)
+        loaded["_store_root"] = str(root)
     return loaded
 
 
@@ -1212,6 +1222,15 @@ def check_since(ref: str, config: dict, report: Report, *, cwd: Path | None = No
     work = [p for p in changed
             if not p.startswith(graph_dir + "/") and p != graph_dir and not is_generated(p)]
     records = [p for p in added if p.startswith(f"{graph_dir}/record/") and p.endswith(".md")]
+    if config.get("_store_root"):
+        # Under the Flywheel store the node files are not in git, so "added on this
+        # branch" becomes "created since the branch forked": a record node in the
+        # shared graph with created_at at or after the merge base's commit time.
+        base = _git(repo, "merge-base", ref, "HEAD").strip()
+        forked = parse_ts(_git(repo, "show", "-s", "--format=%cI", base).strip()) if base else None
+        nodes = load_local_nodes(Path(config["graph_dir"]), "record", missing_ok=True)
+        records = [n.slug for n in nodes.values()
+                   if forked is not None and (parse_ts(n.created_at) or forked) >= forked]
 
     if not work:
         report.add("info", "I1", "-", f"--since {ref}: no work outside the graph — nothing to record")
@@ -6794,6 +6813,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ---- adoption: compute the facts an adopting agent would otherwise gather by
     # hand. Never the claims — see the module comment above `cmd_adopt`.
+    p_store = sub.add_parser(
+        "store", help="the Flywheel local repository behind the node files "
+                      "(backend/flywheel-repo-adapter.md)")
+    p_store.add_argument("action", choices=["init", "status", "push", "pull", "verify"],
+                         help="init: create the repository and import every node file; "
+                              "status: heads and changed files; push: commit changed "
+                              "node files; pull: re-materialize what the store changed "
+                              "(--full: every node); verify: rebuild every node from the "
+                              "store and compare bytes")
+    p_store.add_argument("--config", type=Path, help=".hypergraph/config.yml")
+    p_store.add_argument("--full", action="store_true", help="pull: every node, not only changes")
+    p_store.add_argument("--force", action="store_true", help="init: import even if tracked")
+    p_store.add_argument("--message", help="push/init: the Flywheel commit message")
+    p_store.set_defaults(func=None)
+
     p_adopt = sub.add_parser("adopt", help="survey a repo, pull a legacy graph, "
                                            "mint roots, resolve id prefixes")
     graph_args(p_adopt)
@@ -6856,10 +6890,75 @@ def main(argv: list[str] | None = None) -> int:
         if not args.expect:
             parser.error("update needs --expect <sha256> — get it with --print-sha first")
     try:
-        return args.func(args)
+        store_config = _store_config_for(args)
+        if store_config is None:
+            if args.command == "store":
+                raise LocalGraphError(
+                    "this project's config declares no `store:` — add\n"
+                    "  store:\n    kind: flywheel-repo\n    flywheel_cli: <version>\n"
+                    "to .hypergraph/config.yml, then run `hypergraph store init`")
+            return args.func(args)
+        store = _store()
+        root = Path(store_config["_store_root"])
+        if args.command == "store":
+            return store.cmd_store(args, store_config, root)
+        if args.command in store.READ_ONLY:
+            return args.func(args)
+        return store.run_with_store(args, store_config, root, args.func)
     except LocalGraphError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+
+def _store_config_for(args: argparse.Namespace) -> dict | None:
+    """The loaded config when this project keeps its graphs in a Flywheel store, else None.
+
+    A command run without `--config` still finds the store through the default config
+    path, and is handed that path so its own `load_config` resolves the shared working
+    copy too — otherwise it would write into a cwd-relative directory nothing syncs."""
+    path = getattr(args, "config", None)
+    if path is None:
+        default = Path(".hypergraph/config.yml")
+        if not default.exists() or not hasattr(args, "config"):
+            return None
+        path = default
+    if not Path(path).exists():
+        return None
+    try:
+        config = load_config(path)
+    except SystemExit:
+        return None
+    if not config.get("_store_root"):
+        return None
+    if getattr(args, "config", None) is None:
+        args.config = path
+    return config
+
+
+def _store():
+    """Load the Flywheel store sibling once (same three-module-name care as `_mirror`)."""
+    module = sys.modules.get("hypergraph_store")
+    if module is not None:
+        return module
+    import importlib.util
+    here = Path(__file__).resolve().parent
+    path = next((p for p in (here / "hypergraph_store.py",
+                             here / "hypergraph_protocol_store.py") if p.exists()), None)
+    if path is None:
+        raise LocalGraphError(
+            f"the store module is missing beside {Path(__file__).name} — expected "
+            "hypergraph_store.py (dev checkout) or hypergraph_protocol_store.py "
+            "(installed wheel). Reinstall.")
+    sys.modules.setdefault("hypergraph_core", sys.modules[__name__])
+    spec = importlib.util.spec_from_file_location("hypergraph_store", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["hypergraph_store"] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop("hypergraph_store", None)
+        raise
+    return module
 
 
 if __name__ == "__main__":

@@ -49,6 +49,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel.force-include]
 "tools/hypergraph.py" = "hypergraph_protocol.py"
 "tools/hypergraph_mirror.py" = "hypergraph_protocol_mirror.py"
+"tools/hypergraph_store.py" = "hypergraph_protocol_store.py"
+"backend/flywheel-repo-adapter.md" = "hypergraph_protocol_data/references/flywheel-repo-adapter.md"
 "skills/references.yml" = "hypergraph_protocol_data/skills/references.yml"
 "skills/hypergraph-adopt/SKILL.md" = "hypergraph_protocol_data/skills/hypergraph-adopt/SKILL.md"
 "skills/hypergraph-dispatch/SKILL.md" = "hypergraph_protocol_data/skills/hypergraph-dispatch/SKILL.md"
@@ -66,7 +68,7 @@ build-backend = "hatchling.build"
 "templates/agents-block.md" = "hypergraph_protocol_data/references/agents-block.md"
 
 [tool.hatch.build.targets.sdist]
-include = ["tools/hypergraph.py", "tools/hypergraph_mirror.py",
+include = ["tools/hypergraph.py", "tools/hypergraph_mirror.py", "tools/hypergraph_store.py",
            "README.md", "SPEC.md", "LICENSE", "pyproject.toml",
            "skills", "templates", "backend"]
 # `.claude/skills/hypergraph-*` are committed symlinks into `skills/` — the dogfooding

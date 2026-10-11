@@ -556,10 +556,15 @@ depends on how they are kept. No network, no account, no service to be signed in
 the graphs travel with the repo, work offline, and merge through git.
 
 The protocol is nonetheless written against ~10 abstract operations
-([backend/INTERFACE.md](backend/INTERFACE.md)). That is a **portability property, not a
-choice to be made at init**: it states what a *replacement* store would have to
-satisfy, and it is why nothing above this section mentions files. One implementation
-ships.
+([backend/INTERFACE.md](backend/INTERFACE.md)). That is a **portability property**: it
+states what a store has to satisfy, and it is why nothing above this section mentions
+files. A second implementation ships and is opt-in: a `store: {kind: flywheel-repo}`
+block makes a Flywheel local repository the store of record and the node files its
+gitignored working copy, shared by every git worktree of the checkout
+([backend/flywheel-repo-adapter.md](backend/flywheel-repo-adapter.md)). It trades
+"the graphs travel with the repo and merge through git" for "the graph does not fork
+with the code"; under it, `check --since` counts record nodes created after the fork
+point instead of record files the branch added.
 
 Op 7 ("refuse a stale write") is satisfied by a body-hash compare-and-swap, and
 `--reconcile` is the mechanical I3 gate — the only commands that write state nodes
